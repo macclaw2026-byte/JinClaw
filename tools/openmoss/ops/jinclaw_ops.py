@@ -24,6 +24,7 @@ UPSTREAM_WATCH_SCRIPT = OPENMOSS_ROOT / "upstream_watch/watch_updates.py"
 LAUNCH_AGENTS = {
     "selfheal": "ai.openclaw.selfheal",
     "brain_enforcer": "ai.openclaw.brain-enforcer",
+    "autonomy_runtime": "ai.jinclaw.autonomy-runtime",
     "upstream_watch": "ai.jinclaw.upstream-watch",
 }
 

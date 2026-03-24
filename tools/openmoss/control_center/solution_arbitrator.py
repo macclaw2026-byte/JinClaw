@@ -25,7 +25,7 @@ def arbitrate_solution_path(intent: Dict[str, object], selected_plan: Dict[str, 
         actions.append("extract_useful_external_patterns_then_build_local_equivalent")
     if plan_id == "audited_external_extension":
         actions.append("prefer_the_most_efficient_safe_option_regardless_of_origin")
-    if not necessity.get("required", False):
+    if plan_id == "audited_external_extension" and not necessity.get("required", False):
         actions.append("stay_on_local_plan_until_necessity_is_proven")
     if not actions:
         actions.append("execute_local_plan")

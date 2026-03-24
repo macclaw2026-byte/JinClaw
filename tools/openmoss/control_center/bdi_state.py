@@ -17,6 +17,7 @@ def build_bdi_state(
     pending_approvals = approval.get("pending", [])
     arbitration = arbitration or {}
     necessity_proof = arbitration.get("necessity_proof", {})
+    plan_id = str(selected_plan.get("plan_id", ""))
     beliefs = {
         "task_types": intent.get("task_types", []),
         "risk_level": intent.get("risk_level", "unknown"),
@@ -35,7 +36,11 @@ def build_bdi_state(
         desires.append("complete_verified_closure")
     if pending_approvals:
         intentions = ["obtain_or_wait_for_required_approvals"]
-    elif not necessity_proof.get("required", True) and selected_plan.get("external_actions"):
+    elif (
+        plan_id == "audited_external_extension"
+        and not necessity_proof.get("required", True)
+        and selected_plan.get("external_actions")
+    ):
         intentions = ["prove_necessity_before_switching"]
     elif state.get("status") == "recovering":
         intentions = ["repair_blocker_and_resume"]

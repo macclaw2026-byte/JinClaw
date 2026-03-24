@@ -36,10 +36,37 @@ NON_BLOCKING_PREFLIGHT_STATUSES = {
 
 APPROVALS_ROOT = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/control_center/approvals")
 MISSIONS_ROOT = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/control_center/missions")
+COMMAND_FALLBACKS = {
+    "openclaw": [
+        "/opt/homebrew/bin/openclaw",
+        "/usr/local/bin/openclaw",
+    ],
+    "rg": [
+        "/opt/homebrew/bin/rg",
+        "/usr/local/bin/rg",
+        "/Users/mac_claw/.vscode/extensions/openai.chatgpt-26.318.11754-darwin-arm64/bin/macos-aarch64/rg",
+    ],
+}
 
 
 def _normalize_path(raw: str) -> Path:
     return Path(raw).expanduser()
+
+
+def _resolve_command_path(command: str) -> str:
+    if not command:
+        return ""
+    if "/" in command:
+        candidate = str(Path(command).expanduser())
+        return candidate if Path(candidate).exists() else ""
+    resolved = shutil.which(command)
+    if resolved:
+        return resolved
+    for candidate in COMMAND_FALLBACKS.get(command, []):
+        expanded = str(Path(candidate).expanduser())
+        if Path(expanded).exists():
+            return expanded
+    return ""
 
 
 def _extract_path(error_text: str) -> Path | None:
@@ -99,10 +126,11 @@ def _run_dependency_guard(error_text: str) -> Dict[str, object]:
 
 
 def _run_required_commands_guard(commands: list[str]) -> Dict[str, object]:
-    missing = [command for command in commands if command and shutil.which(command) is None]
+    resolved = {command: _resolve_command_path(command) for command in commands if command}
+    missing = [command for command, path in resolved.items() if not path]
     if missing:
         return {"ok": False, "status": "required_commands_missing", "missing_commands": missing}
-    return {"ok": True, "status": "required_commands_verified", "commands": commands}
+    return {"ok": True, "status": "required_commands_verified", "commands": commands, "resolved_commands": resolved}
 
 
 def _run_required_paths_guard(paths: list[str]) -> Dict[str, object]:

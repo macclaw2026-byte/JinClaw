@@ -135,7 +135,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "subtask": result,
             "mission_cycle": mission_cycle,
         }
-    if action.startswith("advance_stage:") and state.status in {"planning", "blocked"}:
+    if action.startswith("advance_stage:") and state.status in {"planning", "blocked", "running"}:
         target_stage = action.split(":", 1)[1]
         state.status = "planning"
         state.current_stage = target_stage

@@ -41,6 +41,12 @@ def _estimate_plan_efficiency(plan: Dict[str, object], intent: Dict[str, object]
             efficiency += 1.5
         if "security" in capability_tags:
             efficiency += 1.0
+    elif plan_id == "local_image_pipeline":
+        efficiency += 3.0
+        if {"image", "marketplace"}.issubset(task_types):
+            efficiency += 3.0
+        if intent.get("needs_browser"):
+            efficiency += 1.0
     elif plan_id == "browser_evidence":
         efficiency += 2.0 if intent.get("needs_browser") else 0.5
     else:
@@ -58,6 +64,12 @@ def _score_plan(plan: Dict[str, object], intent: Dict[str, object], capabilities
     confidence = str(plan.get("confidence", "medium"))
     confidence_bonus = {"high": 3, "medium": 2, "low": 1}.get(confidence, 1)
     browser_bonus = 2 if intent.get("needs_browser") and plan.get("plan_id") == "browser_evidence" else 0
+    image_pipeline_bonus = 0
+    local_first_penalty = 0
+    if "image" in task_types and "marketplace" in task_types and plan.get("plan_id") == "local_image_pipeline":
+        image_pipeline_bonus = 4
+    if "image" in task_types and plan.get("plan_id") == "local_first":
+        local_first_penalty = 3
     external_penalty = len(external_actions) * 2
     install_penalty = sum(3 for item in external_actions if item.get("type") in {"public_download", "dependency_install", "external_code_execution"})
     history_profile = load_history_profile(str(plan.get("plan_id", "")), task_types=task_types, risk_level=risk_level)
@@ -71,12 +83,16 @@ def _score_plan(plan: Dict[str, object], intent: Dict[str, object], capabilities
     confidence_gate_penalty = 2 if external_actions and necessity.get("confidence") == "low" else 0
     efficiency_bonus = round(plan_efficiency * 1.6, 2)
     safety_penalty = round(plan_risk * 1.8, 2)
-    score = 10 + local_skill_matches + confidence_bonus + browser_bonus - external_penalty - install_penalty + history_bonus + necessity_bonus - necessity_penalty - confidence_gate_penalty + efficiency_bonus - safety_penalty
+    score = 10 + local_skill_matches + confidence_bonus + browser_bonus + image_pipeline_bonus - local_first_penalty - external_penalty - install_penalty + history_bonus + necessity_bonus - necessity_penalty - confidence_gate_penalty + efficiency_bonus - safety_penalty
     rationale = []
     if local_skill_matches:
         rationale.append("matches existing local skills")
     if browser_bonus:
         rationale.append("fits browser-heavy task")
+    if image_pipeline_bonus:
+        rationale.append("fits image-generation plus marketplace upload closure")
+    if local_first_penalty:
+        rationale.append("generic local path is too coarse for image-generation closure")
     if plan_efficiency >= 4:
         rationale.append("offers a strong efficiency advantage for this task shape")
     if external_penalty:

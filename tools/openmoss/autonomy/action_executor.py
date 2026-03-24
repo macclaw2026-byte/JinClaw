@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 import uuid
@@ -17,6 +19,9 @@ if str(CONTROL_CENTER_DIR) not in sys.path:
     sys.path.insert(0, str(CONTROL_CENTER_DIR))
 
 from context_builder import build_stage_context
+
+
+OPENCLAW_BIN = os.environ.get("OPENCLAW_BIN") or shutil.which("openclaw") or "/opt/homebrew/bin/openclaw"
 
 
 def _execution_records_dir(task_id: str) -> Path:
@@ -38,7 +43,7 @@ def _gateway_call(method: str, params: Dict, timeout_seconds: int = 15) -> Dict:
     try:
         proc = subprocess.run(
             [
-                "openclaw",
+                OPENCLAW_BIN,
                 "gateway",
                 "call",
                 method,
