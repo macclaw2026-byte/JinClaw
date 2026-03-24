@@ -1,6 +1,7 @@
 name: JinClaw Upstream Intake Check
 
 on:
+  pull_request:
   workflow_dispatch:
   schedule:
     - cron: "15 */12 * * *"
@@ -18,8 +19,10 @@ jobs:
           python-version: "3.11"
 
       - name: Run upstream watch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python tools/openmoss/upstream_watch/watch_updates.py --once
+          python3 tools/openmoss/upstream_watch/watch_updates.py --once
 
       - name: Upload upstream report
         uses: actions/upload-artifact@v4
