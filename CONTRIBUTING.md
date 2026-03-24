@@ -31,6 +31,14 @@ Run the most relevant checks locally:
 /Users/mac_claw/.openclaw/workspace/tools/bin/jinclaw-upgrade-check
 ```
 
+If GitHub CLI is configured locally, the normal JinClaw PR flow is:
+
+```bash
+/Users/mac_claw/.openclaw/workspace/tools/bin/jinclaw-pr-create
+/Users/mac_claw/.openclaw/workspace/tools/bin/jinclaw-pr-checks
+/Users/mac_claw/.openclaw/workspace/tools/bin/jinclaw-pr-merge
+```
+
 Also run targeted validation for the area you changed, such as:
 
 - autonomy runtime smoke test

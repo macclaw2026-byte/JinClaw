@@ -1,0 +1,8 @@
+#!/bin/zsh
+
+set -euo pipefail
+
+ROOT="/Users/mac_claw/.openclaw/workspace"
+cd "$ROOT"
+
+exec gh pr merge --squash --delete-branch "$@"
