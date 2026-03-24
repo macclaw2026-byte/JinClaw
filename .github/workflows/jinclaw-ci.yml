@@ -1,0 +1,41 @@
+name: JinClaw CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile JinClaw Python
+        run: |
+          python -m compileall \
+            tools/openmoss \
+            projects/ma-data-workbench \
+            skills/github-open-source-scout/scripts \
+            skills/product-selection-engine/scripts
+
+      - name: Verify repo hygiene
+        run: |
+          test ! -e tools/openmoss/bridge/.env.local
+          test ! -d tools/openmoss/runtime
+          test ! -d memory
+          test ! -f USER.md
+
+      - name: Check key docs and ops commands
+        run: |
+          test -f README.md
+          test -f .gitignore
+          test -x tools/bin/jinclaw-status
+          test -x tools/bin/jinclaw-doctor
+          test -x tools/bin/jinclaw-upgrade-check
