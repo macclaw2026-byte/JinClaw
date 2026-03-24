@@ -22,7 +22,12 @@ def get_conn():
 
 
 conn = get_conn()
-state_options = ['ALL'] + [row[0] for row in conn.execute('SELECT DISTINCT state FROM businesses WHERE state IS NOT NULL AND state <> \''\' ORDER BY state').fetchall()]
+state_options = ['ALL'] + [
+    row[0]
+    for row in conn.execute(
+        "SELECT DISTINCT state FROM businesses WHERE state IS NOT NULL AND state <> '' ORDER BY state"
+    ).fetchall()
+]
 
 with st.sidebar:
     st.header('筛选条件')

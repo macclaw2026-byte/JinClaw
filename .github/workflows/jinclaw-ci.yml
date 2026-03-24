@@ -19,7 +19,7 @@ jobs:
 
       - name: Compile JinClaw Python
         run: |
-          python3 -m compileall \
+          python3 -m compileall -x '.*/\.venv/.*' \
             tools/openmoss \
             projects/ma-data-workbench \
             skills/github-open-source-scout/scripts \
