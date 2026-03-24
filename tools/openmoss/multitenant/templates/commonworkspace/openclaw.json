@@ -1,0 +1,23 @@
+{
+  "agents": {
+    "list": [
+      {
+        "id": "main",
+        "subagents": {
+          "allowAgents": [
+            "main"
+          ]
+        }
+      }
+    ]
+  },
+  "openmoss": {
+    "bridge": {
+      "enabled": true,
+      "provider": "imclaw"
+    },
+    "voice": {
+      "enabled": true
+    }
+  }
+}

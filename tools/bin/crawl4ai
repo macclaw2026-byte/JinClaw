@@ -1,0 +1,4 @@
+#!/bin/bash
+set -e
+VENV="/Users/mac_claw/.openclaw/workspace/tools/crawl4ai-venv"
+exec "$VENV/bin/python" -m crawl4ai.cli "$@"

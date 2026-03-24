@@ -1,0 +1,16 @@
+{
+  "enabled": false,
+  "dry_run": true,
+  "dispatch_to_openclaw": false,
+  "deliver_outbox": false,
+  "wait_for_completion": true,
+  "dispatch_timeout_ms": 30000,
+  "provider": "imclaw",
+  "hub_url": "https://imclaw-server.app.mosi.cn",
+  "token_env": "IMCLAW_TOKEN",
+  "token_file": "/Users/mac_claw/.openclaw/workspace/tools/openmoss/bridge/.env.local",
+  "poll_interval_seconds": 2.0,
+  "wake_mode": "dispatch-only",
+  "session_namespace": "imclaw",
+  "state_root": "/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/bridge"
+}

@@ -1,0 +1,10 @@
+{
+  "sources": [
+    "/Users/mac_claw/Downloads/MA_Business_Email_Data/MA_B2B_23_1.csv",
+    "/Users/mac_claw/Downloads/MA_Business_Email_Data/MA_B2B_23_2.csv",
+    "/Users/mac_claw/Downloads/US_Business_Email_Data_07/NY_B2B_23_1.csv"
+  ],
+  "database_path": "/Users/mac_claw/.openclaw/workspace/projects/ma-data-workbench/data/db/ma_data.duckdb",
+  "parquet_dir": "/Users/mac_claw/.openclaw/workspace/projects/ma-data-workbench/data/parquet",
+  "export_dir": "/Users/mac_claw/.openclaw/workspace/projects/ma-data-workbench/data/exports"
+}

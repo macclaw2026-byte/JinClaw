@@ -1,0 +1,70 @@
+#!/bin/zsh
+
+set -euo pipefail
+
+ROOT="/Users/mac_claw/.openclaw/workspace"
+TMP_ROOT="/tmp/openmoss-inspect"
+
+print_status() {
+  local label="$1"
+  local state="$2"
+  local detail="$3"
+  printf '%-24s %-10s %s\n' "$label" "$state" "$detail"
+}
+
+echo "OpenMOSS Integration Status"
+echo
+
+if [ -d "$ROOT/projects/openmoss-openclaw-integration" ]; then
+  print_status "integration-blueprint" "READY" "$ROOT/projects/openmoss-openclaw-integration"
+else
+  print_status "integration-blueprint" "MISSING" "project blueprint directory not found"
+fi
+
+if [ -f "$ROOT/skills/imclaw-bridge-ops/SKILL.md" ]; then
+  print_status "imclaw-skill" "READY" "$ROOT/skills/imclaw-bridge-ops/SKILL.md"
+else
+  print_status "imclaw-skill" "MISSING" "local skill scaffold missing"
+fi
+
+if [ -f "$ROOT/skills/moss-voice-orchestrator/SKILL.md" ]; then
+  print_status "moss-voice-skill" "READY" "$ROOT/skills/moss-voice-orchestrator/SKILL.md"
+else
+  print_status "moss-voice-skill" "MISSING" "local skill scaffold missing"
+fi
+
+if [ -d "$TMP_ROOT/imclaw-skill" ]; then
+  print_status "vendor-imclaw" "INSPECTED" "$TMP_ROOT/imclaw-skill"
+else
+  print_status "vendor-imclaw" "MISSING" "repo not cloned under $TMP_ROOT"
+fi
+
+if [ -d "$TMP_ROOT/OurClaw" ]; then
+  print_status "vendor-ourclaw" "INSPECTED" "$TMP_ROOT/OurClaw"
+else
+  print_status "vendor-ourclaw" "MISSING" "repo not cloned under $TMP_ROOT"
+fi
+
+if [ -d "$TMP_ROOT/MOSS-TTS" ]; then
+  print_status "vendor-moss-tts" "INSPECTED" "$TMP_ROOT/MOSS-TTS"
+else
+  print_status "vendor-moss-tts" "MISSING" "repo not cloned under $TMP_ROOT"
+fi
+
+if [ -d "$TMP_ROOT/MOSS-TTSD" ]; then
+  print_status "vendor-moss-ttsd" "INSPECTED" "$TMP_ROOT/MOSS-TTSD"
+else
+  print_status "vendor-moss-ttsd" "MISSING" "repo not cloned under $TMP_ROOT"
+fi
+
+if [ -d "$TMP_ROOT/AnyGPT" ]; then
+  print_status "vendor-anygpt" "INSPECTED" "$TMP_ROOT/AnyGPT"
+else
+  print_status "vendor-anygpt" "MISSING" "repo not cloned under $TMP_ROOT"
+fi
+
+echo
+echo "Suggested next step:"
+echo "  1. build local bridge runtime under tools/openmoss/bridge"
+echo "  2. build local voice runtime under tools/openmoss/voice"
+echo "  3. define worker contracts before adding multimodal execution"

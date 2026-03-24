@@ -1,0 +1,29 @@
+Skill: 
+Source: 
+Purpose: 
+
+Files reviewed:
+- 
+
+Findings:
+- 
+
+Capability summary:
+- Network access: 
+- Writes files: 
+- Executes commands: 
+- Handles secrets: 
+- Persistence behavior: 
+
+Area scores:
+- Source trust: 
+- Code transparency: 
+- Execution power: 
+- Data access: 
+- Network/exfiltration risk: 
+- Persistence/system modification risk: 
+
+Recommendation: 
+Install decision: 
+Install advice: 
+Confidence: 

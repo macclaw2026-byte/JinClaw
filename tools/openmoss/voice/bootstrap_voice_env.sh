@@ -1,0 +1,48 @@
+#!/bin/zsh
+
+set -euo pipefail
+
+ROOT="/Users/mac_claw/.openclaw/workspace/tools/openmoss/voice"
+VENV="$ROOT/.venv"
+PYTHON_BIN="${PYTHON_BIN:-/opt/homebrew/bin/python3.11}"
+INSTALL_CPU_STACK="${INSTALL_CPU_STACK:-0}"
+
+if [ ! -x "$PYTHON_BIN" ]; then
+  echo "python not found: $PYTHON_BIN" >&2
+  exit 1
+fi
+
+"$PYTHON_BIN" -m venv "$VENV"
+"$VENV/bin/python" -m pip install --upgrade pip
+
+if [ "$INSTALL_CPU_STACK" = "1" ]; then
+  "$VENV/bin/pip" install \
+    numpy \
+    scipy \
+    soundfile \
+    librosa \
+    orjson \
+    PyYAML \
+    einops \
+    tiktoken \
+    tqdm \
+    requests \
+    safetensors \
+    gradio \
+    packaging \
+    psutil \
+    ninja \
+    wheel \
+    setuptools \
+    transformers \
+    torch \
+    torchaudio
+fi
+
+echo "voice venv ready: $VENV"
+if [ "$INSTALL_CPU_STACK" = "1" ]; then
+  echo "CPU inference stack installed into: $VENV"
+else
+  echo "MOSS-TTS itself is not installed automatically here because model/runtime choice"
+  echo "depends on your GPU/CPU plan. Use INSTALL_CPU_STACK=1 for a local CPU stack."
+fi

@@ -1,0 +1,77 @@
+{
+  "sources": [
+    {
+      "id": "openclaw-core",
+      "name": "OpenClaw",
+      "repo": "openclaw/openclaw",
+      "category": "upstream-core",
+      "adoption_policy": "selective_sync_or_borrow",
+      "priority": "critical",
+      "why_it_matters": "Primary upstream runtime and gateway substrate JinClaw still depends on."
+    },
+    {
+      "id": "openmoss-imclaw-skill",
+      "name": "OpenMOSS imclaw-skill",
+      "repo": "OpenMOSS/imclaw-skill",
+      "category": "borrowed-ideas",
+      "adoption_policy": "borrow_and_localize",
+      "priority": "high",
+      "why_it_matters": "Bridge, session, and message queue ideas already absorbed into JinClaw."
+    },
+    {
+      "id": "openmoss-ourclaw",
+      "name": "OpenMOSS OurClaw",
+      "repo": "OpenMOSS/OurClaw",
+      "category": "borrowed-ideas",
+      "adoption_policy": "borrow_and_localize",
+      "priority": "high",
+      "why_it_matters": "Multi-user isolation and workspace generation patterns."
+    },
+    {
+      "id": "openmoss-moss-tts",
+      "name": "OpenMOSS MOSS-TTS",
+      "repo": "OpenMOSS/MOSS-TTS",
+      "category": "borrowed-ideas",
+      "adoption_policy": "borrow_and_localize",
+      "priority": "medium",
+      "why_it_matters": "Voice synthesis backend ideas for JinClaw voice orchestration."
+    },
+    {
+      "id": "openmoss-moss-ttsd",
+      "name": "OpenMOSS MOSS-TTSD",
+      "repo": "OpenMOSS/MOSS-TTSD",
+      "category": "borrowed-ideas",
+      "adoption_policy": "borrow_and_localize",
+      "priority": "medium",
+      "why_it_matters": "Dialog-style TTS patterns and inference strategy."
+    },
+    {
+      "id": "openmoss-anygpt",
+      "name": "OpenMOSS AnyGPT",
+      "repo": "OpenMOSS/AnyGPT",
+      "category": "borrowed-ideas",
+      "adoption_policy": "watch_for_selective_absorption",
+      "priority": "medium",
+      "why_it_matters": "Future multimodal worker inspiration."
+    },
+    {
+      "id": "crawl4ai",
+      "name": "Crawl4AI",
+      "repo": "unclecode/crawl4ai",
+      "category": "runtime-dependency",
+      "adoption_policy": "selective_sync_or_borrow",
+      "priority": "high",
+      "why_it_matters": "Important for compliant web acquisition and data extraction."
+    },
+    {
+      "id": "playwright",
+      "name": "Playwright",
+      "repo": "microsoft/playwright",
+      "category": "runtime-dependency",
+      "adoption_policy": "selective_sync_or_borrow",
+      "priority": "medium",
+      "why_it_matters": "Browser control, context isolation, traces, and rendering reliability."
+    }
+  ]
+}
+

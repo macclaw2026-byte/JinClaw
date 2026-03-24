@@ -1,0 +1,10 @@
+{
+  "dry_run": true,
+  "backend": "library",
+  "tts_repo": "/tmp/openmoss-inspect/MOSS-TTS",
+  "ttsd_repo": "/tmp/openmoss-inspect/MOSS-TTSD",
+  "output_dir": "/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/voice/outputs",
+  "model_path": "OpenMOSS-Team/MOSS-TTS",
+  "ttsd_model_path": "OpenMOSS-Team/MOSS-TTSD-v1.0",
+  "codec_model_path": "OpenMOSS-Team/MOSS-Audio-Tokenizer"
+}
