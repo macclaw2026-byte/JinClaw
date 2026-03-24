@@ -19,7 +19,7 @@ jobs:
 
       - name: Compile JinClaw Python
         run: |
-          python -m compileall \
+          python3 -m compileall -x '.*/\.venv/.*' \
             tools/openmoss \
             projects/ma-data-workbench \
             skills/github-open-source-scout/scripts \
@@ -27,10 +27,10 @@ jobs:
 
       - name: Verify repo hygiene
         run: |
-          test ! -e tools/openmoss/bridge/.env.local
-          test ! -d tools/openmoss/runtime
-          test ! -d memory
-          test ! -f USER.md
+          ! git ls-files --error-unmatch tools/openmoss/bridge/.env.local
+          ! git ls-files --error-unmatch tools/openmoss/runtime
+          ! git ls-files --error-unmatch memory
+          ! git ls-files --error-unmatch USER.md
 
       - name: Check key docs and ops commands
         run: |

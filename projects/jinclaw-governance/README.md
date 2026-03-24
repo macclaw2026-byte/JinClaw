@@ -18,7 +18,9 @@ The default policy is:
 
 See:
 
+- `../../JINCLAW_CONSTITUTION.md`
+- `../../CONTRIBUTING.md`
+- `../../SECURITY.md`
 - `jinclaw-upstream-intake-policy.md`
 - `jinclaw-repository-plan.md`
 - `jinclaw-live-guardrails.md`
-

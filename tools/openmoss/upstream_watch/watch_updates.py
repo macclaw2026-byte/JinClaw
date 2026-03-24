@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Dict, List
 
 
-ROOT = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss")
+ROOT = Path(__file__).resolve().parents[1]
 WATCH_ROOT = ROOT / "upstream_watch"
 RUNTIME_ROOT = ROOT / "runtime/upstream_watch"
 REPORTS_ROOT = RUNTIME_ROOT / "reports"
@@ -38,12 +38,22 @@ def write_json(path: Path, payload: object) -> None:
 
 def github_json(path: str) -> Dict[str, object] | List[Dict[str, object]]:
     url = f"https://api.github.com{path}"
-    req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "JinClaw-Upstream-Watch"})
     token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if token:
-        req.add_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "JinClaw-Upstream-Watch"}
+
+    def _request_json(use_token: bool) -> Dict[str, object] | List[Dict[str, object]]:
+        req = urllib.request.Request(url, headers=headers)
+        if use_token and token:
+            req.add_header("Authorization", f"Bearer {token}")
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+
+    try:
+        return _request_json(use_token=bool(token))
+    except urllib.error.HTTPError as exc:
+        if token and exc.code in {401, 403}:
+            return _request_json(use_token=False)
+        raise
 
 
 def fetch_repo_snapshot(source: Dict[str, object]) -> Dict[str, object]:
@@ -187,4 +197,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
