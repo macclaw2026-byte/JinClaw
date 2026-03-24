@@ -1,6 +1,7 @@
 name: JinClaw Upstream Intake Check
 
 on:
+  pull_request:
   workflow_dispatch:
   schedule:
     - cron: "15 */12 * * *"
