@@ -163,6 +163,13 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
             "reason": "the current intention is to keep the safer route until the higher-risk path is justified",
             "auto_safe": True,
         }
+    elif browser_signals.get("requirements_evaluation", {}).get("ok") is True:
+        learn_pending = bool(state.get("stages", {}).get("learn", {}).get("status") != "completed")
+        next_decision = {
+            "action": "advance_stage:learn" if learn_pending else "confirm_business_outcome_and_finalize",
+            "reason": "browser-observed business requirements are fully satisfied, so the task should finalize and learn",
+            "auto_safe": True,
+        }
     elif browser_signals.get("diagnosis") not in {"", "none"}:
         recommended_action = problem.get("recommended_action", "needs_network_request_level_debugging")
         next_decision = {

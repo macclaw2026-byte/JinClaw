@@ -74,6 +74,7 @@ def _purge_stale_successor_business_outcome(task_id: str) -> dict | None:
     ):
         return None
     state.metadata.pop("business_outcome", None)
+    state.metadata.pop("active_execution", None)
     for stage_name in ("execute", "verify", "learn"):
         stage = state.stages.get(stage_name)
         if not stage:
@@ -101,30 +102,61 @@ def _sync_business_outcome_from_live_probe(task_id: str) -> dict | None:
     business_outcome = signals.get("business_outcome", {}) or {}
     if not business_outcome:
         return None
+    requirements = signals.get("requirements_evaluation", {}) or {}
     current_state = load_state(task_id)
     existing = current_state.metadata.get("business_outcome", {}) or {}
-    if (
-        existing.get("goal_satisfied") is True
-        and existing.get("user_visible_result_confirmed") is True
-        and str(existing.get("proof_summary", "")).strip()
-    ):
-        return {"signals": signals, "written": False}
-    written = write_business_outcome(
-        task_id,
-        goal_satisfied=bool(business_outcome.get("goal_satisfied")),
-        user_visible_result_confirmed=bool(business_outcome.get("user_visible_result_confirmed")),
-        proof_summary=str(business_outcome.get("proof_summary", "")).strip(),
-        evidence=business_outcome.get("evidence", {}),
+    proof_summary = str(business_outcome.get("proof_summary", "")).strip()
+    existing_summary = str(existing.get("proof_summary", "")).strip()
+    needs_write = (
+        existing.get("goal_satisfied") is not True
+        or existing.get("user_visible_result_confirmed") is not True
+        or not existing_summary
+        or existing_summary != proof_summary
     )
+    written = None
+    if needs_write:
+        written = write_business_outcome(
+            task_id,
+            goal_satisfied=bool(business_outcome.get("goal_satisfied")),
+            user_visible_result_confirmed=bool(business_outcome.get("user_visible_result_confirmed")),
+            proof_summary=proof_summary,
+            evidence=business_outcome.get("evidence", {}),
+        )
     state = load_state(task_id)
+    if requirements.get("ok"):
+        for stage_name in state.stage_order:
+            stage = state.stages.get(stage_name)
+            if not stage:
+                continue
+            if stage_name in {"understand", "plan", "execute", "verify"}:
+                if stage.status != "completed":
+                    stage.status = "completed"
+                    stage.verification_status = "ok" if stage_name in {"execute", "verify"} else stage.verification_status
+                    if not stage.summary:
+                        stage.summary = f"Live business outcome satisfied the {stage_name} stage requirements"
+                    if not stage.completed_at:
+                        stage.completed_at = utc_now_iso()
+                    stage.blocker = ""
+                    stage.updated_at = utc_now_iso()
+            elif stage_name == "learn" and stage.status == "failed":
+                stage.status = "pending"
+                stage.blocker = ""
+                stage.updated_at = utc_now_iso()
+        state.metadata.pop("active_execution", None)
     state.blockers = []
     state.status = "verifying"
     state.current_stage = "verify"
     state.next_action = "verify_done_definition"
     state.last_update_at = utc_now_iso()
     save_state(state)
-    log_event(task_id, "business_outcome_synced_from_live_probe", outcome=written, diagnosis=signals.get("diagnosis", ""))
-    return {"signals": signals, "written": True, "business_outcome": written}
+    log_event(
+        task_id,
+        "business_outcome_synced_from_live_probe",
+        outcome=written or existing,
+        diagnosis=signals.get("diagnosis", ""),
+        refreshed=bool(needs_write),
+    )
+    return {"signals": signals, "written": bool(needs_write), "business_outcome": written or existing}
 
 
 def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> dict | None:
@@ -294,6 +326,7 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
     synced_business_outcome = _sync_business_outcome_from_live_probe(task_id)
     if synced_business_outcome:
         state = load_state(task_id)
+        mission_cycle = run_mission_cycle(task_id, contract.to_dict(), state.to_dict())
     control_center_result = _apply_control_center_decision(task_id, state, mission_cycle)
     state = load_state(task_id)
     if control_center_result and control_center_result.get("action") == "advanced_execute_subtask":

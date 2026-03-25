@@ -102,6 +102,25 @@ def _business_outcome_verifier(task_id: str) -> Dict[str, object]:
     }
 
 
+def _derive_business_verification_requirements(intent: Dict[str, object]) -> Dict[str, object]:
+    goal = str(intent.get("goal", "") or "")
+    goal_lower = goal.lower()
+    requirements: Dict[str, object] = {}
+
+    if any(token in goal for token in ["至少3张场景图", "至少 3 张场景图", "至少三张场景图", "至少 3 张"]):
+        requirements["scene_image_count_at_least"] = 3
+    if any(token in goal for token in ["排到前面", "排到最前", "第8张"]):
+        requirements["scene_image_position_max"] = 3
+    if "packing unit" in goal_lower or "补齐缺失参数" in goal:
+        requirements["packing_units_at_least"] = 1
+        requirements["form_must_be_valid"] = True
+    if any(token in goal for token in ["提交审核", "提审", "submit for review"]):
+        requirements["review_status_not_in"] = ["DRAFT"]
+        requirements["form_must_be_valid"] = True
+
+    return requirements
+
+
 def _derive_stage_contracts(task_id: str, blueprint: Dict[str, object]) -> List[Dict[str, object]]:
     intent = blueprint["intent"]
     selected_plan = blueprint["selected_plan"]
@@ -185,6 +204,7 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
     authorized_session = build_authorized_session_plan(task_id, intent, challenge)
     human_checkpoint = build_human_checkpoint(task_id, challenge)
     fetch_route = build_fetch_route(task_id, intent, selected_plan, domain_profile, challenge)
+    business_verification_requirements = _derive_business_verification_requirements(intent)
     topology = build_topology(intent, selected_plan)
     fractal = build_fractal_loops(intent, selected_plan, topology)
     htn = build_htn_tree(intent, selected_plan, topology, fractal)
@@ -214,6 +234,7 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
         "authorized_session": authorized_session,
         "human_checkpoint": human_checkpoint,
         "fetch_route": fetch_route,
+        "business_verification_requirements": business_verification_requirements,
         "resource_scout": scout,
         "arbitration": arbitration,
         "adoption_flow": adoption_flow,
@@ -248,6 +269,7 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
             "authorized_session": authorized_session,
             "human_checkpoint": human_checkpoint,
             "fetch_route": fetch_route,
+            "business_verification_requirements": business_verification_requirements,
             "resource_scout": scout,
             "arbitration": arbitration,
             "adoption_flow": adoption_flow,

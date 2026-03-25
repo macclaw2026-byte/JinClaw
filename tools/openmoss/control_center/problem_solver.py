@@ -22,6 +22,8 @@ def solve_problem(task_id: str, blockers: List[str], arbitration: Dict[str, obje
     challenge = classify_challenge(task_id, blockers, {"status": "recovering" if blockers else "planning", "current_stage": "execute" if blockers else ""})
     if approval.get("pending"):
         root_cause = "approval_pending"
+    elif browser_signals.get("requirements_evaluation", {}).get("ok") is True:
+        root_cause = "business_requirements_satisfied"
     elif browser_signals.get("diagnosis") not in {"", "none"}:
         root_cause = str(browser_signals.get("diagnosis"))
     elif challenge.get("challenge_type") != "none":
@@ -46,6 +48,8 @@ def solve_problem(task_id: str, blockers: List[str], arbitration: Dict[str, obje
     if root_cause == "browser_form_validation_blocking_submit":
         options.extend(["normalize_invalid_numeric_fields_then_resubmit", "repair_form_validation_then_retry_submit"])
     if root_cause == "upload_saved_successfully":
+        options.append("confirm_business_outcome_and_finalize")
+    if root_cause == "business_requirements_satisfied":
         options.append("confirm_business_outcome_and_finalize")
     if root_cause == "needs_network_request_level_debugging":
         options.append("needs_network_request_level_debugging")

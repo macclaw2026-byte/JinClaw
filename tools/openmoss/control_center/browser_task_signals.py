@@ -42,6 +42,22 @@ def _load_link(task_id: str) -> Dict[str, object]:
     return {}
 
 
+def _load_contract_payload(task_id: str) -> Dict[str, object]:
+    contract_path = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/autonomy/tasks") / task_id / "contract.json"
+    try:
+        return json.loads(contract_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _load_business_verification_requirements(task_id: str) -> Dict[str, object]:
+    contract = _load_contract_payload(task_id)
+    metadata = contract.get("metadata", {}) or {}
+    control_center = metadata.get("control_center", {}) or {}
+    requirements = control_center.get("business_verification_requirements", {}) or {}
+    return requirements if isinstance(requirements, dict) else {}
+
+
 def _load_sessions_registry() -> Dict[str, object]:
     registry_path = OPENCLAW_SESSIONS_ROOT / "sessions.json"
     try:
@@ -236,6 +252,9 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
   const imgs = [...document.querySelectorAll('img')]
     .filter(i => i.alt && /^Image \d+$/.test(i.alt))
     .map(i => i.src);
+  const sceneImgs = imgs
+    .map((src, idx) => ({src, position: idx + 1}))
+    .filter((item) => item.src.includes('neosgo-prod-') || item.src.includes('/products/'));
   const input = document.querySelector("input[type='file'][accept='image/jpeg,image/png,image/gif,image/webp']");
   const form = document.querySelector('form');
   const invalid = form
@@ -253,22 +272,56 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
     : [];
   return {
     count: imgs.length,
+    sceneImageCount: sceneImgs.length,
+    sceneImagePositions: sceneImgs.map((item) => item.position),
+    firstScenePosition: sceneImgs.length ? sceneImgs[0].position : null,
     fileCount: input && input.files ? input.files.length : 0,
     formValid: form ? form.checkValidity() : null,
     invalidFields: invalid,
+    imgs,
     lastImgs: imgs.slice(-3),
     url: location.href,
   };
 }""",
     }
+    product_fetch_body = {
+        "profile": "chrome-relay",
+        "targetId": target_id,
+        "kind": "evaluate",
+        "fn": r"""async () => {
+  const id = location.pathname.split('/').filter(Boolean).pop();
+  try {
+    const resp = await fetch(`/api/products/${id}`, { credentials: 'include' });
+    const data = await resp.json();
+    return {
+      ok: resp.ok,
+      status: resp.status,
+      productStatus: data && typeof data.status === 'string' ? data.status : '',
+      packingUnitsCount: Array.isArray(data && data.packingUnits) ? data.packingUnits.length : 0,
+      packingUnits: Array.isArray(data && data.packingUnits) ? data.packingUnits : [],
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      status: 0,
+      productStatus: '',
+      packingUnitsCount: 0,
+      packingUnits: [],
+      fetchError: String(err && err.message || err),
+    };
+  }
+}""",
+    }
     try:
         requests = _browser_control_get(token, requests_path)
         state = _browser_control_post(token, "/act", evaluate_body)
+        product_state = _browser_control_post(token, "/act", product_fetch_body)
     except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
         return payload
 
     request_rows = requests.get("requests", []) if isinstance(requests, dict) else []
     state_result = state.get("result", {}) if isinstance(state, dict) else {}
+    product_result = product_state.get("result", {}) if isinstance(product_state, dict) else {}
     save_request = next(
         (
             row
@@ -284,12 +337,19 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
             "available": True,
             "page_url": str(state_result.get("url", page_url) or page_url),
             "product_image_count": state_result.get("count"),
+            "scene_image_count": state_result.get("sceneImageCount"),
+            "scene_image_positions": state_result.get("sceneImagePositions", []),
+            "first_scene_position": state_result.get("firstScenePosition"),
             "file_input_count": state_result.get("fileCount"),
             "form_valid": state_result.get("formValid"),
             "invalid_fields": state_result.get("invalidFields", []),
+            "all_images": state_result.get("imgs", []),
             "last_images": state_result.get("lastImgs", []),
             "save_request_succeeded": bool(save_request),
             "save_request_url": str(save_request.get("url", "")) if save_request else "",
+            "product_status": str(product_result.get("productStatus", "") or ""),
+            "packing_units_count": product_result.get("packingUnitsCount"),
+            "packing_units": product_result.get("packingUnits", []),
         }
     )
     if save_request:
@@ -303,6 +363,74 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
             "native form validation blocked submit before the save request was sent",
         ]
     return payload
+
+
+def _evaluate_business_requirements(requirements: Dict[str, object], payload: Dict[str, object]) -> Dict[str, object]:
+    if not requirements:
+        return {"ok": True, "status": "no_explicit_requirements", "failures": []}
+
+    live_probe = payload.get("live_probe", {}) if isinstance(payload.get("live_probe"), dict) else {}
+    failures: List[Dict[str, object]] = []
+
+    min_scene_count = requirements.get("scene_image_count_at_least")
+    if isinstance(min_scene_count, int):
+        current = live_probe.get("scene_image_count")
+        if not isinstance(current, int) or current < min_scene_count:
+            failures.append(
+                {
+                    "code": "scene_image_count_below_target",
+                    "expected_at_least": min_scene_count,
+                    "current": current,
+                }
+            )
+
+    scene_pos_max = requirements.get("scene_image_position_max")
+    if isinstance(scene_pos_max, int):
+        current = live_probe.get("first_scene_position")
+        if not isinstance(current, int) or current > scene_pos_max:
+            failures.append(
+                {
+                    "code": "scene_image_not_far_enough_forward",
+                    "expected_position_max": scene_pos_max,
+                    "current": current,
+                }
+            )
+
+    packing_units_at_least = requirements.get("packing_units_at_least")
+    if isinstance(packing_units_at_least, int):
+        current = live_probe.get("packing_units_count")
+        if not isinstance(current, int) or current < packing_units_at_least:
+            failures.append(
+                {
+                    "code": "packing_units_below_target",
+                    "expected_at_least": packing_units_at_least,
+                    "current": current,
+                }
+            )
+
+    if requirements.get("form_must_be_valid") is True and live_probe.get("form_valid") is not True:
+        failures.append(
+            {
+                "code": "form_not_valid",
+                "current": live_probe.get("form_valid"),
+                "invalid_fields": live_probe.get("invalid_fields", []),
+            }
+        )
+
+    forbidden_statuses = requirements.get("review_status_not_in") or []
+    if isinstance(forbidden_statuses, list) and forbidden_statuses:
+        current_status = str(live_probe.get("product_status", "") or "").strip()
+        if not current_status or current_status in {str(item) for item in forbidden_statuses}:
+            failures.append(
+                {
+                    "code": "review_not_submitted",
+                    "forbidden_statuses": forbidden_statuses,
+                    "current": current_status,
+                }
+            )
+
+    status = "ok" if not failures else failures[0]["code"]
+    return {"ok": not failures, "status": status, "failures": failures}
 
 
 def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
@@ -334,6 +462,8 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
         "file_input_count": None,
         "evidence": [],
     }
+    requirements = _load_business_verification_requirements(task_id)
+    payload["business_verification_requirements"] = requirements
 
     if not session_files:
         _write_json(BROWSER_SIGNALS_ROOT / f"{task_id}.json", payload)
@@ -371,6 +501,12 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
         payload["live_last_images"] = live_probe.get("last_images", [])
         payload["save_request_succeeded"] = live_probe.get("save_request_succeeded", False)
         payload["save_request_url"] = live_probe.get("save_request_url", "")
+        payload["scene_image_count"] = live_probe.get("scene_image_count")
+        payload["first_scene_position"] = live_probe.get("first_scene_position")
+        payload["scene_image_positions"] = live_probe.get("scene_image_positions", [])
+        payload["product_status"] = live_probe.get("product_status", "")
+        payload["packing_units_count"] = live_probe.get("packing_units_count")
+        payload["packing_units"] = live_probe.get("packing_units", [])
         if live_probe.get("save_request_succeeded"):
             payload["diagnosis"] = "upload_saved_successfully"
             payload["recommended_action"] = "confirm_business_outcome_and_finalize"
@@ -424,6 +560,57 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
             payload["diagnosis"] = "browser_form_validation_blocking_submit"
             payload["recommended_action"] = "normalize_invalid_numeric_fields_then_resubmit"
             payload["evidence"] = sorted(set([*payload.get("evidence", []), *live_probe.get("evidence", [])]))
+
+    requirements_evaluation = _evaluate_business_requirements(requirements, payload)
+    payload["requirements_evaluation"] = requirements_evaluation
+    if requirements and requirements_evaluation.get("ok"):
+        live_probe = payload.get("live_probe", {}) if isinstance(payload.get("live_probe"), dict) else {}
+        payload["diagnosis"] = "business_requirements_satisfied"
+        payload["recommended_action"] = "confirm_business_outcome_and_finalize"
+        payload["business_outcome"] = {
+            "goal_satisfied": True,
+            "user_visible_result_confirmed": True,
+            "proof_summary": (
+                "Live browser probe confirmed seller.neosgo follow-up completion: "
+                f"{live_probe.get('scene_image_count')} scene images are present, "
+                f"the first scene image is at position {live_probe.get('first_scene_position')}, "
+                f"packing units count is {live_probe.get('packing_units_count')}, "
+                f"form validity is {live_probe.get('form_valid')}, "
+                f"and product status is {live_probe.get('product_status') or 'unknown'}."
+            ),
+            "evidence": {
+                "diagnosis": "business_requirements_satisfied",
+                "live_product_image_count": live_probe.get("product_image_count"),
+                "scene_image_count": live_probe.get("scene_image_count"),
+                "scene_image_positions": live_probe.get("scene_image_positions", []),
+                "first_scene_position": live_probe.get("first_scene_position"),
+                "packing_units_count": live_probe.get("packing_units_count"),
+                "product_status": live_probe.get("product_status", ""),
+                "form_valid": live_probe.get("form_valid"),
+                "save_request_succeeded": live_probe.get("save_request_succeeded", False),
+                "save_request_url": live_probe.get("save_request_url", ""),
+                "page_url": live_probe.get("page_url", ""),
+                "requirements_evaluation": requirements_evaluation,
+            },
+        }
+    elif requirements and not requirements_evaluation.get("ok"):
+        payload.pop("business_outcome", None)
+        failure_code = str(requirements_evaluation.get("status", "")).strip()
+        if failure_code == "scene_image_not_far_enough_forward":
+            payload["diagnosis"] = "scene_images_not_reordered"
+            payload["recommended_action"] = "reorder_scene_images_and_confirm_persistence"
+        elif failure_code == "scene_image_count_below_target":
+            payload["diagnosis"] = "scene_image_count_below_target"
+            payload["recommended_action"] = "generate_or_upload_additional_scene_images"
+        elif failure_code == "packing_units_below_target":
+            payload["diagnosis"] = "packing_unit_missing"
+            payload["recommended_action"] = "add_packing_unit_and_save"
+        elif failure_code == "review_not_submitted":
+            payload["diagnosis"] = "review_not_submitted"
+            payload["recommended_action"] = "submit_for_review_after_requirements_met"
+        elif failure_code == "form_not_valid":
+            payload["diagnosis"] = "browser_form_validation_blocking_submit"
+            payload["recommended_action"] = "normalize_invalid_numeric_fields_then_resubmit"
 
     _write_json(BROWSER_SIGNALS_ROOT / f"{task_id}.json", payload)
     return payload
