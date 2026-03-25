@@ -6,12 +6,13 @@ import argparse
 import json
 import sys
 import time
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
 from action_executor import dispatch_stage, poll_active_execution
 from learning_engine import get_error_recurrence
-from manager import TASKS_ROOT, advance_execute_subtask, apply_recovery, build_args, checkpoint_task, complete_stage_internal, load_contract, load_state, log_event, run_once, save_state, verify_task, write_business_outcome
+from manager import TASKS_ROOT, advance_execute_subtask, apply_recovery, build_args, checkpoint_task, complete_stage_internal, contract_path, load_contract, load_state, log_event, run_once, save_state, state_path, verify_task, write_business_outcome
 from promotion_engine import promote_recurring_errors
 
 CONTROL_CENTER_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/control_center")
@@ -199,6 +200,48 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "current_stage": state.current_stage,
             "next_action": state.next_action,
             "action": "awaiting_human_checkpoint",
+            "mission_cycle": mission_cycle,
+        }
+    if action in {
+        "needs_network_request_level_debugging",
+        "investigate_frontend_binding_and_network_request_chain",
+        "normalize_invalid_numeric_fields_then_resubmit",
+        "repair_form_validation_then_retry_submit",
+    }:
+        state.status = "blocked"
+        state.next_action = action
+        blocker_map = {
+            "needs_network_request_level_debugging": "the current browser path needs request-level debugging before retrying",
+            "investigate_frontend_binding_and_network_request_chain": "the current upload control requires frontend-binding and request-chain inspection",
+            "normalize_invalid_numeric_fields_then_resubmit": "form validation must be normalized before a reliable resubmit",
+            "repair_form_validation_then_retry_submit": "invalid form fields must be repaired before submit can succeed",
+        }
+        state.blockers = [blocker_map[action]]
+        state.last_update_at = utc_now_iso()
+        save_state(state)
+        log_event(task_id, "control_center_targeted_debug_required", action=action, diagnosis=mission_cycle.get("browser_signals", {}).get("diagnosis", ""))
+        return {
+            "task_id": task_id,
+            "status": state.status,
+            "current_stage": state.current_stage,
+            "next_action": state.next_action,
+            "action": "targeted_debug_required",
+            "mission_cycle": mission_cycle,
+        }
+    if action == "confirm_business_outcome_and_finalize":
+        state.status = "verifying"
+        state.current_stage = "verify"
+        state.next_action = "verify_done_definition"
+        state.blockers = []
+        state.last_update_at = utc_now_iso()
+        save_state(state)
+        log_event(task_id, "control_center_finalize_business_outcome")
+        return {
+            "task_id": task_id,
+            "status": state.status,
+            "current_stage": state.current_stage,
+            "next_action": state.next_action,
+            "action": "finalize_business_outcome",
             "mission_cycle": mission_cycle,
         }
     if action.startswith("advance_subtask:"):
@@ -459,6 +502,20 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
     }
 
 
+def _task_artifacts_complete(task_id: str) -> bool:
+    return contract_path(task_id).exists() and state_path(task_id).exists()
+
+
+def _invalid_task_artifact_result(task_id: str) -> dict:
+    return {
+        "task_id": task_id,
+        "status": "skipped_invalid_task_artifact",
+        "action": "isolated_invalid_task_artifact",
+        "contract_exists": contract_path(task_id).exists(),
+        "state_exists": state_path(task_id).exists(),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Watchdog service for the general autonomy runtime")
     parser.add_argument("--once", action="store_true")
@@ -471,7 +528,23 @@ def main() -> int:
         if TASKS_ROOT.exists():
             for task_root in sorted(TASKS_ROOT.iterdir()):
                 if task_root.is_dir():
-                    results.append(process_task(task_root.name, args.stale_after_seconds))
+                    task_id = task_root.name
+                    if not _task_artifacts_complete(task_id):
+                        results.append(_invalid_task_artifact_result(task_id))
+                        continue
+                    try:
+                        results.append(process_task(task_id, args.stale_after_seconds))
+                    except Exception as exc:
+                        results.append(
+                            {
+                                "task_id": task_id,
+                                "status": "runtime_error_isolated",
+                                "action": "isolated_runtime_failure",
+                                "error": str(exc),
+                                "error_type": type(exc).__name__,
+                                "traceback": traceback.format_exc(limit=8),
+                            }
+                        )
         promotions = promote_recurring_errors()
         print(json.dumps({"processed_at": utc_now_iso(), "tasks": results, "promotions": promotions}, ensure_ascii=False, indent=2))
         if args.once:
