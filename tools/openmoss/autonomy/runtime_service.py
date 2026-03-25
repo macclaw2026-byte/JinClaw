@@ -98,6 +98,53 @@ def _purge_stale_successor_business_outcome(task_id: str) -> dict | None:
     return result
 
 
+def _invalidate_contradicted_business_outcome(task_id: str) -> dict | None:
+    state = load_state(task_id)
+    existing = state.metadata.get("business_outcome", {}) or {}
+    if not existing:
+        return None
+    signals = collect_browser_task_signals(task_id)
+    requirements = signals.get("requirements_evaluation", {}) or {}
+    if requirements.get("ok") is True:
+        return None
+
+    state.metadata.pop("business_outcome", None)
+    state.metadata.pop("active_execution", None)
+    state.metadata.pop("last_dispatched_marker", None)
+    state.metadata.pop("last_dispatch_at", None)
+    last_decision = state.metadata.get("last_control_center_decision", {}) or {}
+    if str(last_decision.get("action", "")).strip() == "confirm_business_outcome_and_finalize":
+        state.metadata.pop("last_control_center_decision", None)
+
+    execute_stage = state.stages.get("execute")
+    verify_stage = state.stages.get("verify")
+    learn_stage = state.stages.get("learn")
+    for stage in (execute_stage, verify_stage, learn_stage):
+        if not stage:
+            continue
+        stage.status = "pending"
+        stage.summary = ""
+        stage.verification_status = "not-run"
+        stage.blocker = ""
+        stage.completed_at = ""
+        stage.updated_at = utc_now_iso()
+
+    state.status = "planning"
+    state.current_stage = "execute" if execute_stage else state.first_pending_stage() or ""
+    state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+    state.blockers = []
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    result = {
+        "task_id": task_id,
+        "diagnosis": signals.get("diagnosis", ""),
+        "requirement_status": requirements.get("status", ""),
+        "reopened_stage": state.current_stage,
+    }
+    log_event(task_id, "contradicted_business_outcome_invalidated", result=result)
+    return result
+
+
 def _sync_business_outcome_from_live_probe(task_id: str) -> dict | None:
     contract = load_contract(task_id)
     signals = collect_browser_task_signals(task_id)
@@ -165,11 +212,17 @@ def _upgrade_missing_business_requirements(task_id: str) -> dict | None:
     contract = load_contract(task_id)
     metadata = contract.metadata.get("control_center", {}) or {}
     current_requirements = metadata.get("business_verification_requirements", {}) or {}
-    if current_requirements:
-        return None
     intent = metadata.get("intent", {}) or {}
     derived = derive_business_verification_requirements(intent)
     if not derived:
+        return None
+    should_update = not current_requirements
+    if not should_update and derived.get("batch_listings_mode") is True:
+        should_update = (
+            current_requirements.get("draft_visible_count_at_most") != 0
+            or current_requirements.get("batch_listings_mode") is not True
+        )
+    if not should_update:
         return None
     metadata["business_verification_requirements"] = derived
     contract.metadata["control_center"] = metadata
@@ -350,6 +403,38 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
         state.last_update_at = utc_now_iso()
         save_state(state)
         return None
+    if action == "process_next_draft_listing":
+        browser_signals = mission_cycle.get("browser_signals", {}) or {}
+        draft_rows = browser_signals.get("draft_rows", []) or []
+        state.status = "planning"
+        state.current_stage = "execute"
+        state.blockers = []
+        state.next_action = "start_stage:execute"
+        if draft_rows:
+            state.metadata["batch_focus"] = {
+                "next_draft": draft_rows[0],
+                "remaining_visible_drafts": browser_signals.get("draft_visible_count"),
+                "listing_status_counts": browser_signals.get("listing_status_counts", {}),
+            }
+        state.metadata.pop("active_execution", None)
+        state.metadata.pop("last_dispatched_marker", None)
+        state.metadata.pop("last_dispatch_at", None)
+        state.last_update_at = utc_now_iso()
+        save_state(state)
+        log_event(
+            task_id,
+            "control_center_process_next_draft_listing",
+            next_draft=draft_rows[0] if draft_rows else {},
+            remaining_visible_drafts=browser_signals.get("draft_visible_count"),
+        )
+        return {
+            "task_id": task_id,
+            "status": state.status,
+            "current_stage": state.current_stage,
+            "next_action": state.next_action,
+            "action": "processing_next_draft_listing",
+            "mission_cycle": mission_cycle,
+        }
     if action.startswith("advance_subtask:"):
         subtask_id = action.split(":", 1)[1]
         result = advance_execute_subtask(task_id, subtask_id, summary=f"HTN subtask focus advanced to {subtask_id}")
@@ -420,6 +505,9 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
     state = load_state(task_id)
     purged_business_outcome = _purge_stale_successor_business_outcome(task_id)
     if purged_business_outcome:
+        state = load_state(task_id)
+    invalidated_business_outcome = _invalidate_contradicted_business_outcome(task_id)
+    if invalidated_business_outcome:
         state = load_state(task_id)
     mission_cycle = run_mission_cycle(task_id, contract.to_dict(), state.to_dict())
     synced_business_outcome = _sync_business_outcome_from_live_probe(task_id)

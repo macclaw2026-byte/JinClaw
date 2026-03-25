@@ -41,6 +41,8 @@ def solve_problem(task_id: str, blockers: List[str], arbitration: Dict[str, obje
         options.append("repair_and_retry")
     if root_cause in {"browser_control_channel_lost", "stale_target_id"}:
         options.append("reacquire_browser_channel")
+    if root_cause == "draft_listings_remaining":
+        options.append("process_next_draft_listing")
     if root_cause in {"general_failure", "planning_gap"}:
         options.append("research_alternative_solution")
     if root_cause == "browser_channel_reacquired":

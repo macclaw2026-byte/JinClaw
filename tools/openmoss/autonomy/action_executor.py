@@ -147,6 +147,7 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
             f"fractal_focus: {json.dumps(stage_context.get('fractal_focus', {}), ensure_ascii=False)}",
             f"htn_focus: {json.dumps(stage_context.get('htn_focus', {}), ensure_ascii=False)}",
             f"subtask_progress: {json.dumps(stage_context.get('subtask_progress', {}), ensure_ascii=False)}",
+            f"batch_focus: {json.dumps(stage_context.get('batch_focus', {}), ensure_ascii=False)}",
             f"execution_summary: {json.dumps(stage_context.get('summary', {}), ensure_ascii=False)}",
             f"allowed_tools: {json.dumps(stage_context.get('allowed_tools', []), ensure_ascii=False)}",
             f"business_verification_requirements: {json.dumps(verifier_requirements, ensure_ascii=False)}",

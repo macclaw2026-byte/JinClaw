@@ -55,7 +55,21 @@ def _load_business_verification_requirements(task_id: str) -> Dict[str, object]:
     metadata = contract.get("metadata", {}) or {}
     control_center = metadata.get("control_center", {}) or {}
     requirements = control_center.get("business_verification_requirements", {}) or {}
-    return requirements if isinstance(requirements, dict) else {}
+    if not isinstance(requirements, dict):
+        requirements = {}
+    intent = control_center.get("intent", {}) or {}
+    goal = str(contract.get("user_goal", "") or intent.get("goal", "") or "")
+    normalized_goal = goal.replace(" ", "")
+    batch_draft_listings_goal = (
+        ("draft" in goal.lower() or "草稿" in goal or "listing页面所有draft" in normalized_goal or "所有draft状态" in normalized_goal)
+        and ("listing" in goal.lower() or "listing页面" in normalized_goal or "seller" in goal.lower() or "seller中心" in normalized_goal)
+    )
+    if batch_draft_listings_goal:
+        return {
+            "draft_visible_count_at_most": 0,
+            "batch_listings_mode": True,
+        }
+    return requirements
 
 
 def _load_sessions_registry() -> Dict[str, object]:
@@ -297,6 +311,48 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
 }""",
         }
 
+    def _listings_probe_body(current_target_id: str) -> Dict[str, object]:
+        return {
+            "profile": "chrome-relay",
+            "targetId": current_target_id,
+            "kind": "evaluate",
+            "fn": r"""() => {
+  const rows = [...document.querySelectorAll('tr')]
+    .map((tr) => {
+      const text = (tr.innerText || '').trim();
+      if (!text) return null;
+      const statusMatch = text.match(/\b(DRAFT|APPROVED|SUBMITTED|PENDING)\b/);
+      const skuMatch = text.match(/\b[A-Z]\d{3,}P\d+\b/);
+      const editHref = [...tr.querySelectorAll('a')]
+        .map((a) => a.href || '')
+        .find((href) => href.includes('/seller/products/') && !href.includes('/seller/products?'));
+      if (!statusMatch || !editHref) return null;
+      return {
+        status: statusMatch[1],
+        sku: skuMatch ? skuMatch[0] : '',
+        editHref,
+        text,
+      };
+    })
+    .filter(Boolean);
+  const statusCounts = rows.reduce((acc, row) => {
+    acc[row.status] = (acc[row.status] || 0) + 1;
+    return acc;
+  }, {});
+  const draftRows = rows.filter((row) => row.status === 'DRAFT');
+  const submittedRows = rows.filter((row) => row.status === 'SUBMITTED');
+  return {
+    url: location.href,
+    rowsCount: rows.length,
+    statusCounts,
+    draftVisibleCount: draftRows.length,
+    submittedVisibleCount: submittedRows.length,
+    draftRows: draftRows.slice(0, 25),
+    submittedRows: submittedRows.slice(0, 25),
+  };
+}""",
+        }
+
     expected_domains = ["seller.neosgo.com"]
 
     def _run_probe(current_target_id: str) -> Dict[str, object] | None:
@@ -304,9 +360,10 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
             requests = browser_control_get(token, _requests_path(current_target_id))
             state = browser_control_post(token, "/act", _evaluate_body(current_target_id))
             product_state = browser_control_post(token, "/act", _product_fetch_body(current_target_id))
+            listings_state = browser_control_post(token, "/act", _listings_probe_body(current_target_id))
         except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
             return None
-        return {"requests": requests, "state": state, "product_state": product_state}
+        return {"requests": requests, "state": state, "product_state": product_state, "listings_state": listings_state}
 
     channel_recovery = {"status": "not_needed", "ok": bool(target_id), "target_id": target_id, "page_url": page_url}
     if not target_id:
@@ -334,9 +391,11 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
     requests = probe["requests"]
     state = probe["state"]
     product_state = probe["product_state"]
+    listings_state = probe["listings_state"]
     request_rows = requests.get("requests", []) if isinstance(requests, dict) else []
     state_result = state.get("result", {}) if isinstance(state, dict) else {}
     product_result = product_state.get("result", {}) if isinstance(product_state, dict) else {}
+    listings_result = listings_state.get("result", {}) if isinstance(listings_state, dict) else {}
     save_request = next(
         (
             row
@@ -366,6 +425,11 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
             "product_status": str(product_result.get("productStatus", "") or ""),
             "packing_units_count": product_result.get("packingUnitsCount"),
             "packing_units": product_result.get("packingUnits", []),
+            "draft_visible_count": listings_result.get("draftVisibleCount"),
+            "submitted_visible_count": listings_result.get("submittedVisibleCount"),
+            "listing_status_counts": listings_result.get("statusCounts", {}),
+            "draft_rows": listings_result.get("draftRows", []),
+            "submitted_rows": listings_result.get("submittedRows", []),
             "channel_recovery": channel_recovery,
         }
     )
@@ -388,6 +452,19 @@ def _evaluate_business_requirements(requirements: Dict[str, object], payload: Di
 
     live_probe = payload.get("live_probe", {}) if isinstance(payload.get("live_probe"), dict) else {}
     failures: List[Dict[str, object]] = []
+
+    draft_visible_count_at_most = requirements.get("draft_visible_count_at_most")
+    if isinstance(draft_visible_count_at_most, int):
+        current = live_probe.get("draft_visible_count")
+        if not isinstance(current, int) or current > draft_visible_count_at_most:
+            failures.append(
+                {
+                    "code": "draft_listings_remaining",
+                    "expected_at_most": draft_visible_count_at_most,
+                    "current": current,
+                    "draft_rows": live_probe.get("draft_rows", []),
+                }
+            )
 
     min_scene_count = requirements.get("scene_image_count_at_least")
     if isinstance(min_scene_count, int):
@@ -524,6 +601,11 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
         payload["product_status"] = live_probe.get("product_status", "")
         payload["packing_units_count"] = live_probe.get("packing_units_count")
         payload["packing_units"] = live_probe.get("packing_units", [])
+        payload["draft_visible_count"] = live_probe.get("draft_visible_count")
+        payload["submitted_visible_count"] = live_probe.get("submitted_visible_count")
+        payload["listing_status_counts"] = live_probe.get("listing_status_counts", {})
+        payload["draft_rows"] = live_probe.get("draft_rows", [])
+        payload["submitted_rows"] = live_probe.get("submitted_rows", [])
         payload["channel_recovery"] = live_probe.get("channel_recovery", {})
         if analysis.get("diagnosis") == "browser_control_channel_lost":
             payload["diagnosis"] = "browser_channel_reacquired"
@@ -598,6 +680,29 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
         live_probe = payload.get("live_probe", {}) if isinstance(payload.get("live_probe"), dict) else {}
         payload["diagnosis"] = "business_requirements_satisfied"
         payload["recommended_action"] = "confirm_business_outcome_and_finalize"
+        if requirements.get("batch_listings_mode") is True:
+            payload["business_outcome"] = {
+                "goal_satisfied": True,
+                "user_visible_result_confirmed": True,
+                "proof_summary": (
+                    "Live browser probe confirmed the seller.neosgo Listings batch follow-up is complete: "
+                    f"visible draft listing count is {live_probe.get('draft_visible_count')}, "
+                    f"submitted visible count is {live_probe.get('submitted_visible_count')}, "
+                    f"and listing status counts are {live_probe.get('listing_status_counts', {})}."
+                ),
+                "evidence": {
+                    "diagnosis": "business_requirements_satisfied",
+                    "draft_visible_count": live_probe.get("draft_visible_count"),
+                    "submitted_visible_count": live_probe.get("submitted_visible_count"),
+                    "listing_status_counts": live_probe.get("listing_status_counts", {}),
+                    "draft_rows": live_probe.get("draft_rows", []),
+                    "submitted_rows": live_probe.get("submitted_rows", []),
+                    "page_url": live_probe.get("page_url", ""),
+                    "requirements_evaluation": requirements_evaluation,
+                },
+            }
+            _write_json(BROWSER_SIGNALS_ROOT / f"{task_id}.json", payload)
+            return payload
         payload["business_outcome"] = {
             "goal_satisfied": True,
             "user_visible_result_confirmed": True,
@@ -627,7 +732,10 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
     elif requirements and not requirements_evaluation.get("ok"):
         payload.pop("business_outcome", None)
         failure_code = str(requirements_evaluation.get("status", "")).strip()
-        if failure_code == "scene_image_not_far_enough_forward":
+        if failure_code == "draft_listings_remaining":
+            payload["diagnosis"] = "draft_listings_remaining"
+            payload["recommended_action"] = "process_next_draft_listing"
+        elif failure_code == "scene_image_not_far_enough_forward":
             payload["diagnosis"] = "scene_images_not_reordered"
             payload["recommended_action"] = "reorder_scene_images_and_confirm_persistence"
         elif failure_code == "scene_image_count_below_target":

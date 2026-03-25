@@ -107,6 +107,16 @@ def derive_business_verification_requirements(intent: Dict[str, object]) -> Dict
     goal_lower = goal.lower()
     requirements: Dict[str, object] = {}
     normalized_goal = goal.replace(" ", "")
+    batch_draft_listings_goal = (
+        ("draft" in goal_lower or "草稿" in goal or "listing页面所有draft" in normalized_goal or "所有draft状态" in normalized_goal)
+        and ("listing" in goal_lower or "listing页面" in normalized_goal or "seller" in goal_lower or "seller中心" in normalized_goal)
+    )
+
+    if batch_draft_listings_goal:
+        return {
+            "draft_visible_count_at_most": 0,
+            "batch_listings_mode": True,
+        }
 
     if any(token in goal for token in ["至少3张场景图", "至少 3 张场景图", "至少三张场景图", "至少 3 张"]):
         requirements["scene_image_count_at_least"] = 3
@@ -118,16 +128,6 @@ def derive_business_verification_requirements(intent: Dict[str, object]) -> Dict
     if any(token in goal for token in ["提交审核", "提审", "submit for review"]):
         requirements["review_status_not_in"] = ["DRAFT"]
         requirements["form_must_be_valid"] = True
-
-    if (
-        ("draft" in goal_lower or "草稿" in goal or "listing页面所有draft" in normalized_goal or "所有draft状态" in normalized_goal)
-        and ("listing" in goal_lower or "listing页面" in normalized_goal or "seller" in goal_lower or "seller中心" in normalized_goal)
-    ):
-        requirements.setdefault("scene_image_count_at_least", 3)
-        requirements.setdefault("scene_image_position_max", 3)
-        requirements.setdefault("packing_units_at_least", 1)
-        requirements["form_must_be_valid"] = True
-        requirements.setdefault("review_status_not_in", ["DRAFT"])
 
     return requirements
 

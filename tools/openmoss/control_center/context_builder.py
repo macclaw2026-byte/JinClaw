@@ -92,6 +92,7 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
             "cursor": subtask_cursor,
             "completed_subtasks": stage_state.get("completed_subtasks", []),
         },
+        "batch_focus": state.get("metadata", {}).get("batch_focus", {}),
         "summary": {
             "current_stage": state.get("current_stage", "") or summary.get("current_stage", ""),
             "status": state.get("status", "") or summary.get("status", ""),
