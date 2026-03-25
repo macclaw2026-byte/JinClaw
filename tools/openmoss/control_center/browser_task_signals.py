@@ -24,6 +24,11 @@ FILE_COUNT_PATTERNS = [
 ]
 
 
+def _is_listings_overview_url(url: str) -> bool:
+    normalized = str(url or "").strip()
+    return normalized.startswith("https://seller.neosgo.com/seller/products") and "/seller/products/" not in normalized
+
+
 def _write_json(path: Path, payload: Dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -46,6 +51,14 @@ def _load_contract_payload(task_id: str) -> Dict[str, object]:
     contract_path = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/autonomy/tasks") / task_id / "contract.json"
     try:
         return json.loads(contract_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _load_state_payload(task_id: str) -> Dict[str, object]:
+    state_path = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/autonomy/tasks") / task_id / "state.json"
+    try:
+        return json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
 
@@ -354,6 +367,12 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
         }
 
     expected_domains = ["seller.neosgo.com"]
+    preferred_url = ""
+    if isinstance(payload.get("business_verification_requirements"), dict) and payload["business_verification_requirements"].get("batch_listings_mode") is True:
+        state_payload = _load_state_payload(task_id)
+        batch_focus = (state_payload.get("metadata", {}) or {}).get("batch_focus", {}) if isinstance(state_payload, dict) else {}
+        if isinstance(batch_focus, dict):
+            preferred_url = str(batch_focus.get("expected_listings_url", "")).strip()
 
     def _run_probe(current_target_id: str) -> Dict[str, object] | None:
         try:
@@ -367,7 +386,12 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
 
     channel_recovery = {"status": "not_needed", "ok": bool(target_id), "target_id": target_id, "page_url": page_url}
     if not target_id:
-        channel_recovery = recover_browser_channel(task_id, expected_domains=expected_domains, last_known_url=page_url)
+        channel_recovery = recover_browser_channel(
+            task_id,
+            expected_domains=expected_domains,
+            last_known_url=page_url,
+            preferred_url=preferred_url,
+        )
         payload["channel_recovery"] = channel_recovery
         if not channel_recovery.get("ok"):
             return payload
@@ -376,7 +400,12 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
 
     probe = _run_probe(target_id)
     if not probe:
-        channel_recovery = recover_browser_channel(task_id, expected_domains=expected_domains, last_known_url=page_url)
+        channel_recovery = recover_browser_channel(
+            task_id,
+            expected_domains=expected_domains,
+            last_known_url=page_url,
+            preferred_url=preferred_url,
+        )
         payload["channel_recovery"] = channel_recovery
         if not channel_recovery.get("ok"):
             return payload
@@ -425,6 +454,12 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
             "product_status": str(product_result.get("productStatus", "") or ""),
             "packing_units_count": product_result.get("packingUnitsCount"),
             "packing_units": product_result.get("packingUnits", []),
+            "listings_page_url": (
+                str(listings_result.get("url", "") or "")
+                if _is_listings_overview_url(str(listings_result.get("url", "") or ""))
+                else ""
+            ),
+            "listings_rows_count": listings_result.get("rowsCount"),
             "draft_visible_count": listings_result.get("draftVisibleCount"),
             "submitted_visible_count": listings_result.get("submittedVisibleCount"),
             "listing_status_counts": listings_result.get("statusCounts", {}),
@@ -446,12 +481,75 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
     return payload
 
 
+def _augment_batch_probe_from_state(task_id: str, state_payload: Dict[str, object], payload: Dict[str, object]) -> None:
+    requirements = payload.get("business_verification_requirements", {})
+    if not isinstance(requirements, dict) or requirements.get("batch_listings_mode") is not True:
+        return
+    live_probe = payload.get("live_probe", {})
+    if not isinstance(live_probe, dict):
+        return
+    if isinstance(live_probe.get("listings_rows_count"), int) and live_probe.get("listings_rows_count", 0) > 0:
+        return
+    metadata = state_payload.get("metadata", {}) if isinstance(state_payload, dict) else {}
+    batch_focus = metadata.get("batch_focus", {}) if isinstance(metadata, dict) else {}
+    if not isinstance(batch_focus, dict):
+        return
+    remaining = batch_focus.get("remaining_visible_drafts")
+    next_draft = batch_focus.get("next_draft")
+    listing_status_counts = batch_focus.get("listing_status_counts")
+    synthesized_rows = []
+    if isinstance(next_draft, dict) and next_draft:
+        synthesized_rows.append(next_draft)
+    if isinstance(remaining, int) and remaining >= 0:
+        live_probe["draft_visible_count"] = remaining
+        payload["draft_visible_count"] = remaining
+    if synthesized_rows and not live_probe.get("draft_rows"):
+        live_probe["draft_rows"] = synthesized_rows
+        payload["draft_rows"] = synthesized_rows
+    if isinstance(listing_status_counts, dict) and listing_status_counts:
+        live_probe["listing_status_counts"] = listing_status_counts
+        payload["listing_status_counts"] = listing_status_counts
+    if _is_listings_overview_url(str(live_probe.get("listings_page_url", "") or "")) or _is_listings_overview_url(str(live_probe.get("page_url", "") or "")):
+        live_probe["listings_rows_count"] = max(1, len(synthesized_rows))
+        payload["listings_rows_count"] = live_probe["listings_rows_count"]
+        payload["evidence"] = sorted(
+            set(
+                [
+                    *payload.get("evidence", []),
+                    "batch probe reused persisted batch_focus when live listings rows were temporarily unreadable",
+                ]
+            )
+        )
+
+
 def _evaluate_business_requirements(requirements: Dict[str, object], payload: Dict[str, object]) -> Dict[str, object]:
     if not requirements:
         return {"ok": True, "status": "no_explicit_requirements", "failures": []}
 
     live_probe = payload.get("live_probe", {}) if isinstance(payload.get("live_probe"), dict) else {}
     failures: List[Dict[str, object]] = []
+    batch_listings_mode = requirements.get("batch_listings_mode") is True
+
+    if batch_listings_mode:
+        listings_page_url = str(live_probe.get("listings_page_url", "") or live_probe.get("page_url", "")).strip()
+        listings_rows_count = live_probe.get("listings_rows_count")
+        on_listings_overview = _is_listings_overview_url(listings_page_url)
+        if not on_listings_overview:
+            failures.append(
+                {
+                    "code": "batch_not_on_listings_overview",
+                    "current_url": listings_page_url,
+                    "rows_count": listings_rows_count,
+                }
+            )
+        elif not isinstance(listings_rows_count, int) or listings_rows_count <= 0:
+            failures.append(
+                {
+                    "code": "batch_listings_rows_unreadable",
+                    "current_url": listings_page_url,
+                    "rows_count": listings_rows_count,
+                }
+            )
 
     draft_visible_count_at_most = requirements.get("draft_visible_count_at_most")
     if isinstance(draft_visible_count_at_most, int):
@@ -540,13 +638,30 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
         return payload
 
     link = _load_link(task_id)
+    state_payload = _load_state_payload(task_id)
     last_message_id = str(link.get("last_message_id", "")).strip()
-    session_key = str(link.get("session_key", "")).strip()
-    session_files = _candidate_session_files_from_key(session_key) or _candidate_session_files(last_message_id)
+    linked_session_key = str(link.get("session_key", "")).strip()
+    runtime_session_key = str(
+        (
+            state_payload.get("metadata", {}) or {}
+        ).get("active_execution", {}).get("session_key")
+        or (
+            state_payload.get("metadata", {}) or {}
+        ).get("last_execution_session_key")
+        or ""
+    ).strip()
+    session_key = runtime_session_key or linked_session_key
+    session_files = (
+        _candidate_session_files_from_key(runtime_session_key)
+        or _candidate_session_files_from_key(linked_session_key)
+        or _candidate_session_files(last_message_id)
+    )
     payload: Dict[str, object] = {
         "task_id": task_id,
         "link_path": link.get("_path", ""),
         "session_key": session_key,
+        "linked_session_key": linked_session_key,
+        "runtime_session_key": runtime_session_key,
         "last_message_id": last_message_id,
         "session_path": "",
         "analysis_window_lines": 0,
@@ -558,6 +673,10 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
     }
     requirements = _load_business_verification_requirements(task_id)
     payload["business_verification_requirements"] = requirements
+    state_metadata = state_payload.get("metadata", {}) if isinstance(state_payload, dict) else {}
+    batch_focus = state_metadata.get("batch_focus", {}) if isinstance(state_metadata, dict) else {}
+    if isinstance(batch_focus, dict):
+        payload["preferred_url"] = str(batch_focus.get("expected_listings_url", "")).strip()
 
     if not session_files:
         _write_json(BROWSER_SIGNALS_ROOT / f"{task_id}.json", payload)
@@ -587,6 +706,7 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
 
     live_probe = _collect_live_browser_probe(task_id, window)
     payload["live_probe"] = live_probe
+    _augment_batch_probe_from_state(task_id, state_payload, payload)
     if live_probe.get("available"):
         payload["live_product_image_count"] = live_probe.get("product_image_count")
         payload["live_file_input_count"] = live_probe.get("file_input_count")
@@ -601,6 +721,8 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
         payload["product_status"] = live_probe.get("product_status", "")
         payload["packing_units_count"] = live_probe.get("packing_units_count")
         payload["packing_units"] = live_probe.get("packing_units", [])
+        payload["listings_page_url"] = live_probe.get("listings_page_url", "")
+        payload["listings_rows_count"] = live_probe.get("listings_rows_count")
         payload["draft_visible_count"] = live_probe.get("draft_visible_count")
         payload["submitted_visible_count"] = live_probe.get("submitted_visible_count")
         payload["listing_status_counts"] = live_probe.get("listing_status_counts", {})
@@ -735,6 +857,9 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
         if failure_code == "draft_listings_remaining":
             payload["diagnosis"] = "draft_listings_remaining"
             payload["recommended_action"] = "process_next_draft_listing"
+        elif failure_code in {"batch_not_on_listings_overview", "batch_listings_rows_unreadable"}:
+            payload["diagnosis"] = failure_code
+            payload["recommended_action"] = "return_to_listings_overview_and_retry_batch_probe"
         elif failure_code == "scene_image_not_far_enough_forward":
             payload["diagnosis"] = "scene_images_not_reordered"
             payload["recommended_action"] = "reorder_scene_images_and_confirm_persistence"

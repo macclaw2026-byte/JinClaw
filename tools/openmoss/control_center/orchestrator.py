@@ -67,8 +67,21 @@ def _merge_inherited_intent(intent: Dict[str, object], inherited_intent: Dict[st
                 + [str(item) for item in inherited_intent.get(key, []) if str(item)]
             )
         )
-    for key in ("requires_external_information", "may_download_artifacts", "may_execute_external_code", "needs_browser", "needs_verification"):
-        merged[key] = bool(intent.get(key) or inherited_intent.get(key))
+    normalized_goal = str(intent.get("goal", "") or "").replace(" ", "")
+    is_browser_marketplace_followup = (
+        bool(intent.get("needs_browser"))
+        and "marketplace" in {str(item) for item in merged.get("task_types", [])}
+        and ("listing页面" in normalized_goal or "draft" in normalized_goal.lower() or "seller" in normalized_goal.lower())
+    )
+    merged["requires_external_information"] = bool(intent.get("requires_external_information") or inherited_intent.get("requires_external_information"))
+    merged["needs_browser"] = bool(intent.get("needs_browser") or inherited_intent.get("needs_browser"))
+    merged["needs_verification"] = bool(intent.get("needs_verification") or inherited_intent.get("needs_verification"))
+    if is_browser_marketplace_followup:
+        merged["may_download_artifacts"] = bool(intent.get("may_download_artifacts"))
+        merged["may_execute_external_code"] = bool(intent.get("may_execute_external_code"))
+    else:
+        merged["may_download_artifacts"] = bool(intent.get("may_download_artifacts") or inherited_intent.get("may_download_artifacts"))
+        merged["may_execute_external_code"] = bool(intent.get("may_execute_external_code") or inherited_intent.get("may_execute_external_code"))
     if str(intent.get("risk_level", "low")).lower() == "low":
         merged["risk_level"] = inherited_intent.get("risk_level", intent.get("risk_level", "low"))
     inherited_constraints = [str(item) for item in inherited_intent.get("hard_constraints", []) if str(item)]

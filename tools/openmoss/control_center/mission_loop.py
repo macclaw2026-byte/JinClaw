@@ -97,12 +97,52 @@ def _ensure_cognitive_maps(mission: Dict[str, object]) -> Dict[str, object]:
     return mission
 
 
+def _force_browser_batch_plan(mission: Dict[str, object]) -> Dict[str, object]:
+    intent = mission.get("intent", {}) or {}
+    normalized_goal = str(intent.get("goal", "") or "").replace(" ", "")
+    is_batch_marketplace_browser = (
+        bool(intent.get("needs_browser"))
+        and "marketplace" in {str(item) for item in intent.get("task_types", [])}
+        and ("draft" in normalized_goal.lower() or "listing页面" in normalized_goal or "seller" in normalized_goal.lower())
+    )
+    if not is_batch_marketplace_browser:
+        return mission
+    candidate_plans = mission.get("candidate_plans", []) or []
+    browser_plan = next((plan for plan in candidate_plans if plan.get("plan_id") == "browser_evidence"), None)
+    if not browser_plan:
+        return mission
+    if mission.get("selected_plan", {}).get("plan_id") == "browser_evidence":
+        return mission
+    mission["selected_plan"] = browser_plan
+    mission["topology"] = build_topology(intent, browser_plan)
+    mission["fractal_loops"] = build_fractal_loops(intent, browser_plan, mission["topology"])
+    mission["htn"] = build_htn_tree(intent, browser_plan, mission["topology"], mission["fractal_loops"])
+    mission["stpa"] = audit_mission(intent, browser_plan, mission["topology"], mission.get("approval", {}))
+    mission["arbitration"] = arbitrate_solution_path(intent, browser_plan, mission.get("approval", {}), mission.get("capabilities", {}))
+    mission["adoption_flow"] = build_adoption_flow(
+        str(mission.get("task_id", "mission")),
+        browser_plan,
+        mission.get("approval", {}),
+        {},
+    )
+    mission["fetch_route"] = build_fetch_route(
+        str(mission.get("task_id", "mission")),
+        intent,
+        browser_plan,
+        mission.get("domain_profile", {}) or build_domain_profile(str(mission.get("task_id", "mission")), intent),
+        mission.get("challenge", {}) or classify_challenge(str(mission.get("task_id", "mission")), [], {"status": "planning", "current_stage": "execute"}),
+    )
+    mission["capability_clone"] = {}
+    return mission
+
+
 def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str, object]) -> Dict[str, object]:
     mission = _load_json(MISSIONS_ROOT / f"{task_id}.json")
     if not mission:
         return {"task_id": task_id, "status": "no_mission_package"}
     mission["approval"] = _load_live_approval(task_id, mission)
     mission = _ensure_cognitive_maps(mission)
+    mission = _force_browser_batch_plan(mission)
     summary = compress_mission(task_id, mission, state)
     current_stage = state.get("current_stage", "") or (state.get("stage_order", [""])[0] if state.get("stage_order") else "")
     context_packet = build_stage_context(task_id, current_stage, contract, state) if current_stage else {}
@@ -187,6 +227,7 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
                 "confirm_business_outcome_and_finalize",
                 "continue_current_plan",
                 "process_next_draft_listing",
+                "return_to_listings_overview_and_retry_batch_probe",
             },
         }
     elif current_stage == "execute" and htn_focus.get("focus_node", {}).get("node_id"):

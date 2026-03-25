@@ -20,6 +20,7 @@ if str(CONTROL_CENTER_DIR) not in sys.path:
     sys.path.insert(0, str(CONTROL_CENTER_DIR))
 
 from context_builder import build_stage_context
+from browser_task_signals import collect_browser_task_signals
 
 
 def _resolve_openclaw_bin() -> str:
@@ -50,6 +51,13 @@ def _execution_records_dir(task_id: str) -> Path:
     return task_dir(task_id) / "executions"
 
 
+def _derive_execution_session_key(session_key: str, task_id: str) -> str:
+    normalized = str(session_key or "").strip()
+    if not normalized:
+        return normalized
+    return f"{normalized}:autonomy:{task_id}"
+
+
 def _write_json(path: Path, payload: Dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -59,6 +67,21 @@ def _record_execution(task_id: str, payload: Dict) -> str:
     record_path = _execution_records_dir(task_id) / f"{uuid.uuid4().hex}.json"
     _write_json(record_path, payload)
     return str(record_path)
+
+
+def _batch_execution_should_continue(task_id: str) -> Dict | None:
+    contract = load_contract(task_id)
+    requirements = contract.metadata.get("control_center", {}).get("business_verification_requirements", {}) or {}
+    if requirements.get("batch_listings_mode") is not True:
+        return None
+    signals = collect_browser_task_signals(task_id)
+    diagnosis = str(signals.get("diagnosis", "")).strip()
+    recommended_action = str(signals.get("recommended_action", "")).strip()
+    if diagnosis in {"draft_listings_remaining", "batch_not_on_listings_overview", "batch_listings_rows_unreadable"}:
+        return {"signals": signals, "diagnosis": diagnosis, "recommended_action": recommended_action}
+    if recommended_action in {"process_next_draft_listing", "return_to_listings_overview_and_retry_batch_probe"}:
+        return {"signals": signals, "diagnosis": diagnosis or "batch_continuation_required", "recommended_action": recommended_action}
+    return None
 
 
 def _summarize_preflight_block(preflight: Dict) -> list[str]:
@@ -134,26 +157,83 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
     stage_context = build_stage_context(task_id, stage_name, contract.to_dict(), state.to_dict())
     stage_contract = next((stage for stage in contract.stages if stage.name == stage_name), None)
     verifier_requirements = stage_contract.verifier if stage_contract and stage_contract.verifier else {}
-    return "\n".join(
-        [
-            "[Autonomy runtime execution request]",
-            f"task_id: {stage_context.get('task_id', task_id)}",
-            f"stage: {stage_context.get('stage_name', stage_name)}",
-            f"user_goal: {stage_context.get('goal', contract.user_goal)}",
-            f"done_definition: {stage_context.get('done_definition', contract.done_definition)}",
-            f"stage_goal: {stage_context.get('stage_goal', '')}",
-            f"selected_plan: {json.dumps(stage_context.get('selected_plan', {}), ensure_ascii=False)}",
-            f"topology_focus: {json.dumps(stage_context.get('topology_focus', {}), ensure_ascii=False)}",
-            f"fractal_focus: {json.dumps(stage_context.get('fractal_focus', {}), ensure_ascii=False)}",
-            f"htn_focus: {json.dumps(stage_context.get('htn_focus', {}), ensure_ascii=False)}",
-            f"subtask_progress: {json.dumps(stage_context.get('subtask_progress', {}), ensure_ascii=False)}",
-            f"batch_focus: {json.dumps(stage_context.get('batch_focus', {}), ensure_ascii=False)}",
-            f"execution_summary: {json.dumps(stage_context.get('summary', {}), ensure_ascii=False)}",
-            f"allowed_tools: {json.dumps(stage_context.get('allowed_tools', []), ensure_ascii=False)}",
-            f"business_verification_requirements: {json.dumps(verifier_requirements, ensure_ascii=False)}",
-            "Instruction: execute only the minimum necessary work for this stage, use only approved actions, preserve security boundaries, and report concise evidence for verification.",
-        ]
-    )
+    prompt_lines = [
+        "[Autonomy runtime execution request]",
+        f"task_id: {stage_context.get('task_id', task_id)}",
+        f"stage: {stage_context.get('stage_name', stage_name)}",
+        f"user_goal: {stage_context.get('goal', contract.user_goal)}",
+        f"done_definition: {stage_context.get('done_definition', contract.done_definition)}",
+        f"stage_goal: {stage_context.get('stage_goal', '')}",
+        f"selected_plan: {json.dumps(stage_context.get('selected_plan', {}), ensure_ascii=False)}",
+        f"topology_focus: {json.dumps(stage_context.get('topology_focus', {}), ensure_ascii=False)}",
+        f"fractal_focus: {json.dumps(stage_context.get('fractal_focus', {}), ensure_ascii=False)}",
+        f"htn_focus: {json.dumps(stage_context.get('htn_focus', {}), ensure_ascii=False)}",
+        f"subtask_progress: {json.dumps(stage_context.get('subtask_progress', {}), ensure_ascii=False)}",
+        f"batch_focus: {json.dumps(stage_context.get('batch_focus', {}), ensure_ascii=False)}",
+        f"browser_target_hint: {json.dumps(stage_context.get('browser_target_hint', {}), ensure_ascii=False)}",
+        f"execution_summary: {json.dumps(stage_context.get('summary', {}), ensure_ascii=False)}",
+        f"allowed_tools: {json.dumps(stage_context.get('allowed_tools', []), ensure_ascii=False)}",
+        f"business_verification_requirements: {json.dumps(verifier_requirements, ensure_ascii=False)}",
+        "Instruction: this is a background runtime execution request, not a user-facing status conversation.",
+        "Instruction: do not reply with a status-only summary before acting. Use approved tools, make the next concrete move, and then report concise verification evidence.",
+    ]
+    batch_focus = stage_context.get("batch_focus", {}) or {}
+    normalized_goal = str(stage_context.get("goal", contract.user_goal) or "").lower()
+    if "seller.neosgo" in normalized_goal or "neosgo" in normalized_goal or "seller" in normalized_goal:
+        prompt_lines.extend(
+            [
+                "Browser execution rule: use the existing seller.neosgo host browser chain, not a fresh local browser profile.",
+                "Browser execution rule: prefer browser tool calls with target=host and profile=chrome-relay for seller.neosgo work.",
+                "Browser execution rule: if the previous target id is stale, reacquire a current chrome-relay tab for seller.neosgo before continuing.",
+                "Do not switch to a generic local Chrome profile when the task depends on the already logged-in seller.neosgo session.",
+            ]
+        )
+    if batch_focus.get("force_listings_overview"):
+        prompt_lines.extend(
+            [
+                "Mandatory batch step: before any per-product work, return to the Listings overview page and confirm the page URL is the overview, not a single-product edit page.",
+                f"Listings overview URL: {batch_focus.get('expected_listings_url', 'https://seller.neosgo.com/seller/products')}",
+                "If you are still on a single-product page, navigate back to Listings overview first, re-read the visible Draft rows, and only then continue with the next Draft listing.",
+                "Do not claim batch progress or completion from a single-product edit page.",
+            ]
+        )
+    next_draft = batch_focus.get("next_draft", {}) or {}
+    if next_draft:
+        prompt_lines.extend(
+            [
+                f"Next draft listing sku: {next_draft.get('sku', '')}",
+                f"Next draft listing edit URL: {next_draft.get('editHref', '')}",
+                "After confirming you are on Listings overview, open exactly this next draft listing before doing any other seller action.",
+            ]
+        )
+    browser_target_hint = stage_context.get("browser_target_hint", {}) or {}
+    last_nav = browser_target_hint.get("last_listings_overview_navigation", {}) or {}
+    last_nav_context = last_nav.get("context", {}) or {}
+    hinted_target = str(last_nav_context.get("target_id", "") or browser_target_hint.get("last_browser_channel_recovery", {}).get("target_id", "") or "").strip()
+    hinted_url = str(last_nav_context.get("page_url", "") or browser_target_hint.get("last_browser_channel_recovery", {}).get("page_url", "") or "").strip()
+    if hinted_target or hinted_url:
+        prompt_lines.extend(
+            [
+                f"Recovered browser target hint: {hinted_target or 'unknown'}",
+                f"Recovered browser page hint: {hinted_url or 'unknown'}",
+                "Prefer this recovered target/page hint first when reattaching browser control, instead of relying on stale prior tab focus.",
+            ]
+        )
+    if batch_focus and ("seller.neosgo" in normalized_goal or "neosgo" in normalized_goal):
+        prompt_lines.extend(
+            [
+                "Batch seller workflow for each Draft listing:",
+                "1. Open the next Draft listing edit page.",
+                "2. Ensure at least 3 scene images exist and the first 3 image positions are scene images.",
+                "3. Ensure Packing Unit is valid and saved (at minimum one unit with valid numeric dimensions/quantity).",
+                "4. Submit the listing for review and confirm the status is no longer DRAFT.",
+                "5. Return to Listings overview and continue with the next visible Draft listing.",
+                "Do not stop because 'previous task requirements are unclear' — use the workflow above as the authoritative per-listing checklist.",
+                "If a browser act/evaluate/snapshot call returns 'tab not found', immediately reacquire the current seller.neosgo tab via tabs and retry the same step instead of replying with a blocker summary.",
+                "Prefer DOM evaluate/act on the Listings page over aria snapshot when chrome-relay snapshot is unstable.",
+            ]
+        )
+    return "\n".join(prompt_lines)
 
 
 def _finalize_stage_wait_result(task_id: str, stage_name: str, result: Dict, record_path: str) -> Dict:
@@ -175,6 +255,29 @@ def _finalize_stage_wait_result(task_id: str, stage_name: str, result: Dict, rec
             verification = run_verifier(stage_contract.verifier)
             result["completion_verifier"] = verification
             if not verification.get("ok"):
+                continuation = _batch_execution_should_continue(task_id)
+                if continuation:
+                    stage.verification_status = verification["status"]
+                    stage.status = "running"
+                    stage.blocker = ""
+                    stage.updated_at = utc_now_iso()
+                    state.status = "planning"
+                    state.current_stage = stage_name
+                    state.next_action = f"start_stage:{stage_name}"
+                    state.blockers = []
+                    state.last_update_at = utc_now_iso()
+                    save_state(state)
+                    log_event(
+                        task_id,
+                        "batch_execution_continues_after_partial_progress",
+                        stage=stage_name,
+                        verifier=verification,
+                        diagnosis=continuation["diagnosis"],
+                        recommended_action=continuation["recommended_action"],
+                        record_path=record_path,
+                    )
+                    result["continuation"] = continuation
+                    return result
                 stage.verification_status = verification["status"]
                 stage.status = "failed"
                 stage.blocker = f"business verification failed: {verification['status']}"
@@ -219,9 +322,10 @@ def dispatch_stage(task_id: str) -> Dict:
         return {"ok": False, "status": "no_current_stage"}
 
     link = find_link_by_task_id(task_id)
-    session_key = link.get("session_key", "")
-    if not session_key:
+    linked_session_key = link.get("session_key", "")
+    if not linked_session_key:
         return {"ok": False, "status": "no_bound_session"}
+    session_key = _derive_execution_session_key(linked_session_key, task_id)
 
     active = state.metadata.get("active_execution", {})
     if active.get("stage_name") == stage_name and active.get("run_id"):
@@ -301,10 +405,12 @@ def dispatch_stage(task_id: str) -> Dict:
 
     state.metadata["last_dispatched_marker"] = dispatch_marker
     state.metadata["last_dispatch_at"] = utc_now_iso()
+    state.metadata["last_execution_session_key"] = session_key
     state.metadata["active_execution"] = {
         "run_id": run_id,
         "stage_name": stage_name,
         "session_key": session_key,
+        "linked_session_key": linked_session_key,
         "dispatched_at": utc_now_iso(),
     }
     state.status = "waiting_external"
