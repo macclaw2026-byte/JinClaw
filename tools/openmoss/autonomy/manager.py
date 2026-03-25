@@ -7,7 +7,7 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from checkpoint_reporter import render_checkpoint, write_checkpoint
 from learning_engine import get_error_recurrence, note_error_occurrence, record_error, record_learning, update_task_summary
@@ -621,6 +621,31 @@ def set_task_metadata(args: argparse.Namespace) -> int:
     log_event(args.task_id, "task_metadata_updated", field=args.field, value=value)
     print(json.dumps({"task_id": args.task_id, "field": args.field, "value": value}, ensure_ascii=False, indent=2))
     return 0
+
+
+def write_business_outcome(
+    task_id: str,
+    *,
+    goal_satisfied: bool,
+    user_visible_result_confirmed: bool,
+    proof_summary: str,
+    evidence: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    state = load_state(task_id)
+    payload: Dict[str, Any] = {
+        "goal_satisfied": goal_satisfied,
+        "user_visible_result_confirmed": user_visible_result_confirmed,
+        "proof_summary": proof_summary,
+        "updated_at": utc_now_iso(),
+    }
+    if evidence:
+        payload["evidence"] = evidence
+    state.metadata["business_outcome"] = payload
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    _refresh_task_summary(task_id, state=state, extra={"business_outcome": payload})
+    log_event(task_id, "business_outcome_recorded", business_outcome=payload)
+    return payload
 
 
 def evolve_task(args: argparse.Namespace) -> int:

@@ -120,7 +120,14 @@ def verify_task_state_metadata_nonempty(spec: Dict[str, Any]) -> Dict[str, Any]:
     found, current = _resolve_field(payload, field)
     if not found:
         return {"ok": False, "status": "field_missing", "task_id": task_id, "path": str(path), "field": field}
-    is_nonempty = current not in {"", None, [], {}}
+    if current is None:
+        is_nonempty = False
+    elif isinstance(current, str):
+        is_nonempty = current.strip() != ""
+    elif isinstance(current, (list, tuple, set, dict)):
+        is_nonempty = len(current) > 0
+    else:
+        is_nonempty = True
     return {
         "ok": bool(is_nonempty),
         "status": "ok" if is_nonempty else "empty",
