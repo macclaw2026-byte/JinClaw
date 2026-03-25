@@ -25,6 +25,25 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _preflight_block_details(state) -> dict:
+    last_preflight = state.metadata.get("last_preflight", {}) or {}
+    result = last_preflight.get("result", {}) or {}
+    entries = list(result.get("results", []) or [])
+    statuses = [str(entry.get("status", "")).strip() for entry in entries if str(entry.get("status", "")).strip()]
+    pending_ids: list[str] = []
+    missing_commands: list[str] = []
+    for entry in entries:
+        pending_ids.extend([str(item) for item in entry.get("pending_ids", []) or [] if str(item).strip()])
+        pending_ids.extend([str(item) for item in entry.get("declared_pending_ids", []) or [] if str(item).strip()])
+        missing_commands.extend([str(item) for item in entry.get("missing_commands", []) or [] if str(item).strip()])
+    return {
+        "statuses": statuses,
+        "pending_ids": sorted(set(pending_ids)),
+        "missing_commands": sorted(set(missing_commands)),
+        "entries": entries,
+    }
+
+
 def _mark_binding_required(task_id: str, reason: str) -> None:
     state = load_state(task_id)
     state.status = "blocked"
@@ -175,17 +194,42 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
 
     if state.status == "recovering":
         if state.next_action == "satisfy_stage_contract_preflight":
+            details = _preflight_block_details(state)
+            statuses = set(details["statuses"])
+            if statuses & {"approval_required", "approval_pending"}:
+                state.status = "blocked"
+                state.next_action = "await_approval_or_contract_fix"
+                state.last_update_at = utc_now_iso()
+                save_state(state)
+                log_event(task_id, "preflight_block_requires_review", next_action=state.next_action, pending_ids=details["pending_ids"])
+                return {
+                    "task_id": task_id,
+                    "status": state.status,
+                    "current_stage": state.current_stage,
+                    "next_action": state.next_action,
+                    "action": "awaiting_preflight_resolution",
+                    "mission_cycle": mission_cycle,
+                }
+
+            blocker_text = "; ".join(state.blockers or []) or "contract preflight blocked execution"
             state.status = "blocked"
-            state.next_action = "await_approval_or_contract_fix"
+            state.next_action = "inspect_runtime_contract_or_environment"
+            state.learning_backlog = sorted(set([*state.learning_backlog, "convert_repeated_preflight_blocks_into_explicit_runtime_faults"]))
             state.last_update_at = utc_now_iso()
             save_state(state)
-            log_event(task_id, "preflight_block_requires_review", next_action=state.next_action)
+            log_event(
+                task_id,
+                "preflight_block_escalated_to_runtime_fault",
+                next_action=state.next_action,
+                blocker=blocker_text,
+                details=details,
+            )
             return {
                 "task_id": task_id,
                 "status": state.status,
                 "current_stage": state.current_stage,
                 "next_action": state.next_action,
-                "action": "awaiting_preflight_resolution",
+                "action": "awaiting_runtime_or_contract_fix",
                 "mission_cycle": mission_cycle,
             }
         if state.next_action == "prove_necessity_before_switching":
