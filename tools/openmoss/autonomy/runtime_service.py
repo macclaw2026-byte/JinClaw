@@ -65,6 +65,14 @@ def _purge_stale_successor_business_outcome(task_id: str) -> dict | None:
     diagnosis = str(existing.get("evidence", {}).get("diagnosis", "")).strip()
     if diagnosis not in {"upload_saved_successfully", "upload_persisted_in_product_gallery"}:
         return None
+    current_signals = collect_browser_task_signals(task_id)
+    current_business_outcome = current_signals.get("business_outcome", {}) or {}
+    if (
+        current_business_outcome.get("goal_satisfied") is True
+        and current_business_outcome.get("user_visible_result_confirmed") is True
+        and str(current_business_outcome.get("proof_summary", "")).strip()
+    ):
+        return None
     state.metadata.pop("business_outcome", None)
     for stage_name in ("execute", "verify", "learn"):
         stage = state.stages.get(stage_name)
@@ -89,8 +97,6 @@ def _purge_stale_successor_business_outcome(task_id: str) -> dict | None:
 
 def _sync_business_outcome_from_live_probe(task_id: str) -> dict | None:
     contract = load_contract(task_id)
-    if contract.metadata.get("predecessor_task_id") and contract.metadata.get("require_fresh_successor_business_outcome", True):
-        return None
     signals = collect_browser_task_signals(task_id)
     business_outcome = signals.get("business_outcome", {}) or {}
     if not business_outcome:

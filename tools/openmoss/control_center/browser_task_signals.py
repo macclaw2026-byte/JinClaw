@@ -42,6 +42,14 @@ def _load_link(task_id: str) -> Dict[str, object]:
     return {}
 
 
+def _load_sessions_registry() -> Dict[str, object]:
+    registry_path = OPENCLAW_SESSIONS_ROOT / "sessions.json"
+    try:
+        return json.loads(registry_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
 def _is_browser_gallery_task(task_id: str) -> bool:
     contract_path = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/autonomy/tasks") / task_id / "contract.json"
     try:
@@ -60,6 +68,30 @@ def _is_browser_gallery_task(task_id: str) -> bool:
             or any(token in goal for token in ["upload", "上传", "image", "图片", "seller", "product", "详情页", "gallery", "图区"])
         )
     )
+
+
+def _candidate_session_files_from_key(session_key: str) -> List[Path]:
+    if not session_key:
+        return []
+    registry = _load_sessions_registry()
+    session_info = registry.get(session_key, {}) if isinstance(registry, dict) else {}
+    session_file = str(session_info.get("sessionFile") or "").strip()
+    session_id = str(session_info.get("sessionId") or "").strip()
+    candidates: List[Path] = []
+    if session_file:
+        candidates.append(Path(session_file))
+    if session_id:
+        candidates.append(OPENCLAW_SESSIONS_ROOT / f"{session_id}.jsonl")
+    deduped: List[Path] = []
+    seen = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if candidate.exists():
+            deduped.append(candidate)
+    return deduped
 
 
 def _candidate_session_files(last_message_id: str) -> List[Path]:
@@ -287,10 +319,12 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
 
     link = _load_link(task_id)
     last_message_id = str(link.get("last_message_id", "")).strip()
-    session_files = _candidate_session_files(last_message_id)
+    session_key = str(link.get("session_key", "")).strip()
+    session_files = _candidate_session_files_from_key(session_key) or _candidate_session_files(last_message_id)
     payload: Dict[str, object] = {
         "task_id": task_id,
         "link_path": link.get("_path", ""),
+        "session_key": session_key,
         "last_message_id": last_message_id,
         "session_path": "",
         "analysis_window_lines": 0,
@@ -311,10 +345,17 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
 
     start_index = max(0, len(lines) - 220)
     if last_message_id:
+        found_message = False
         for idx, line in enumerate(lines):
             if last_message_id in line:
                 start_index = max(0, idx - 120)
+                found_message = True
                 break
+        if not found_message:
+            # Manual reroutes and successor tasks may point at the correct session but not at a literal
+            # transcript message id. In that case, inspect a larger recent window rather than returning
+            # no useful browser evidence.
+            start_index = max(0, len(lines) - 320)
     window = lines[start_index:]
     analysis = _analyze_lines(window)
     payload.update(analysis)
