@@ -19,7 +19,7 @@ import sys
 if str(AUTONOMY_DIR) not in sys.path:
     sys.path.insert(0, str(AUTONOMY_DIR))
 
-from manager import build_args, contract_path, create_task, read_link, utc_now_iso, write_link
+from manager import build_args, contract_path, create_task, load_contract, load_state, read_link, utc_now_iso, write_link
 from task_ingress import slugify
 
 
@@ -80,6 +80,33 @@ STATUS_QUERY_PATTERNS = (
     "completed",
 )
 
+FOLLOW_UP_ACTION_PATTERNS = (
+    "继续",
+    "继续推进",
+    "接着",
+    "下一步",
+    "后续",
+    "剩下",
+    "把这",
+    "把剩下",
+    "补到",
+    "补齐",
+    "提审",
+    "提交审核",
+    "排到",
+    "排到前",
+    "搞定",
+    "完成剩余",
+    "不要停止",
+    "直到",
+    "做完",
+    "finish",
+    "remaining",
+    "follow-up",
+    "followup",
+    "continue",
+)
+
 
 def _write_json(path: Path, payload: object) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -123,8 +150,41 @@ def _looks_like_status_query(text: str) -> bool:
     return any(token in normalized for token in STATUS_QUERY_PATTERNS)
 
 
-def _build_task(task_id: str, goal: str, source: str) -> Dict[str, object]:
-    package = build_control_center_package(task_id, goal, source=source)
+def _looks_like_followup_goal(text: str, intent: Dict[str, object]) -> bool:
+    lowered = text.strip().lower()
+    if not lowered:
+        return False
+    normalized = re.sub(r"\s+", "", lowered)
+    if any(token in normalized for token in FOLLOW_UP_ACTION_PATTERNS):
+        return True
+    if any(intent.get(key) for key in ("needs_browser", "needs_verification", "requires_external_information")):
+        return True
+    return intent.get("task_types", ["general"]) != ["general"]
+
+
+def _next_successor_task_id(parent_task_id: str) -> str:
+    base = f"{parent_task_id}-followup"
+    candidate = base
+    counter = 2
+    while contract_path(candidate).exists():
+        candidate = f"{base}-{counter}"
+        counter += 1
+    return candidate
+
+
+def _build_task(
+    task_id: str,
+    goal: str,
+    source: str,
+    metadata_extra: Dict[str, object] | None = None,
+    inherited_intent: Dict[str, object] | None = None,
+) -> Dict[str, object]:
+    package = build_control_center_package(task_id, goal, source=source, inherited_intent=inherited_intent)
+    if metadata_extra:
+        package["metadata"] = {
+            **package["metadata"],
+            **metadata_extra,
+        }
     create_task(
         build_args(
             task_id=task_id,
@@ -186,10 +246,52 @@ def route_instruction(
             route["mode"] = "authoritative_task_status"
             route["authoritative_task_status"] = snapshot
             route["response_constraints"] = snapshot.get("reply_contract", {})
+            route["link_path"] = write_link(provider, conversation_id, existing)
+        elif _looks_actionable(goal, intent):
+            existing_task_id = str(existing.get("task_id", ""))
+            existing_state = load_state(existing_task_id) if existing_task_id else None
+            if existing_state and existing_state.status == "completed" and _looks_like_followup_goal(goal, intent):
+                task_id = _next_successor_task_id(existing_task_id)
+                predecessor_contract = load_contract(existing_task_id)
+                predecessor_snapshot = build_task_status_snapshot(existing_task_id)
+                _build_task(
+                    task_id,
+                    goal,
+                    source=f"{source}:successor",
+                    metadata_extra={
+                        "predecessor_task_id": existing_task_id,
+                        "predecessor_status": existing_state.status,
+                        "predecessor_authoritative_summary": predecessor_snapshot.get("authoritative_summary", ""),
+                    },
+                    inherited_intent=predecessor_contract.metadata.get("control_center", {}).get("intent", {}),
+                )
+                payload = {
+                    "provider": provider,
+                    "conversation_id": conversation_id,
+                    "conversation_type": conversation_type,
+                    "task_id": task_id,
+                    "goal": goal,
+                    "updated_at": utc_now_iso(),
+                    "last_message_id": message_id,
+                    "last_sender_id": sender_id,
+                    "last_sender_name": sender_name,
+                    "brain_source": source,
+                    "predecessor_task_id": existing_task_id,
+                }
+                if session_key:
+                    payload["session_key"] = session_key
+                route["mode"] = "create_successor_task"
+                route["created_task"] = True
+                route["attached_existing"] = False
+                route["task_id"] = task_id
+                route["predecessor_task_id"] = existing_task_id
+                route["link_path"] = write_link(provider, conversation_id, payload)
+            else:
+                route["mode"] = "append_to_existing_task"
         else:
             route["mode"] = "append_to_existing_task"
-        route["task_id"] = existing.get("task_id")
-        route["link_path"] = write_link(provider, conversation_id, existing)
+            route["task_id"] = existing.get("task_id")
+            route["link_path"] = write_link(provider, conversation_id, existing)
     elif _looks_actionable(goal, intent):
         task_id = slugify(goal)
         if not contract_path(task_id).exists():

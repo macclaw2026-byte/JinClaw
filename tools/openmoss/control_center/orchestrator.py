@@ -52,6 +52,31 @@ def _derive_allowed_tools(blueprint: Dict[str, object]) -> List[str]:
     return sorted(dict.fromkeys(tools))
 
 
+def _merge_inherited_intent(intent: Dict[str, object], inherited_intent: Dict[str, object] | None) -> Dict[str, object]:
+    if not inherited_intent:
+        return intent
+    merged = dict(intent)
+    inherited_task_types = [str(item) for item in inherited_intent.get("task_types", []) if str(item)]
+    current_task_types = [str(item) for item in intent.get("task_types", []) if str(item)]
+    if current_task_types == ["general"] and inherited_task_types and inherited_task_types != ["general"]:
+        merged["task_types"] = inherited_task_types
+    for key in ("keywords", "domains", "likely_platforms"):
+        merged[key] = sorted(
+            dict.fromkeys(
+                [str(item) for item in intent.get(key, []) if str(item)]
+                + [str(item) for item in inherited_intent.get(key, []) if str(item)]
+            )
+        )
+    for key in ("requires_external_information", "may_download_artifacts", "may_execute_external_code", "needs_browser", "needs_verification"):
+        merged[key] = bool(intent.get(key) or inherited_intent.get(key))
+    if str(intent.get("risk_level", "low")).lower() == "low":
+        merged["risk_level"] = inherited_intent.get("risk_level", intent.get("risk_level", "low"))
+    inherited_constraints = [str(item) for item in inherited_intent.get("hard_constraints", []) if str(item)]
+    current_constraints = [str(item) for item in intent.get("hard_constraints", []) if str(item)]
+    merged["hard_constraints"] = sorted(dict.fromkeys(current_constraints + inherited_constraints))
+    return merged
+
+
 def _requires_explicit_business_proof(intent: Dict[str, object], selected_plan: Dict[str, object]) -> bool:
     task_types = {str(item).strip().lower() for item in intent.get("task_types", []) if str(item).strip()}
     goal = str(intent.get("goal", "")).lower()
@@ -140,8 +165,9 @@ def _derive_stage_contracts(task_id: str, blueprint: Dict[str, object]) -> List[
     ]
 
 
-def build_control_center_package(task_id: str, goal: str, *, source: str = "manual") -> Dict[str, object]:
-    intent = analyze_intent(goal, source=source)
+def build_control_center_package(task_id: str, goal: str, *, source: str = "manual", inherited_intent: Dict[str, object] | None = None) -> Dict[str, object]:
+    raw_intent = analyze_intent(goal, source=source)
+    intent = _merge_inherited_intent(raw_intent, inherited_intent)
     capabilities = build_capability_registry()
     blueprint = build_workflow_blueprint(intent, capabilities)
     judgment = judge_proposals(intent, capabilities, blueprint["candidate_plans"])
@@ -203,6 +229,8 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
     metadata = {
         "control_center": {
             "mission_path": str(MISSIONS_ROOT / f"{task_id}.json"),
+            "raw_intent": raw_intent,
+            "inherited_intent": inherited_intent or {},
             "intent": intent,
             "candidate_plans": blueprint["candidate_plans"],
             "selected_plan": selected_plan,
