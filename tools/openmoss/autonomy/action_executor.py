@@ -13,6 +13,7 @@ from typing import Dict
 
 from manager import complete_stage_internal, find_link_by_task_id, load_contract, load_state, log_event, save_state, task_dir, utc_now_iso, verify_task, build_args
 from preflight_engine import run_stage_preflight
+from verifier_registry import run_verifier
 
 CONTROL_CENTER_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/control_center")
 if str(CONTROL_CENTER_DIR) not in sys.path:
@@ -106,6 +107,8 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
     contract = load_contract(task_id)
     state = load_state(task_id)
     stage_context = build_stage_context(task_id, stage_name, contract.to_dict(), state.to_dict())
+    stage_contract = next((stage for stage in contract.stages if stage.name == stage_name), None)
+    verifier_requirements = stage_contract.verifier if stage_contract and stage_contract.verifier else {}
     return "\n".join(
         [
             "[Autonomy runtime execution request]",
@@ -121,6 +124,7 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
             f"subtask_progress: {json.dumps(stage_context.get('subtask_progress', {}), ensure_ascii=False)}",
             f"execution_summary: {json.dumps(stage_context.get('summary', {}), ensure_ascii=False)}",
             f"allowed_tools: {json.dumps(stage_context.get('allowed_tools', []), ensure_ascii=False)}",
+            f"business_verification_requirements: {json.dumps(verifier_requirements, ensure_ascii=False)}",
             "Instruction: execute only the minimum necessary work for this stage, use only approved actions, preserve security boundaries, and report concise evidence for verification.",
         ]
     )
@@ -140,21 +144,45 @@ def _finalize_stage_wait_result(task_id: str, stage_name: str, result: Dict, rec
         result.get("ok")
         and result.get("status") == "completed"
         and stage_contract
-        and bool(stage_contract.execution_policy.get("auto_complete_on_wait_ok", False))
     ):
-        completion = complete_stage_internal(
-            task_id=task_id,
-            stage_name=stage_name,
-            summary=f"OpenClaw run completed successfully for stage {stage_name}",
-            evidence_ref=record_path,
-        )
-        result["auto_completed"] = completion
-        refreshed_contract = load_contract(task_id)
-        next_stage_name = completion.get("next_action", "").replace("start_stage:", "")
-        next_stage = next((stage for stage in refreshed_contract.stages if stage.name == next_stage_name), None)
-        if next_stage and next_stage.name == "verify" and next_stage.verifier:
-            verify_result = verify_task(build_args(task_id=task_id))
-            result["post_completion_verify"] = {"exit_code": verify_result}
+        if bool(stage_contract.execution_policy.get("require_verifier_before_complete", False)) and stage_contract.verifier:
+            verification = run_verifier(stage_contract.verifier)
+            result["completion_verifier"] = verification
+            if not verification.get("ok"):
+                stage.verification_status = verification["status"]
+                stage.status = "failed"
+                stage.blocker = f"business verification failed: {verification['status']}"
+                stage.updated_at = utc_now_iso()
+                state.status = "recovering"
+                state.current_stage = stage_name
+                state.next_action = "repair_verification_failure"
+                state.blockers = [f"business_verification_failed:{verification['status']}"]
+                state.last_update_at = utc_now_iso()
+                save_state(state)
+                log_event(task_id, "stage_completion_blocked_by_verifier", stage=stage_name, verifier=verification, record_path=record_path)
+                return result
+        if bool(stage_contract.execution_policy.get("auto_complete_on_wait_ok", False)):
+            completion = complete_stage_internal(
+                task_id=task_id,
+                stage_name=stage_name,
+                summary=f"OpenClaw run completed successfully for stage {stage_name}",
+                evidence_ref=record_path,
+            )
+            result["auto_completed"] = completion
+            refreshed_contract = load_contract(task_id)
+            next_stage_name = completion.get("next_action", "").replace("start_stage:", "")
+            next_stage = next((stage for stage in refreshed_contract.stages if stage.name == next_stage_name), None)
+            if next_stage and next_stage.name == "verify" and next_stage.verifier:
+                verify_result = verify_task(build_args(task_id=task_id))
+                result["post_completion_verify"] = {"exit_code": verify_result}
+            return result
+
+        state.status = "running"
+        state.current_stage = stage_name
+        state.next_action = f"execute_stage:{stage_name}"
+        state.last_update_at = utc_now_iso()
+        save_state(state)
+        return result
     return result
 
 

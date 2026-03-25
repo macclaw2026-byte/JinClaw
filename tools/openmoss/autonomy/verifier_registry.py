@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import Any, Dict
 
 
+TASKS_ROOT = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/autonomy/tasks")
+
+
 def verify_not_configured(spec: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "ok": False,
@@ -61,6 +64,73 @@ def verify_json_field_equals(spec: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _resolve_field(payload: Dict[str, Any], field: str) -> tuple[bool, Any]:
+    parts = [p for p in field.split(".") if p]
+    candidates = [payload]
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        candidates.append(metadata)
+    for candidate in candidates:
+        current: Any = candidate
+        found = True
+        for part in parts:
+            if not isinstance(current, dict) or part not in current:
+                found = False
+                break
+            current = current[part]
+        if found:
+            return True, current
+    return False, None
+
+
+def _load_task_state_payload(task_id: str) -> tuple[Path, Dict[str, Any] | None]:
+    path = TASKS_ROOT / task_id / "state.json"
+    if not path.exists():
+        return path, None
+    return path, json.loads(path.read_text(encoding="utf-8"))
+
+
+def verify_task_state_metadata_equals(spec: Dict[str, Any]) -> Dict[str, Any]:
+    task_id = str(spec.get("task_id", "")).strip()
+    field = str(spec.get("field", "")).strip()
+    expected = spec.get("equals")
+    path, payload = _load_task_state_payload(task_id)
+    if payload is None:
+        return {"ok": False, "status": "task_state_missing", "task_id": task_id, "path": str(path)}
+    found, current = _resolve_field(payload, field)
+    if not found:
+        return {"ok": False, "status": "field_missing", "task_id": task_id, "path": str(path), "field": field}
+    return {
+        "ok": current == expected,
+        "status": "ok" if current == expected else "mismatch",
+        "task_id": task_id,
+        "path": str(path),
+        "field": field,
+        "current": current,
+        "expected": expected,
+    }
+
+
+def verify_task_state_metadata_nonempty(spec: Dict[str, Any]) -> Dict[str, Any]:
+    task_id = str(spec.get("task_id", "")).strip()
+    field = str(spec.get("field", "")).strip()
+    path, payload = _load_task_state_payload(task_id)
+    if payload is None:
+        return {"ok": False, "status": "task_state_missing", "task_id": task_id, "path": str(path)}
+    found, current = _resolve_field(payload, field)
+    if not found:
+        return {"ok": False, "status": "field_missing", "task_id": task_id, "path": str(path), "field": field}
+    is_nonempty = current not in {"", None, [], {}}
+    return {
+        "ok": bool(is_nonempty),
+        "status": "ok" if is_nonempty else "empty",
+        "task_id": task_id,
+        "path": str(path),
+        "field": field,
+        "current": current,
+    }
+
+
 def verify_command_exit_zero(spec: Dict[str, Any]) -> Dict[str, Any]:
     command = spec.get("command") or []
     if not isinstance(command, list) or not command:
@@ -107,6 +177,8 @@ VERIFIERS = {
     "file_exists": verify_file_exists,
     "text_contains": verify_text_contains,
     "json_field_equals": verify_json_field_equals,
+    "task_state_metadata_equals": verify_task_state_metadata_equals,
+    "task_state_metadata_nonempty": verify_task_state_metadata_nonempty,
     "command_exit_zero": verify_command_exit_zero,
     "all": verify_all,
 }
