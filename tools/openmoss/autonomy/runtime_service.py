@@ -23,6 +23,7 @@ from mission_loop import run_mission_cycle
 from browser_channel_recovery import prune_relay_tabs, recover_browser_channel, navigate_relay_to_url
 from browser_task_signals import collect_browser_task_signals
 from orchestrator import derive_business_verification_requirements
+from system_doctor import run_system_doctor
 
 
 def utc_now_iso() -> str:
@@ -939,6 +940,18 @@ def _task_artifacts_complete(task_id: str) -> bool:
 
 
 def _invalid_task_artifact_result(task_id: str) -> dict:
+    state_file = state_path(task_id)
+    if state_file.exists():
+        try:
+            state = load_state(task_id)
+            state.status = "blocked"
+            state.next_action = "repair_invalid_contract"
+            state.blockers = ["task artifacts are incomplete or invalid"]
+            state.last_update_at = utc_now_iso()
+            save_state(state)
+            log_event(task_id, "invalid_task_artifact_isolated")
+        except Exception:
+            pass
     return {
         "task_id": task_id,
         "status": "skipped_invalid_task_artifact",
@@ -967,6 +980,17 @@ def main() -> int:
                     try:
                         results.append(process_task(task_id, args.stale_after_seconds))
                     except Exception as exc:
+                        if state_path(task_id).exists():
+                            try:
+                                state = load_state(task_id)
+                                state.status = "blocked"
+                                state.next_action = "repair_runtime_failure"
+                                state.blockers = [f"runtime isolated {type(exc).__name__}: {str(exc)}"]
+                                state.last_update_at = utc_now_iso()
+                                save_state(state)
+                                log_event(task_id, "runtime_failure_isolated", error=str(exc), error_type=type(exc).__name__)
+                            except Exception:
+                                pass
                         results.append(
                             {
                                 "task_id": task_id,
@@ -977,8 +1001,12 @@ def main() -> int:
                                 "traceback": traceback.format_exc(limit=8),
                             }
                         )
+        doctor = run_system_doctor(
+            idle_after_seconds=max(60, min(args.stale_after_seconds, 180)),
+            escalation_after_seconds=max(180, args.stale_after_seconds),
+        )
         promotions = promote_recurring_errors()
-        print(json.dumps({"processed_at": utc_now_iso(), "tasks": results, "promotions": promotions}, ensure_ascii=False, indent=2))
+        print(json.dumps({"processed_at": utc_now_iso(), "tasks": results, "doctor": doctor, "promotions": promotions}, ensure_ascii=False, indent=2))
         if args.once:
             return 0
         time.sleep(args.poll_seconds)

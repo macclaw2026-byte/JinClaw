@@ -20,6 +20,8 @@ if str(CONTROL_CENTER_DIR) not in sys.path:
     sys.path.insert(0, str(CONTROL_CENTER_DIR))
 
 from brain_router import route_instruction
+from route_guardrails import persist_route, reroot_route_if_needed
+from task_receipt_engine import emit_route_receipt
 
 
 def bind_telegram_message(
@@ -62,9 +64,25 @@ def bind_telegram_message(
         message_id=message_id,
     )
     cfg = load_bridge_config()
+    session_key = conversation_session_key(cfg, "telegram", chat_id, chat_type)
+    brain_route = reroot_route_if_needed(
+        route=brain_route,
+        provider="telegram",
+        conversation_id=chat_id,
+        conversation_type=chat_type,
+        goal=str(brain_route.get("goal") or text),
+        session_key=session_key,
+    )
+    persist_route("telegram", chat_id, brain_route)
+    receipt = emit_route_receipt(
+        brain_route,
+        provider="telegram",
+        conversation_id=chat_id,
+        session_key=session_key,
+    )
     linked = read_link("telegram", chat_id)
     if linked:
-        linked["session_key"] = conversation_session_key(cfg, "telegram", chat_id, chat_type)
+        linked["session_key"] = session_key
         linked["updated_at"] = utc_now_iso()
         linked["last_message_id"] = message_id
         linked["last_sender_id"] = sender_id
@@ -72,6 +90,7 @@ def bind_telegram_message(
         result["active_task"] = linked.get("task_id")
         result["mode"] = brain_route.get("mode", "append_to_existing_task")
         result["brain_route"] = brain_route
+        result["receipt"] = receipt
         result["link_path"] = write_link("telegram", chat_id, linked)
         result["created_task"] = brain_route.get("task_id") if brain_route.get("created_task") else None
         return result
@@ -85,6 +104,7 @@ def bind_telegram_message(
         result["mode"] = "append_to_existing_task"
         result["link_path"] = write_link("telegram", chat_id, existing)
     result["brain_route"] = brain_route
+    result["receipt"] = receipt
     return result
 
 
