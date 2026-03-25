@@ -52,11 +52,37 @@ def _derive_allowed_tools(blueprint: Dict[str, object]) -> List[str]:
     return sorted(dict.fromkeys(tools))
 
 
-def _derive_stage_contracts(blueprint: Dict[str, object]) -> List[Dict[str, object]]:
+def _requires_explicit_business_proof(intent: Dict[str, object], selected_plan: Dict[str, object]) -> bool:
+    task_types = {str(item).strip().lower() for item in intent.get("task_types", []) if str(item).strip()}
+    goal = str(intent.get("goal", "")).lower()
+    return bool(
+        intent.get("needs_browser")
+        and (
+            "marketplace" in task_types
+            or "image" in task_types
+            or any(token in goal for token in ["upload", "上传", "product", "详情页", "detail page", "image area", "图片区"])
+            or str(selected_plan.get("plan_id", "")) == "local_image_pipeline"
+        )
+    )
+
+
+def _business_outcome_verifier(task_id: str) -> Dict[str, object]:
+    return {
+        "type": "all",
+        "checks": [
+            {"type": "task_state_metadata_equals", "task_id": task_id, "field": "business_outcome.goal_satisfied", "equals": True},
+            {"type": "task_state_metadata_equals", "task_id": task_id, "field": "business_outcome.user_visible_result_confirmed", "equals": True},
+            {"type": "task_state_metadata_nonempty", "task_id": task_id, "field": "business_outcome.proof_summary"},
+        ],
+    }
+
+
+def _derive_stage_contracts(task_id: str, blueprint: Dict[str, object]) -> List[Dict[str, object]]:
     intent = blueprint["intent"]
     selected_plan = blueprint["selected_plan"]
     approval = blueprint["approval"]
     pending_approvals = approval.get("pending", [])
+    require_business_proof = _requires_explicit_business_proof(intent, selected_plan)
     execute_policy = {
         "approval_requirements": list(approval.get("decisions", {}).keys()),
         "approval_pending_ids": pending_approvals,
@@ -68,6 +94,11 @@ def _derive_stage_contracts(blueprint: Dict[str, object]) -> List[Dict[str, obje
             {"type": "command_exit_zero", "command": ["/bin/zsh", "-lc", "test -d /Users/mac_claw/.openclaw/workspace"]},
         ],
     }
+    execute_verifier: Dict[str, object] = {}
+    if require_business_proof:
+        execute_policy["require_verifier_before_complete"] = True
+        execute_verifier = _business_outcome_verifier(task_id)
+        verify_verifier = _business_outcome_verifier(task_id)
     return [
         {
             "name": "understand",
@@ -87,14 +118,15 @@ def _derive_stage_contracts(blueprint: Dict[str, object]) -> List[Dict[str, obje
             "name": "execute",
             "goal": f"Execute the selected plan safely: {selected_plan.get('summary', '')}",
             "expected_output": "real progress toward the user goal with evidence",
-            "acceptance_check": "execution evidence recorded without violating security boundaries",
+            "acceptance_check": "execution evidence recorded without violating security boundaries and business completion proof captured when required",
+            "verifier": execute_verifier,
             "execution_policy": execute_policy,
         },
         {
             "name": "verify",
             "goal": "Verify the goal is actually satisfied and the path stayed within security policy",
             "expected_output": "verification decision and evidence",
-            "acceptance_check": "verifier passes and no unresolved approval or security blockers remain",
+            "acceptance_check": "verifier passes with business-level proof when required and no unresolved approval or security blockers remain",
             "verifier": verify_verifier,
             "execution_policy": {"auto_complete_on_wait_ok": False},
         },
@@ -206,7 +238,7 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
         "done_definition": intent["done_definition"],
         "hard_constraints": intent["hard_constraints"],
         "allowed_tools": _derive_allowed_tools({**blueprint, "intent": intent, "selected_plan": selected_plan}),
-        "stages": _derive_stage_contracts({**blueprint, "approval": approval, "intent": intent, "selected_plan": selected_plan}),
+        "stages": _derive_stage_contracts(task_id, {**blueprint, "approval": approval, "intent": intent, "selected_plan": selected_plan}),
         "metadata": metadata,
         "mission_path": str(MISSIONS_ROOT / f"{task_id}.json"),
     }

@@ -430,6 +430,20 @@ def complete_stage_internal(task_id: str, stage_name: str, summary: str, evidenc
     return {"status": state.status, "next_action": state.next_action}
 
 
+def _set_nested_dict_value(payload: Dict[str, Any], field: str, value: Any) -> None:
+    parts = [part for part in field.split(".") if part]
+    if not parts:
+        raise ValueError("field path is required")
+    current = payload
+    for part in parts[:-1]:
+        next_value = current.get(part)
+        if not isinstance(next_value, dict):
+            next_value = {}
+            current[part] = next_value
+        current = next_value
+    current[parts[-1]] = value
+
+
 def advance_execute_subtask(task_id: str, subtask_id: str, summary: str = "") -> Dict[str, object]:
     state = load_state(task_id)
     stage = state.stages.get("execute")
@@ -571,6 +585,29 @@ def set_stage_verifier(args: argparse.Namespace) -> int:
     return 0
 
 
+def set_stage_execution_policy(args: argparse.Namespace) -> int:
+    contract = load_contract(args.task_id)
+    stage = next((item for item in contract.stages if item.name == args.stage), None)
+    if not stage:
+        raise SystemExit("unknown stage")
+    stage.execution_policy = json.loads(args.execution_policy_json)
+    save_contract(contract)
+    log_event(args.task_id, "stage_execution_policy_updated", stage=args.stage, execution_policy=stage.execution_policy)
+    print(json.dumps({"task_id": args.task_id, "stage": args.stage, "execution_policy": stage.execution_policy}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def set_task_metadata(args: argparse.Namespace) -> int:
+    state = load_state(args.task_id)
+    value = json.loads(args.value_json)
+    _set_nested_dict_value(state.metadata, args.field, value)
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    log_event(args.task_id, "task_metadata_updated", field=args.field, value=value)
+    print(json.dumps({"task_id": args.task_id, "field": args.field, "value": value}, ensure_ascii=False, indent=2))
+    return 0
+
+
 def evolve_task(args: argparse.Namespace) -> int:
     state = load_state(args.task_id)
     proposal = {
@@ -645,6 +682,16 @@ def build_parser() -> argparse.ArgumentParser:
     set_verifier.add_argument("--stage", required=True)
     set_verifier.add_argument("--verifier-json", required=True)
 
+    set_execution_policy = sub.add_parser("set-stage-execution-policy")
+    set_execution_policy.add_argument("--task-id", required=True)
+    set_execution_policy.add_argument("--stage", required=True)
+    set_execution_policy.add_argument("--execution-policy-json", required=True)
+
+    set_task_meta = sub.add_parser("set-task-metadata")
+    set_task_meta.add_argument("--task-id", required=True)
+    set_task_meta.add_argument("--field", required=True)
+    set_task_meta.add_argument("--value-json", required=True)
+
     evolve = sub.add_parser("propose-evolution")
     evolve.add_argument("--task-id", required=True)
     evolve.add_argument("--reason", required=True)
@@ -676,6 +723,10 @@ def main() -> int:
         return checkpoint_task(args)
     if args.cmd == "set-stage-verifier":
         return set_stage_verifier(args)
+    if args.cmd == "set-stage-execution-policy":
+        return set_stage_execution_policy(args)
+    if args.cmd == "set-task-metadata":
+        return set_task_metadata(args)
     if args.cmd == "propose-evolution":
         return evolve_task(args)
     parser.error(f"unknown command: {args.cmd}")
