@@ -117,7 +117,13 @@ def _refresh_task_summary(task_id: str, *, state: TaskState | None = None, extra
 
 
 def load_contract(task_id: str) -> TaskContract:
-    return TaskContract.from_dict(read_json(contract_path(task_id), {}))
+    payload = read_json(contract_path(task_id), {})
+    if not isinstance(payload, dict):
+        raise ValueError(f"invalid contract payload type for task {task_id}: {type(payload).__name__}")
+    missing = [key for key in ("task_id", "user_goal", "done_definition") if not payload.get(key)]
+    if missing:
+        raise ValueError(f"invalid contract for task {task_id}: missing {', '.join(missing)}")
+    return TaskContract.from_dict(payload)
 
 
 def load_state(task_id: str) -> TaskState:

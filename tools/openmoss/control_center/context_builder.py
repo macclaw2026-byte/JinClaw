@@ -93,6 +93,10 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
             "completed_subtasks": stage_state.get("completed_subtasks", []),
         },
         "batch_focus": state.get("metadata", {}).get("batch_focus", {}),
+        "browser_target_hint": {
+            "last_browser_channel_recovery": state.get("metadata", {}).get("last_browser_channel_recovery", {}),
+            "last_listings_overview_navigation": state.get("metadata", {}).get("last_listings_overview_navigation", {}),
+        },
         "summary": {
             "current_stage": state.get("current_stage", "") or summary.get("current_stage", ""),
             "status": state.get("status", "") or summary.get("status", ""),

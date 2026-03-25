@@ -12,7 +12,7 @@ from pathlib import Path
 
 from action_executor import dispatch_stage, poll_active_execution
 from learning_engine import get_error_recurrence
-from manager import TASKS_ROOT, advance_execute_subtask, apply_recovery, build_args, checkpoint_task, complete_stage_internal, contract_path, load_contract, load_state, log_event, run_once, save_contract, save_state, state_path, verify_task, write_business_outcome
+from manager import TASKS_ROOT, advance_execute_subtask, apply_recovery, build_args, checkpoint_task, complete_stage_internal, contract_path, find_link_by_task_id, load_contract, load_state, log_event, run_once, save_contract, save_state, state_path, verify_task, write_business_outcome, write_link
 from promotion_engine import promote_recurring_errors
 
 CONTROL_CENTER_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/control_center")
@@ -20,7 +20,7 @@ if str(CONTROL_CENTER_DIR) not in sys.path:
     sys.path.insert(0, str(CONTROL_CENTER_DIR))
 
 from mission_loop import run_mission_cycle
-from browser_channel_recovery import recover_browser_channel
+from browser_channel_recovery import recover_browser_channel, navigate_relay_to_url
 from browser_task_signals import collect_browser_task_signals
 from orchestrator import derive_business_verification_requirements
 
@@ -48,6 +48,14 @@ def _preflight_block_details(state) -> dict:
     }
 
 
+def _preferred_browser_url(state) -> str:
+    metadata = getattr(state, "metadata", {}) or {}
+    batch_focus = metadata.get("batch_focus", {}) or {}
+    if isinstance(batch_focus, dict):
+        return str(batch_focus.get("expected_listings_url", "")).strip()
+    return ""
+
+
 def _mark_binding_required(task_id: str, reason: str) -> None:
     state = load_state(task_id)
     state.status = "blocked"
@@ -56,6 +64,50 @@ def _mark_binding_required(task_id: str, reason: str) -> None:
     state.last_update_at = utc_now_iso()
     save_state(state)
     log_event(task_id, "binding_required", reason=reason)
+
+
+def _inherit_lineage_session_link(task_id: str) -> dict | None:
+    contract = load_contract(task_id)
+    lineage_candidates = [
+        str(contract.metadata.get("predecessor_task_id", "")).strip(),
+        str(contract.metadata.get("lineage_root_task_id", "")).strip(),
+    ]
+    for candidate in lineage_candidates:
+        if not candidate:
+            continue
+        link = find_link_by_task_id(candidate)
+        if not link:
+            continue
+        provider = str(link.get("provider", "")).strip()
+        conversation_id = str(link.get("conversation_id", "")).strip()
+        if not provider or not conversation_id:
+            continue
+        payload = {k: v for k, v in link.items() if not str(k).startswith("_")}
+        payload["task_id"] = task_id
+        payload["goal"] = contract.user_goal
+        payload["updated_at"] = utc_now_iso()
+        write_link(provider, conversation_id, payload)
+        state = load_state(task_id)
+        state.status = "planning"
+        state.blockers = []
+        state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+        state.metadata.pop("superseded_by_task_id", None)
+        state.last_update_at = utc_now_iso()
+        save_state(state)
+        log_event(
+            task_id,
+            "session_link_inherited_from_lineage",
+            inherited_from_task_id=candidate,
+            provider=provider,
+            conversation_id=conversation_id,
+        )
+        return {
+            "task_id": task_id,
+            "inherited_from_task_id": candidate,
+            "provider": provider,
+            "conversation_id": conversation_id,
+        }
+    return None
 
 
 def _purge_stale_successor_business_outcome(task_id: str) -> dict | None:
@@ -329,7 +381,11 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
         "repair_form_validation_then_retry_submit",
     }:
         if action == "reacquire_browser_channel":
-            recovery = recover_browser_channel(task_id, expected_domains=["seller.neosgo.com"])
+            recovery = recover_browser_channel(
+                task_id,
+                expected_domains=["seller.neosgo.com"],
+                preferred_url=_preferred_browser_url(state),
+            )
             if recovery.get("ok"):
                 state.status = "planning"
                 state.blockers = []
@@ -435,6 +491,71 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "action": "processing_next_draft_listing",
             "mission_cycle": mission_cycle,
         }
+    if action == "return_to_listings_overview_and_retry_batch_probe":
+        browser_signals = mission_cycle.get("browser_signals", {}) or {}
+        batch_focus = state.metadata.get("batch_focus", {}) or {}
+        expected_listings_url = "https://seller.neosgo.com/seller/products"
+        navigation = navigate_relay_to_url(
+            task_id,
+            expected_listings_url,
+            expected_domains=["seller.neosgo.com"],
+        )
+        batch_focus["force_listings_overview"] = True
+        batch_focus["expected_listings_url"] = expected_listings_url
+        batch_focus["last_probe_page_url"] = browser_signals.get("page_url", "")
+        batch_focus["last_listings_page_url"] = browser_signals.get("listings_page_url", "")
+        state.metadata["batch_focus"] = batch_focus
+        state.metadata["last_listings_overview_navigation"] = navigation
+        if not navigation.get("ok"):
+            state.status = "recovering"
+            state.current_stage = "execute"
+            state.blockers = ["failed to navigate seller.neosgo back to listings overview"]
+            state.next_action = "reacquire_browser_channel"
+            state.metadata.pop("active_execution", None)
+            state.metadata.pop("last_dispatched_marker", None)
+            state.metadata.pop("last_dispatch_at", None)
+            state.last_update_at = utc_now_iso()
+            save_state(state)
+            log_event(
+                task_id,
+                "control_center_return_to_listings_overview_failed",
+                navigation=navigation,
+                page_url=browser_signals.get("page_url", ""),
+                listings_page_url=browser_signals.get("listings_page_url", ""),
+            )
+            return {
+                "task_id": task_id,
+                "status": state.status,
+                "current_stage": state.current_stage,
+                "next_action": state.next_action,
+                "action": "return_to_listings_overview_failed",
+                "navigation": navigation,
+                "mission_cycle": mission_cycle,
+            }
+        state.status = "planning"
+        state.current_stage = "execute"
+        state.blockers = []
+        state.next_action = "start_stage:execute"
+        state.metadata.pop("active_execution", None)
+        state.metadata.pop("last_dispatched_marker", None)
+        state.metadata.pop("last_dispatch_at", None)
+        state.last_update_at = utc_now_iso()
+        save_state(state)
+        log_event(
+            task_id,
+            "control_center_return_to_listings_overview",
+            navigation=navigation,
+            page_url=browser_signals.get("page_url", ""),
+            listings_page_url=browser_signals.get("listings_page_url", ""),
+        )
+        return {
+            "task_id": task_id,
+            "status": state.status,
+            "current_stage": state.current_stage,
+            "next_action": state.next_action,
+            "action": "returning_to_listings_overview",
+            "mission_cycle": mission_cycle,
+        }
     if action.startswith("advance_subtask:"):
         subtask_id = action.split(":", 1)[1]
         result = advance_execute_subtask(task_id, subtask_id, summary=f"HTN subtask focus advanced to {subtask_id}")
@@ -529,6 +650,21 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
         return control_center_result
     if state.status in {"completed", "failed"}:
         return {"task_id": task_id, "status": state.status, "action": "skipped_terminal", "mission_cycle": mission_cycle}
+    if state.status == "blocked" and state.next_action == "bind_session_link":
+        inherited_link = _inherit_lineage_session_link(task_id)
+        if inherited_link:
+            state = load_state(task_id)
+            log_event(task_id, "binding_auto_recovered_from_lineage", link=inherited_link)
+        else:
+            return {
+                "task_id": task_id,
+                "status": state.status,
+                "current_stage": state.current_stage,
+                "next_action": state.next_action,
+                "action": "blocked_waiting_for_targeted_fix",
+                "mission_cycle": mission_cycle,
+            }
+
     if state.status == "blocked":
         return {
             "task_id": task_id,
@@ -620,7 +756,11 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
                 "mission_cycle": mission_cycle,
             }
         if state.next_action == "reacquire_browser_channel":
-            recovery = recover_browser_channel(task_id, expected_domains=["seller.neosgo.com"])
+            recovery = recover_browser_channel(
+                task_id,
+                expected_domains=["seller.neosgo.com"],
+                preferred_url=_preferred_browser_url(state),
+            )
             if recovery.get("ok"):
                 state.status = "planning"
                 state.blockers = []

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -15,6 +18,64 @@ from paths import BROWSER_CHANNELS_ROOT, OPENCLAW_ROOT
 def _write_json(path: Path, payload: Dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _resolve_openclaw_bin() -> str:
+    return shutil.which("openclaw") or "/opt/homebrew/bin/openclaw"
+
+
+def _openclaw_browser_json(*args: str, timeout: int = 20) -> Dict[str, object]:
+    proc = subprocess.run(
+        [_resolve_openclaw_bin(), "browser", *args, "--json"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or f"openclaw browser {' '.join(args)} failed")
+    return json.loads(proc.stdout or "{}")
+
+
+def _url_matches_target(current_url: str, target_url: str) -> bool:
+    current = urllib.parse.urlparse((current_url or "").strip())
+    target = urllib.parse.urlparse((target_url or "").strip())
+    if not current.scheme or not current.netloc or not target.scheme or not target.netloc:
+        return False
+    if current.scheme != target.scheme or current.netloc != target.netloc:
+        return False
+    current_path = (current.path or "").rstrip("/") or "/"
+    target_path = (target.path or "").rstrip("/") or "/"
+    current_query = current.query or ""
+    target_query = target.query or ""
+    return current_path == target_path and current_query == target_query
+
+
+def _select_best_matching_tab(
+    tabs: List[Dict[str, object]],
+    *,
+    preferred_url: str = "",
+    last_known_url: str = "",
+    expected_domains: Iterable[str] | None = None,
+) -> Dict[str, object]:
+    expected = _normalize_expected_domains(expected_domains, last_known_url)
+    normalized_preferred = str(preferred_url or "").strip()
+    normalized_last_known = str(last_known_url or "").strip()
+
+    for target_url in (normalized_preferred, normalized_last_known):
+        if not target_url:
+            continue
+        for tab in tabs:
+            tab_url = str(tab.get("url", "")).strip()
+            if _url_matches_target(tab_url, target_url):
+                return tab
+
+    for tab in tabs:
+        tab_url = str(tab.get("url", "")).strip().lower()
+        if any(domain in tab_url for domain in expected):
+            return tab
+
+    return tabs[0] if tabs else {}
 
 
 def load_gateway_token() -> str:
@@ -63,7 +124,7 @@ def _normalize_expected_domains(expected_domains: Iterable[str] | None, last_kno
     return deduped
 
 
-def get_current_relay_context(expected_domains: Iterable[str] | None = None, last_known_url: str = "") -> Dict[str, object]:
+def get_current_relay_context(expected_domains: Iterable[str] | None = None, last_known_url: str = "", preferred_url: str = "") -> Dict[str, object]:
     token = load_gateway_token()
     expected = _normalize_expected_domains(expected_domains, last_known_url)
     if not token:
@@ -86,12 +147,45 @@ def get_current_relay_context(expected_domains: Iterable[str] | None = None, las
     try:
         response = browser_control_post(token, "/act", body, timeout=15)
     except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
+        try:
+            tabs = _openclaw_browser_json("tabs", "--browser-profile", "chrome-relay", timeout=15).get("tabs", [])
+        except Exception as cli_exc:  # pragma: no cover - fallback path
+            return {
+                "ok": False,
+                "status": "relay_context_probe_failed",
+                "error": str(exc),
+                "cli_error": str(cli_exc),
+                "expected_domains": expected,
+                "last_known_url": last_known_url,
+            }
+        matched_tab = _select_best_matching_tab(
+            tabs,
+            preferred_url=preferred_url,
+            last_known_url=last_known_url,
+            expected_domains=expected,
+        )
+        page_url = str(matched_tab.get("url", "")).strip()
+        target_id = str(matched_tab.get("targetId", "")).strip()
+        matched_domain = ""
+        lowered_url = page_url.lower()
+        for domain in expected:
+            if domain and domain in lowered_url:
+                matched_domain = domain
+                break
+        matched = bool(matched_domain or not expected)
         return {
-            "ok": False,
-            "status": "relay_context_probe_failed",
-            "error": str(exc),
+            "ok": bool(target_id and page_url and matched),
+            "status": "browser_channel_recovered" if target_id and page_url and matched else "relay_context_mismatch",
+            "target_id": target_id,
+            "page_url": page_url,
+            "title": str(matched_tab.get("title", "")).strip(),
+            "ready_state": "",
             "expected_domains": expected,
+            "matched_domain": matched_domain,
             "last_known_url": last_known_url,
+            "preferred_url": preferred_url,
+            "fallback": "openclaw_browser_cli",
+            "tabs_count": len(tabs),
         }
 
     result = response.get("result", {}) if isinstance(response, dict) else {}
@@ -108,7 +202,7 @@ def get_current_relay_context(expected_domains: Iterable[str] | None = None, las
             matched_domain = domain
             break
     matched = bool(matched_domain or not expected)
-    return {
+    result = {
         "ok": bool(target_id and page_url and matched),
         "status": "browser_channel_recovered" if target_id and page_url and matched else "relay_context_mismatch",
         "target_id": target_id,
@@ -118,13 +212,154 @@ def get_current_relay_context(expected_domains: Iterable[str] | None = None, las
         "expected_domains": expected,
         "matched_domain": matched_domain,
         "last_known_url": last_known_url,
+        "preferred_url": preferred_url,
     }
+    if preferred_url and not _url_matches_target(page_url, preferred_url):
+        try:
+            tabs = _openclaw_browser_json("tabs", "--browser-profile", "chrome-relay", timeout=15).get("tabs", [])
+        except Exception:  # pragma: no cover - fallback path
+            return result
+        matched_tab = _select_best_matching_tab(
+            tabs,
+            preferred_url=preferred_url,
+            last_known_url=last_known_url,
+            expected_domains=expected,
+        )
+        matched_url = str(matched_tab.get("url", "")).strip()
+        matched_target_id = str(matched_tab.get("targetId", "")).strip()
+        if matched_target_id and matched_url and _url_matches_target(matched_url, preferred_url):
+            lowered_url = matched_url.lower()
+            matched_domain = ""
+            for domain in expected:
+                if domain and domain in lowered_url:
+                    matched_domain = domain
+                    break
+            result.update(
+                {
+                    "ok": True,
+                    "status": "browser_channel_recovered",
+                    "target_id": matched_target_id,
+                    "page_url": matched_url,
+                    "title": str(matched_tab.get("title", "")).strip(),
+                    "ready_state": "",
+                    "matched_domain": matched_domain,
+                    "fallback": "openclaw_browser_cli",
+                    "tabs_count": len(tabs),
+                }
+            )
+    return result
 
 
-def recover_browser_channel(task_id: str, expected_domains: Iterable[str] | None = None, last_known_url: str = "") -> Dict[str, object]:
+def recover_browser_channel(task_id: str, expected_domains: Iterable[str] | None = None, last_known_url: str = "", preferred_url: str = "") -> Dict[str, object]:
     result = {
         "task_id": task_id,
-        **get_current_relay_context(expected_domains=expected_domains, last_known_url=last_known_url),
+        **get_current_relay_context(expected_domains=expected_domains, last_known_url=last_known_url, preferred_url=preferred_url),
+    }
+    _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
+    return result
+
+
+def navigate_relay_to_url(task_id: str, url: str, expected_domains: Iterable[str] | None = None) -> Dict[str, object]:
+    token = load_gateway_token()
+    expected = _normalize_expected_domains(expected_domains, url)
+    if not token:
+        result = {
+            "task_id": task_id,
+            "ok": False,
+            "status": "missing_gateway_token",
+            "url": url,
+            "expected_domains": expected,
+        }
+        _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
+        return result
+
+    context = get_current_relay_context(expected_domains=expected, last_known_url=url, preferred_url=url)
+    target_id = str(context.get("target_id", "")).strip()
+    current_url = str(context.get("page_url", "")).strip()
+    if _url_matches_target(current_url, url):
+        result = {
+            "task_id": task_id,
+            "ok": True,
+            "status": "already_at_target_url",
+            "url": url,
+            "expected_domains": expected,
+            "context": context,
+        }
+        _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
+        return result
+    if not target_id:
+        result = {
+            "task_id": task_id,
+            "ok": False,
+            "status": "missing_relay_target",
+            "url": url,
+            "expected_domains": expected,
+            "context": context,
+        }
+        _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
+        return result
+
+    try:
+        browser_control_post(
+            token,
+            "/act",
+            {
+                "profile": "chrome-relay",
+                "targetId": target_id,
+                "kind": "evaluate",
+                "fn": f"() => {{ window.location.href = {json.dumps(url)}; return {{ href: location.href }}; }}",
+            },
+            timeout=15,
+        )
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
+        try:
+            subprocess.run(
+                [_resolve_openclaw_bin(), "browser", "--browser-profile", "chrome-relay", "focus", target_id],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+            _openclaw_browser_json("navigate", "--browser-profile", "chrome-relay", "--target-id", target_id, url, timeout=20)
+        except Exception as cli_exc:
+            result = {
+                "task_id": task_id,
+                "ok": False,
+                "status": "relay_navigation_failed",
+                "url": url,
+                "expected_domains": expected,
+                "error": str(cli_exc),
+                "context": context,
+            }
+            _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
+            return result
+
+    latest = context
+    for _ in range(8):
+        time.sleep(0.5)
+        latest = get_current_relay_context(expected_domains=expected, last_known_url=url, preferred_url=url)
+        current_url = str(latest.get("page_url", "")).strip()
+        if current_url.startswith(url):
+            result = {
+                "task_id": task_id,
+                "ok": True,
+                "status": "relay_navigation_succeeded",
+                "url": url,
+                "expected_domains": expected,
+                "target_id": latest.get("target_id", ""),
+                "page_url": current_url,
+                "context": latest,
+            }
+            _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
+            return result
+
+    result = {
+        "task_id": task_id,
+        "ok": False,
+        "status": "relay_navigation_unconfirmed",
+        "url": url,
+        "expected_domains": expected,
+        "context": latest,
     }
     _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
     return result
