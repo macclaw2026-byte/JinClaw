@@ -358,6 +358,21 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "action": "awaiting_authorized_session",
             "mission_cycle": mission_cycle,
         }
+    if action == "await_relay_attach_checkpoint":
+        state.status = "blocked"
+        state.next_action = "await_relay_attach_checkpoint"
+        state.blockers = ["chrome-relay has no attached tabs; re-attach the relay badge on the target seller.neosgo tab before continuation"]
+        state.last_update_at = utc_now_iso()
+        save_state(state)
+        log_event(task_id, "control_center_requires_relay_attach_checkpoint")
+        return {
+            "task_id": task_id,
+            "status": state.status,
+            "current_stage": state.current_stage,
+            "next_action": state.next_action,
+            "action": "awaiting_relay_attach_checkpoint",
+            "mission_cycle": mission_cycle,
+        }
     if action == "await_human_verification_checkpoint":
         state.status = "blocked"
         state.next_action = "await_human_verification_checkpoint"

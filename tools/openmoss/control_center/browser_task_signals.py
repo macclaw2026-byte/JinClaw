@@ -217,6 +217,17 @@ def _analyze_lines(lines: List[str]) -> Dict[str, object]:
     }
 
 
+def _relay_unattached(channel_recovery: Dict[str, object]) -> bool:
+    if not isinstance(channel_recovery, dict):
+        return False
+    if int(channel_recovery.get("tabs_count", 0) or 0) > 0:
+        return False
+    status = str(channel_recovery.get("status", "")).strip()
+    reopened = channel_recovery.get("reopened_tab", {}) or {}
+    reopened_status = str(reopened.get("status", "")).strip()
+    return status in {"relay_context_mismatch", "missing_relay_target"} or reopened_status == "relay_open_failed"
+
+
 def _extract_latest_target_context(lines: List[str]) -> Dict[str, str]:
     target_id = ""
     page_url = ""
@@ -229,7 +240,7 @@ def _extract_latest_target_context(lines: List[str]) -> Dict[str, str]:
             page_url = url_match.group(1)
     return {"target_id": target_id, "page_url": page_url}
 
-def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, object]:
+def _collect_live_browser_probe(task_id: str, lines: List[str], preferred_url: str = "") -> Dict[str, object]:
     token = load_gateway_token()
     context = _extract_latest_target_context(lines)
     target_id = context.get("target_id", "")
@@ -367,12 +378,7 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
         }
 
     expected_domains = ["seller.neosgo.com"]
-    preferred_url = ""
-    if isinstance(payload.get("business_verification_requirements"), dict) and payload["business_verification_requirements"].get("batch_listings_mode") is True:
-        state_payload = _load_state_payload(task_id)
-        batch_focus = (state_payload.get("metadata", {}) or {}).get("batch_focus", {}) if isinstance(state_payload, dict) else {}
-        if isinstance(batch_focus, dict):
-            preferred_url = str(batch_focus.get("expected_listings_url", "")).strip()
+    preferred_url = str(preferred_url or "").strip()
 
     def _run_probe(current_target_id: str) -> Dict[str, object] | None:
         try:
@@ -704,7 +710,7 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
     payload.update(analysis)
     payload["analysis_window_lines"] = len(window)
 
-    live_probe = _collect_live_browser_probe(task_id, window)
+    live_probe = _collect_live_browser_probe(task_id, window, preferred_url=str(payload.get("preferred_url", "")).strip())
     payload["live_probe"] = live_probe
     _augment_batch_probe_from_state(task_id, state_payload, payload)
     if live_probe.get("available"):
@@ -795,6 +801,19 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
             payload["evidence"] = sorted(set([*payload.get("evidence", []), *live_probe.get("evidence", [])]))
     elif analysis.get("diagnosis") == "browser_control_channel_lost":
         payload["channel_recovery"] = live_probe.get("channel_recovery", {})
+
+    channel_recovery = payload.get("channel_recovery", {}) if isinstance(payload.get("channel_recovery"), dict) else {}
+    if _relay_unattached(channel_recovery):
+        payload["diagnosis"] = "browser_relay_unattached"
+        payload["recommended_action"] = "await_relay_attach_checkpoint"
+        payload["evidence"] = sorted(
+            set(
+                [
+                    *payload.get("evidence", []),
+                    "chrome-relay currently has no attached tabs, so browser control cannot continue until a tab is re-attached",
+                ]
+            )
+        )
 
     requirements_evaluation = _evaluate_business_requirements(requirements, payload)
     payload["requirements_evaluation"] = requirements_evaluation
