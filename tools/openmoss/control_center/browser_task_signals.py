@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import re
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Dict, Iterable, List
 
-from paths import BROWSER_SIGNALS_ROOT, OPENCLAW_SESSIONS_ROOT
+from paths import BROWSER_SIGNALS_ROOT, OPENCLAW_ROOT, OPENCLAW_SESSIONS_ROOT
 
 
 IMAGE_COUNT_PATTERNS = [
@@ -111,6 +114,144 @@ def _analyze_lines(lines: List[str]) -> Dict[str, object]:
     }
 
 
+def _load_gateway_token() -> str:
+    config_path = OPENCLAW_ROOT / "openclaw.json"
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    return str(payload.get("gateway", {}).get("auth", {}).get("token", "")).strip()
+
+
+def _extract_latest_target_context(lines: List[str]) -> Dict[str, str]:
+    target_id = ""
+    page_url = ""
+    for line in lines:
+        target_match = re.search(r'"targetId":\s*"([^"]+)"', line)
+        if target_match:
+            target_id = target_match.group(1)
+        url_match = re.search(r'"url":\s*"([^"]+seller\.neosgo\.com[^"]*)"', line)
+        if url_match:
+            page_url = url_match.group(1)
+    return {"target_id": target_id, "page_url": page_url}
+
+
+def _browser_control_get(token: str, path: str) -> Dict[str, object]:
+    req = urllib.request.Request(
+        f"http://127.0.0.1:18791{path}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read().decode(errors="ignore"))
+
+
+def _browser_control_post(token: str, path: str, body: Dict[str, object], timeout: int = 20) -> Dict[str, object]:
+    req = urllib.request.Request(
+        f"http://127.0.0.1:18791{path}",
+        data=json.dumps(body).encode(),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode(errors="ignore"))
+
+
+def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, object]:
+    token = _load_gateway_token()
+    context = _extract_latest_target_context(lines)
+    target_id = context.get("target_id", "")
+    page_url = context.get("page_url", "")
+    payload: Dict[str, object] = {
+        "available": False,
+        "target_id": target_id,
+        "page_url": page_url,
+        "product_image_count": None,
+        "file_input_count": None,
+        "form_valid": None,
+        "invalid_fields": [],
+        "save_request_succeeded": False,
+        "save_request_url": "",
+    }
+    if not token or not target_id:
+        return payload
+
+    requests_path = f"/requests?{urllib.parse.urlencode({'profile': 'chrome-relay', 'targetId': target_id})}"
+    evaluate_body = {
+        "profile": "chrome-relay",
+        "targetId": target_id,
+        "kind": "evaluate",
+        "fn": r"""() => {
+  const imgs = [...document.querySelectorAll('img')]
+    .filter(i => i.alt && /^Image \d+$/.test(i.alt))
+    .map(i => i.src);
+  const input = document.querySelector("input[type='file'][accept='image/jpeg,image/png,image/gif,image/webp']");
+  const form = document.querySelector('form');
+  const invalid = form
+    ? [...form.querySelectorAll(':invalid')].map((el) => ({
+        label: el.previousElementSibling && el.previousElementSibling.tagName === 'LABEL'
+          ? (el.previousElementSibling.innerText || '').trim()
+          : '',
+        type: el.getAttribute('type') || '',
+        value: el.value || '',
+        min: el.getAttribute('min') || '',
+        max: el.getAttribute('max') || '',
+        step: el.getAttribute('step') || '',
+        stepMismatch: Boolean(el.validity && el.validity.stepMismatch),
+      }))
+    : [];
+  return {
+    count: imgs.length,
+    fileCount: input && input.files ? input.files.length : 0,
+    formValid: form ? form.checkValidity() : null,
+    invalidFields: invalid,
+    lastImgs: imgs.slice(-3),
+    url: location.href,
+  };
+}""",
+    }
+    try:
+        requests = _browser_control_get(token, requests_path)
+        state = _browser_control_post(token, "/act", evaluate_body)
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
+        return payload
+
+    request_rows = requests.get("requests", []) if isinstance(requests, dict) else []
+    state_result = state.get("result", {}) if isinstance(state, dict) else {}
+    save_request = next(
+        (
+            row
+            for row in request_rows
+            if row.get("method") == "PATCH"
+            and "/api/products/" in str(row.get("url", ""))
+            and bool(row.get("ok"))
+        ),
+        None,
+    )
+    payload.update(
+        {
+            "available": True,
+            "page_url": str(state_result.get("url", page_url) or page_url),
+            "product_image_count": state_result.get("count"),
+            "file_input_count": state_result.get("fileCount"),
+            "form_valid": state_result.get("formValid"),
+            "invalid_fields": state_result.get("invalidFields", []),
+            "save_request_succeeded": bool(save_request),
+            "save_request_url": str(save_request.get("url", "")) if save_request else "",
+        }
+    )
+    if save_request:
+        payload["evidence"] = [
+            "live browser probe observed successful product PATCH save request",
+            "browser page retained uploaded product image after save path engaged",
+        ]
+    elif payload["file_input_count"] and payload["form_valid"] is False:
+        payload["evidence"] = [
+            "file reached the real file input in the page",
+            "native form validation blocked submit before the save request was sent",
+        ]
+    return payload
+
+
 def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
     link = _load_link(task_id)
     last_message_id = str(link.get("last_message_id", "")).strip()
@@ -146,6 +287,25 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
     analysis = _analyze_lines(window)
     payload.update(analysis)
     payload["analysis_window_lines"] = len(window)
+
+    live_probe = _collect_live_browser_probe(task_id, window)
+    payload["live_probe"] = live_probe
+    if live_probe.get("available"):
+        payload["live_product_image_count"] = live_probe.get("product_image_count")
+        payload["live_file_input_count"] = live_probe.get("file_input_count")
+        payload["live_form_valid"] = live_probe.get("form_valid")
+        payload["live_invalid_fields"] = live_probe.get("invalid_fields", [])
+        payload["save_request_succeeded"] = live_probe.get("save_request_succeeded", False)
+        payload["save_request_url"] = live_probe.get("save_request_url", "")
+        if live_probe.get("save_request_succeeded"):
+            payload["diagnosis"] = "upload_saved_successfully"
+            payload["recommended_action"] = "confirm_business_outcome_and_finalize"
+            payload["evidence"] = sorted(set([*payload.get("evidence", []), *live_probe.get("evidence", [])]))
+        elif live_probe.get("file_input_count") and live_probe.get("form_valid") is False:
+            payload["diagnosis"] = "browser_form_validation_blocking_submit"
+            payload["recommended_action"] = "normalize_invalid_numeric_fields_then_resubmit"
+            payload["evidence"] = sorted(set([*payload.get("evidence", []), *live_probe.get("evidence", [])]))
+
     _write_json(BROWSER_SIGNALS_ROOT / f"{task_id}.json", payload)
     return payload
 

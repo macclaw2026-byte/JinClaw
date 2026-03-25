@@ -43,6 +43,10 @@ def solve_problem(task_id: str, blockers: List[str], arbitration: Dict[str, obje
         options.extend(["needs_network_request_level_debugging", "investigate_frontend_binding_and_network_request_chain"])
     if root_cause == "frontend_binding_not_triggered":
         options.extend(["investigate_frontend_binding_and_network_request_chain", "needs_network_request_level_debugging"])
+    if root_cause == "browser_form_validation_blocking_submit":
+        options.extend(["normalize_invalid_numeric_fields_then_resubmit", "repair_form_validation_then_retry_submit"])
+    if root_cause == "upload_saved_successfully":
+        options.append("confirm_business_outcome_and_finalize")
     if root_cause == "needs_network_request_level_debugging":
         options.append("needs_network_request_level_debugging")
     if root_cause == "auth_or_config_error":
