@@ -11,15 +11,19 @@ AUTONOMY_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy
 if str(AUTONOMY_DIR) not in sys.path:
     sys.path.insert(0, str(AUTONOMY_DIR))
 
+from browser_task_signals import collect_browser_task_signals
 from challenge_classifier import classify_challenge
 from recovery_engine import classify_failure
 
 
 def solve_problem(task_id: str, blockers: List[str], arbitration: Dict[str, object], approval: Dict[str, object]) -> Dict[str, object]:
     blocker_text = " | ".join(blockers).strip()
+    browser_signals = collect_browser_task_signals(task_id)
     challenge = classify_challenge(task_id, blockers, {"status": "recovering" if blockers else "planning", "current_stage": "execute" if blockers else ""})
     if approval.get("pending"):
         root_cause = "approval_pending"
+    elif browser_signals.get("diagnosis") not in {"", "none"}:
+        root_cause = str(browser_signals.get("diagnosis"))
     elif challenge.get("challenge_type") != "none":
         root_cause = challenge.get("challenge_type")
     elif not arbitration.get("necessity_proof", {}).get("required", True) and "stay_on_local_plan_until_necessity_is_proven" in arbitration.get("next_best_actions", []):
@@ -35,6 +39,12 @@ def solve_problem(task_id: str, blockers: List[str], arbitration: Dict[str, obje
         options.append("repair_and_retry")
     if root_cause in {"general_failure", "planning_gap"}:
         options.append("research_alternative_solution")
+    if root_cause == "upload_control_path_invalid":
+        options.extend(["needs_network_request_level_debugging", "investigate_frontend_binding_and_network_request_chain"])
+    if root_cause == "frontend_binding_not_triggered":
+        options.extend(["investigate_frontend_binding_and_network_request_chain", "needs_network_request_level_debugging"])
+    if root_cause == "needs_network_request_level_debugging":
+        options.append("needs_network_request_level_debugging")
     if root_cause == "auth_or_config_error":
         options.append("request_authorized_configuration")
     if root_cause == "authorization_required":
@@ -50,6 +60,7 @@ def solve_problem(task_id: str, blockers: List[str], arbitration: Dict[str, obje
         "task_id": task_id,
         "root_cause": root_cause,
         "blockers": blockers,
+        "browser_signals": browser_signals,
         "challenge": challenge,
         "options": options,
         "recommended_action": recommendation,

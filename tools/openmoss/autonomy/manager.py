@@ -328,11 +328,17 @@ def recover_task(args: argparse.Namespace) -> int:
 def apply_recovery(args: argparse.Namespace) -> int:
     state = load_state(args.task_id)
     stage_name = args.stage or state.current_stage
+    if not stage_name:
+        for name in state.stage_order:
+            stage = state.stages.get(name)
+            if stage and stage.status == "failed":
+                stage_name = name
+                break
     if not stage_name or stage_name not in state.stages:
         raise SystemExit("unknown stage")
     stage = state.stages[stage_name]
     action = args.action or state.next_action
-    result = apply_recovery_action(action, stage.blocker or " ".join(state.blockers))
+    result = apply_recovery_action(action, stage.blocker or " ".join(state.blockers), args.task_id)
     stage.updated_at = utc_now_iso()
     state.last_update_at = utc_now_iso()
     if result.get("ok") == "true":
@@ -343,8 +349,12 @@ def apply_recovery(args: argparse.Namespace) -> int:
         state.next_action = f"start_stage:{stage_name}"
         record_learning(args.task_id, f"Auto-recovery succeeded for {stage_name}: {action}")
     else:
+        blocker = str(result.get("blocker") or stage.blocker or " ".join(state.blockers) or result.get("status", "recovery_blocked"))
+        stage.status = "failed"
+        stage.blocker = blocker
         state.status = "blocked"
-        state.next_action = action
+        state.blockers = [blocker]
+        state.next_action = str(result.get("next_action") or action)
         record_error(args.task_id, f"Auto-recovery failed for {stage_name}: {action} -> {result.get('status')}")
     save_state(state)
     _refresh_task_summary(
@@ -514,6 +524,7 @@ def verify_task(args: argparse.Namespace) -> int:
     results = []
     all_ok = True
     verified_stages = []
+    first_failed_stage = ""
     for stage_contract in contract.stages:
         if not stage_contract.verifier:
             continue
@@ -526,6 +537,8 @@ def verify_task(args: argparse.Namespace) -> int:
             all_ok = False
             stage_state.status = "failed"
             stage_state.blocker = f"verification failed: {result['status']}"
+            if not first_failed_stage:
+                first_failed_stage = stage_contract.name
         else:
             verified_stages.append(stage_contract.name)
             if stage_state.status != "completed":
@@ -534,7 +547,7 @@ def verify_task(args: argparse.Namespace) -> int:
                 stage_state.completed_at = utc_now_iso()
     state.status = "completed" if all_ok else "recovering"
     state.next_action = "none" if all_ok else "repair_verification_failure"
-    state.blockers = [] if all_ok else ["verification_failure"]
+    state.blockers = [] if all_ok else [f"verification_failure:{first_failed_stage or 'unknown'}"]
     if all_ok:
         next_stage = None
         for name in state.stage_order:
@@ -547,6 +560,8 @@ def verify_task(args: argparse.Namespace) -> int:
             state.next_action = f"start_stage:{next_stage}"
         else:
             state.current_stage = ""
+    else:
+        state.current_stage = first_failed_stage or state.current_stage
     state.last_update_at = utc_now_iso()
     save_state(state)
     plan_id = str(contract.metadata.get("control_center", {}).get("selected_plan", {}).get("plan_id", ""))
