@@ -39,6 +39,31 @@ def _record_execution(task_id: str, payload: Dict) -> str:
     return str(record_path)
 
 
+def _summarize_preflight_block(preflight: Dict) -> list[str]:
+    result = preflight.get("result", {}) or {}
+    entries = list(result.get("results", []) or [])
+    blockers: list[str] = []
+    for entry in entries:
+        status = str(entry.get("status", "")).strip()
+        if status == "required_commands_missing":
+            missing = ", ".join(entry.get("missing_commands", []) or [])
+            blockers.append(f"preflight_missing_commands:{missing or 'unknown'}")
+        elif status == "required_paths_missing":
+            missing = ", ".join(entry.get("missing_paths", []) or [])
+            blockers.append(f"preflight_missing_paths:{missing or 'unknown'}")
+        elif status == "writable_paths_blocked":
+            blocked = ", ".join(entry.get("blocked_paths", []) or [])
+            blockers.append(f"preflight_unwritable_paths:{blocked or 'unknown'}")
+        elif status in {"approval_required", "approval_pending"}:
+            pending = ", ".join(entry.get("pending_ids", []) or entry.get("declared_pending_ids", []) or [])
+            blockers.append(f"preflight_approval_pending:{pending or 'unknown'}")
+        elif status:
+            blockers.append(f"preflight_{status}")
+    if not blockers:
+        blockers.append(f"preflight_blocked:{preflight.get('guard_type', 'unknown')}")
+    return blockers
+
+
 def _gateway_call(method: str, params: Dict, timeout_seconds: int = 15) -> Dict:
     try:
         proc = subprocess.run(
@@ -170,7 +195,12 @@ def dispatch_stage(task_id: str) -> Dict:
     if not preflight.get("ok", True):
         state.status = "recovering"
         state.next_action = str(preflight.get("action") or "run_root_cause_review_before_retry")
+        state.blockers = _summarize_preflight_block(preflight)
         state.last_update_at = utc_now_iso()
+        current_stage = state.stages.get(stage_name)
+        if current_stage:
+            current_stage.blocker = "; ".join(state.blockers)
+            current_stage.updated_at = utc_now_iso()
         save_state(state)
         result = {
             "ok": False,
