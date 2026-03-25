@@ -6,11 +6,11 @@ import json
 import re
 import urllib.error
 import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import Dict, Iterable, List
 
-from paths import BROWSER_SIGNALS_ROOT, OPENCLAW_ROOT, OPENCLAW_SESSIONS_ROOT
+from browser_channel_recovery import browser_control_get, browser_control_post, load_gateway_token, recover_browser_channel
+from paths import BROWSER_SIGNALS_ROOT, OPENCLAW_SESSIONS_ROOT
 
 
 IMAGE_COUNT_PATTERNS = [
@@ -140,6 +140,7 @@ def _analyze_lines(lines: List[str]) -> Dict[str, object]:
     upload_not_received = False
     upload_path_invalid = False
     needs_network_debug = False
+    tab_not_found = False
 
     for line in lines:
         lower = line.lower()
@@ -156,6 +157,9 @@ def _analyze_lines(lines: List[str]) -> Dict[str, object]:
         if "查它真实上传请求" in line or "查它的前端绑定事件" in line or "找它的接口链路" in line:
             needs_network_debug = True
             evidence.append("deeper request-chain or frontend-binding inspection explicitly required")
+        if "tab not found" in lower or "控制通道掉了" in line or "浏览器工具连续返回 tab not found" in line:
+            tab_not_found = True
+            evidence.append("browser control channel lost the previously attached tab target")
 
     diagnosis = "none"
     recommended_action = "continue_current_plan"
@@ -168,6 +172,9 @@ def _analyze_lines(lines: List[str]) -> Dict[str, object]:
     elif needs_network_debug:
         diagnosis = "needs_network_request_level_debugging"
         recommended_action = "needs_network_request_level_debugging"
+    elif tab_not_found:
+        diagnosis = "browser_control_channel_lost"
+        recommended_action = "reacquire_browser_channel"
 
     return {
         "product_image_count": product_image_count,
@@ -176,19 +183,11 @@ def _analyze_lines(lines: List[str]) -> Dict[str, object]:
         "upload_not_received": upload_not_received,
         "upload_path_invalid": upload_path_invalid,
         "needs_network_debug": needs_network_debug,
+        "tab_not_found": tab_not_found,
         "diagnosis": diagnosis,
         "recommended_action": recommended_action,
         "evidence": sorted(set(evidence)),
     }
-
-
-def _load_gateway_token() -> str:
-    config_path = OPENCLAW_ROOT / "openclaw.json"
-    try:
-        payload = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ""
-    return str(payload.get("gateway", {}).get("auth", {}).get("token", "")).strip()
 
 
 def _extract_latest_target_context(lines: List[str]) -> Dict[str, str]:
@@ -203,29 +202,8 @@ def _extract_latest_target_context(lines: List[str]) -> Dict[str, str]:
             page_url = url_match.group(1)
     return {"target_id": target_id, "page_url": page_url}
 
-
-def _browser_control_get(token: str, path: str) -> Dict[str, object]:
-    req = urllib.request.Request(
-        f"http://127.0.0.1:18791{path}",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        return json.loads(resp.read().decode(errors="ignore"))
-
-
-def _browser_control_post(token: str, path: str, body: Dict[str, object], timeout: int = 20) -> Dict[str, object]:
-    req = urllib.request.Request(
-        f"http://127.0.0.1:18791{path}",
-        data=json.dumps(body).encode(),
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode(errors="ignore"))
-
-
 def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, object]:
-    token = _load_gateway_token()
+    token = load_gateway_token()
     context = _extract_latest_target_context(lines)
     target_id = context.get("target_id", "")
     page_url = context.get("page_url", "")
@@ -239,16 +217,20 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
         "invalid_fields": [],
         "save_request_succeeded": False,
         "save_request_url": "",
+        "channel_recovery": {"status": "not_attempted", "ok": False},
     }
-    if not token or not target_id:
+    if not token:
         return payload
 
-    requests_path = f"/requests?{urllib.parse.urlencode({'profile': 'chrome-relay', 'targetId': target_id})}"
-    evaluate_body = {
-        "profile": "chrome-relay",
-        "targetId": target_id,
-        "kind": "evaluate",
-        "fn": r"""() => {
+    def _requests_path(current_target_id: str) -> str:
+        return f"/requests?{urllib.parse.urlencode({'profile': 'chrome-relay', 'targetId': current_target_id})}"
+
+    def _evaluate_body(current_target_id: str) -> Dict[str, object]:
+        return {
+            "profile": "chrome-relay",
+            "targetId": current_target_id,
+            "kind": "evaluate",
+            "fn": r"""() => {
   const imgs = [...document.querySelectorAll('img')]
     .filter(i => i.alt && /^Image \d+$/.test(i.alt))
     .map(i => i.src);
@@ -283,12 +265,14 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
     url: location.href,
   };
 }""",
-    }
-    product_fetch_body = {
-        "profile": "chrome-relay",
-        "targetId": target_id,
-        "kind": "evaluate",
-        "fn": r"""async () => {
+        }
+
+    def _product_fetch_body(current_target_id: str) -> Dict[str, object]:
+        return {
+            "profile": "chrome-relay",
+            "targetId": current_target_id,
+            "kind": "evaluate",
+            "fn": r"""async () => {
   const id = location.pathname.split('/').filter(Boolean).pop();
   try {
     const resp = await fetch(`/api/products/${id}`, { credentials: 'include' });
@@ -311,14 +295,45 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
     };
   }
 }""",
-    }
-    try:
-        requests = _browser_control_get(token, requests_path)
-        state = _browser_control_post(token, "/act", evaluate_body)
-        product_state = _browser_control_post(token, "/act", product_fetch_body)
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
-        return payload
+        }
 
+    expected_domains = ["seller.neosgo.com"]
+
+    def _run_probe(current_target_id: str) -> Dict[str, object] | None:
+        try:
+            requests = browser_control_get(token, _requests_path(current_target_id))
+            state = browser_control_post(token, "/act", _evaluate_body(current_target_id))
+            product_state = browser_control_post(token, "/act", _product_fetch_body(current_target_id))
+        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
+            return None
+        return {"requests": requests, "state": state, "product_state": product_state}
+
+    channel_recovery = {"status": "not_needed", "ok": bool(target_id), "target_id": target_id, "page_url": page_url}
+    if not target_id:
+        channel_recovery = recover_browser_channel(task_id, expected_domains=expected_domains, last_known_url=page_url)
+        payload["channel_recovery"] = channel_recovery
+        if not channel_recovery.get("ok"):
+            return payload
+        target_id = str(channel_recovery.get("target_id", "")).strip()
+        page_url = str(channel_recovery.get("page_url", "")).strip() or page_url
+
+    probe = _run_probe(target_id)
+    if not probe:
+        channel_recovery = recover_browser_channel(task_id, expected_domains=expected_domains, last_known_url=page_url)
+        payload["channel_recovery"] = channel_recovery
+        if not channel_recovery.get("ok"):
+            return payload
+        recovered_target_id = str(channel_recovery.get("target_id", "")).strip()
+        recovered_page_url = str(channel_recovery.get("page_url", "")).strip() or page_url
+        probe = _run_probe(recovered_target_id)
+        if not probe:
+            return payload
+        target_id = recovered_target_id
+        page_url = recovered_page_url
+
+    requests = probe["requests"]
+    state = probe["state"]
+    product_state = probe["product_state"]
     request_rows = requests.get("requests", []) if isinstance(requests, dict) else []
     state_result = state.get("result", {}) if isinstance(state, dict) else {}
     product_result = product_state.get("result", {}) if isinstance(product_state, dict) else {}
@@ -335,6 +350,7 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
     payload.update(
         {
             "available": True,
+            "target_id": target_id,
             "page_url": str(state_result.get("url", page_url) or page_url),
             "product_image_count": state_result.get("count"),
             "scene_image_count": state_result.get("sceneImageCount"),
@@ -350,6 +366,7 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
             "product_status": str(product_result.get("productStatus", "") or ""),
             "packing_units_count": product_result.get("packingUnitsCount"),
             "packing_units": product_result.get("packingUnits", []),
+            "channel_recovery": channel_recovery,
         }
     )
     if save_request:
@@ -507,6 +524,18 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
         payload["product_status"] = live_probe.get("product_status", "")
         payload["packing_units_count"] = live_probe.get("packing_units_count")
         payload["packing_units"] = live_probe.get("packing_units", [])
+        payload["channel_recovery"] = live_probe.get("channel_recovery", {})
+        if analysis.get("diagnosis") == "browser_control_channel_lost":
+            payload["diagnosis"] = "browser_channel_reacquired"
+            payload["recommended_action"] = "continue_current_plan"
+            payload["evidence"] = sorted(
+                set(
+                    [
+                        *payload.get("evidence", []),
+                        "browser control channel was automatically reacquired against the active chrome-relay page",
+                    ]
+                )
+            )
         if live_probe.get("save_request_succeeded"):
             payload["diagnosis"] = "upload_saved_successfully"
             payload["recommended_action"] = "confirm_business_outcome_and_finalize"
@@ -560,6 +589,8 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
             payload["diagnosis"] = "browser_form_validation_blocking_submit"
             payload["recommended_action"] = "normalize_invalid_numeric_fields_then_resubmit"
             payload["evidence"] = sorted(set([*payload.get("evidence", []), *live_probe.get("evidence", [])]))
+    elif analysis.get("diagnosis") == "browser_control_channel_lost":
+        payload["channel_recovery"] = live_probe.get("channel_recovery", {})
 
     requirements_evaluation = _evaluate_business_requirements(requirements, payload)
     payload["requirements_evaluation"] = requirements_evaluation

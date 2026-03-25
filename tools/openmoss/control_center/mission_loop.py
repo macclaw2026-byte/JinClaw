@@ -174,13 +174,15 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
         recommended_action = problem.get("recommended_action", "needs_network_request_level_debugging")
         next_decision = {
             "action": recommended_action,
-            "reason": "browser-observed evidence shows the current upload path is not being accepted",
+            "reason": "browser-observed evidence produced a concrete recovery or continuation action",
             "auto_safe": recommended_action in {
+                "reacquire_browser_channel",
                 "needs_network_request_level_debugging",
                 "investigate_frontend_binding_and_network_request_chain",
                 "normalize_invalid_numeric_fields_then_resubmit",
                 "repair_form_validation_then_retry_submit",
                 "confirm_business_outcome_and_finalize",
+                "continue_current_plan",
             },
         }
     elif current_stage == "execute" and htn_focus.get("focus_node", {}).get("node_id"):
@@ -199,7 +201,7 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
         next_decision = {
             "action": problem.get("recommended_action", "diagnose_and_retry"),
             "reason": "task is recovering and should follow the problem solver recommendation",
-            "auto_safe": problem.get("recommended_action") in {"repair_and_retry", "apply_permission_recovery"},
+            "auto_safe": problem.get("recommended_action") in {"repair_and_retry", "apply_permission_recovery", "reacquire_browser_channel"},
         }
     elif current_stage and state.get("status") in {"planning", "running"}:
         next_decision = {

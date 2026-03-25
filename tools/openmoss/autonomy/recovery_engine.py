@@ -14,12 +14,19 @@ if str(CONTROL_CENTER_DIR) not in __import__("sys").path:
     __import__("sys").path.insert(0, str(CONTROL_CENTER_DIR))
 
 from browser_task_signals import collect_browser_task_signals
+from browser_channel_recovery import recover_browser_channel
 
 
 def classify_failure(error_text: str) -> str:
     error = error_text.lower()
     if "upload_control_path_invalid" in error:
         return "upload_control_path_invalid"
+    if "browser_control_channel_lost" in error or "tab not found" in error:
+        return "browser_control_channel_lost"
+    if "stale_target_id" in error:
+        return "stale_target_id"
+    if "browser_channel_reacquired" in error:
+        return "browser_channel_reacquired"
     if "frontend_binding_not_triggered" in error:
         return "frontend_binding_not_triggered"
     if "browser_form_validation_blocking_submit" in error:
@@ -51,6 +58,8 @@ def propose_recovery(error_text: str, attempts: int) -> Dict[str, str]:
         action = "inspect_permissions_then_retry"
     elif classification == "missing_dependency":
         action = "repair_missing_path_or_dependency"
+    elif classification in {"browser_control_channel_lost", "stale_target_id"}:
+        action = "reacquire_browser_channel"
     elif classification == "auth_or_config_error":
         action = "repair_credentials_or_configuration"
     elif classification == "anti_automation_or_rate_limit":
@@ -63,6 +72,8 @@ def propose_recovery(error_text: str, attempts: int) -> Dict[str, str]:
         action = "normalize_invalid_numeric_fields_then_resubmit"
     elif classification == "upload_saved_successfully":
         action = "confirm_business_outcome_and_finalize"
+    elif classification == "browser_channel_reacquired":
+        action = "continue_current_plan"
     elif classification == "needs_network_request_level_debugging":
         action = "needs_network_request_level_debugging"
     else:
@@ -115,6 +126,22 @@ def apply_recovery_action(action: str, error_text: str, task_id: str = "") -> Di
 
     if action == "switch_tool_path_or_slow_down":
         return {"ok": "true", "status": "tool_switch_recommended", "note": "requires alternate execution path"}
+
+    if action == "reacquire_browser_channel":
+        recovery = recover_browser_channel(task_id, expected_domains=["seller.neosgo.com"])
+        if recovery.get("ok"):
+            return {
+                "ok": "true",
+                "status": "browser_channel_recovered",
+                "target_id": str(recovery.get("target_id", "")),
+                "page_url": str(recovery.get("page_url", "")),
+            }
+        return {
+            "ok": "false",
+            "status": str(recovery.get("status", "browser_channel_recovery_failed")),
+            "next_action": "reacquire_browser_channel",
+            "blocker": str(recovery.get("status", "browser_channel_recovery_failed")),
+        }
 
     if action == "install_preflight_guard_and_targeted_recovery":
         classification = classify_failure(error_text)
@@ -177,6 +204,7 @@ def apply_recovery_action(action: str, error_text: str, task_id: str = "") -> Di
         "needs_network_request_level_debugging",
         "investigate_frontend_binding_and_network_request_chain",
         "normalize_invalid_numeric_fields_then_resubmit",
+        "reacquire_browser_channel",
     }:
         return {"ok": "false", "status": action, "next_action": action, "blocker": action}
 
