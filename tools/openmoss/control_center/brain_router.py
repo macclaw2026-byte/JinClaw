@@ -11,6 +11,7 @@ from typing import Dict
 from intent_analyzer import analyze_intent
 from orchestrator import build_control_center_package
 from paths import BRAIN_ROUTES_ROOT
+from task_status_snapshot import build_task_status_snapshot
 
 AUTONOMY_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy")
 import sys
@@ -49,6 +50,25 @@ ACTION_PATTERNS = (
     "fix",
 )
 
+STATUS_QUERY_PATTERNS = (
+    "进展",
+    "状态",
+    "结果",
+    "有没有解决",
+    "解决了吗",
+    "现在怎么样",
+    "跑通了吗",
+    "闭环",
+    "情况",
+    "progress",
+    "status",
+    "result",
+    "solved",
+    "working",
+    "complete",
+    "completed",
+)
+
 
 def _write_json(path: Path, payload: object) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -82,6 +102,13 @@ def _looks_actionable(text: str, intent: Dict[str, object]) -> bool:
     if intent.get("task_types", ["general"]) != ["general"]:
         return True
     return False
+
+
+def _looks_like_status_query(text: str) -> bool:
+    lowered = text.strip().lower()
+    if not lowered:
+        return False
+    return any(token in lowered for token in STATUS_QUERY_PATTERNS)
 
 
 def _build_task(task_id: str, goal: str, source: str) -> Dict[str, object]:
@@ -142,7 +169,13 @@ def route_instruction(
         existing["last_sender_id"] = sender_id
         existing["last_sender_name"] = sender_name
         existing["last_goal"] = goal
-        route["mode"] = "append_to_existing_task"
+        if _looks_like_status_query(goal):
+            snapshot = build_task_status_snapshot(str(existing.get("task_id", "")))
+            route["mode"] = "authoritative_task_status"
+            route["authoritative_task_status"] = snapshot
+            route["response_constraints"] = snapshot.get("reply_contract", {})
+        else:
+            route["mode"] = "append_to_existing_task"
         route["task_id"] = existing.get("task_id")
         route["link_path"] = write_link(provider, conversation_id, existing)
     elif _looks_actionable(goal, intent):
