@@ -20,7 +20,7 @@ if str(CONTROL_CENTER_DIR) not in sys.path:
     sys.path.insert(0, str(CONTROL_CENTER_DIR))
 
 from mission_loop import run_mission_cycle
-from browser_channel_recovery import recover_browser_channel, navigate_relay_to_url
+from browser_channel_recovery import prune_relay_tabs, recover_browser_channel, navigate_relay_to_url
 from browser_task_signals import collect_browser_task_signals
 from orchestrator import derive_business_verification_requirements
 
@@ -477,6 +477,16 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
     if action == "process_next_draft_listing":
         browser_signals = mission_cycle.get("browser_signals", {}) or {}
         draft_rows = browser_signals.get("draft_rows", []) or []
+        channel_recovery = browser_signals.get("channel_recovery", {}) or {}
+        keep_target_id = str(channel_recovery.get("target_id", "")).strip()
+        prune_result = prune_relay_tabs(
+            task_id,
+            keep_target_id=keep_target_id,
+            preferred_url=_preferred_browser_url(state) or "https://seller.neosgo.com/seller/products",
+            last_known_url=str(browser_signals.get("page_url", "")).strip(),
+            expected_domains=["seller.neosgo.com"],
+            max_tabs=1,
+        )
         state.status = "planning"
         state.current_stage = "execute"
         state.blockers = []
@@ -486,7 +496,12 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
                 "next_draft": draft_rows[0],
                 "remaining_visible_drafts": browser_signals.get("draft_visible_count"),
                 "listing_status_counts": browser_signals.get("listing_status_counts", {}),
+                "single_tab_mode": True,
+                "tab_budget": 1,
+                "working_target_id": keep_target_id,
+                "expected_listings_url": "https://seller.neosgo.com/seller/products",
             }
+        state.metadata["last_tab_pruning"] = prune_result
         state.metadata.pop("active_execution", None)
         state.metadata.pop("last_dispatched_marker", None)
         state.metadata.pop("last_dispatch_at", None)
@@ -497,6 +512,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "control_center_process_next_draft_listing",
             next_draft=draft_rows[0] if draft_rows else {},
             remaining_visible_drafts=browser_signals.get("draft_visible_count"),
+            tab_pruning=prune_result,
         )
         return {
             "task_id": task_id,
@@ -517,10 +533,13 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
         )
         batch_focus["force_listings_overview"] = True
         batch_focus["expected_listings_url"] = expected_listings_url
+        batch_focus["single_tab_mode"] = True
+        batch_focus["tab_budget"] = 1
         batch_focus["last_probe_page_url"] = browser_signals.get("page_url", "")
         batch_focus["last_listings_page_url"] = browser_signals.get("listings_page_url", "")
         state.metadata["batch_focus"] = batch_focus
         state.metadata["last_listings_overview_navigation"] = navigation
+        state.metadata["last_tab_pruning"] = navigation.get("tab_pruning", {})
         if not navigation.get("ok"):
             state.status = "recovering"
             state.current_stage = "execute"

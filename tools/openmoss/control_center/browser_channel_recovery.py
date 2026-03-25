@@ -41,6 +41,88 @@ def _open_relay_tab(url: str, timeout: int = 20) -> Dict[str, object]:
     return _openclaw_browser_json("open", "--browser-profile", "chrome-relay", url, timeout=timeout)
 
 
+def list_relay_tabs(profile: str = "chrome-relay", timeout: int = 15) -> List[Dict[str, object]]:
+    payload = _openclaw_browser_json("tabs", "--browser-profile", profile, timeout=timeout)
+    tabs = payload.get("tabs", [])
+    if not isinstance(tabs, list):
+        return []
+    return [tab for tab in tabs if isinstance(tab, dict)]
+
+
+def prune_relay_tabs(
+    task_id: str,
+    *,
+    keep_target_id: str = "",
+    preferred_url: str = "",
+    last_known_url: str = "",
+    expected_domains: Iterable[str] | None = None,
+    max_tabs: int = 1,
+) -> Dict[str, object]:
+    expected = _normalize_expected_domains(expected_domains, last_known_url or preferred_url)
+    tabs = list_relay_tabs("chrome-relay", timeout=15)
+    relevant_tabs: List[Dict[str, object]] = []
+    for tab in tabs:
+        tab_url = str(tab.get("url", "")).strip().lower()
+        if not expected or any(domain in tab_url for domain in expected):
+            relevant_tabs.append(tab)
+    if not relevant_tabs:
+        result = {
+            "task_id": task_id,
+            "ok": True,
+            "status": "no_matching_tabs_to_prune",
+            "expected_domains": expected,
+            "tabs_before": len(tabs),
+            "relevant_tabs_before": 0,
+            "tabs_after": len(tabs),
+            "closed_target_ids": [],
+        }
+        _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
+        return result
+
+    keep_ids: List[str] = []
+    normalized_keep = str(keep_target_id or "").strip()
+    if normalized_keep:
+        keep_ids.append(normalized_keep)
+    primary_tab = _select_best_matching_tab(
+        relevant_tabs,
+        preferred_url=preferred_url,
+        last_known_url=last_known_url,
+        expected_domains=expected,
+    )
+    primary_id = str(primary_tab.get("targetId", "")).strip()
+    if primary_id and primary_id not in keep_ids:
+        keep_ids.append(primary_id)
+    keep_ids = [item for item in keep_ids if item][:max(1, int(max_tabs or 1))]
+
+    closed_target_ids: List[str] = []
+    close_errors: List[Dict[str, str]] = []
+    for tab in relevant_tabs:
+        target_id = str(tab.get("targetId", "")).strip()
+        if not target_id or target_id in keep_ids:
+            continue
+        try:
+            _openclaw_browser_json("close", "--browser-profile", "chrome-relay", target_id, timeout=15)
+            closed_target_ids.append(target_id)
+        except Exception as exc:  # pragma: no cover - best-effort cleanup
+            close_errors.append({"target_id": target_id, "error": str(exc)})
+
+    remaining_tabs = list_relay_tabs("chrome-relay", timeout=15)
+    result = {
+        "task_id": task_id,
+        "ok": not close_errors,
+        "status": "relay_tabs_pruned" if closed_target_ids else "relay_tabs_already_within_budget",
+        "expected_domains": expected,
+        "keep_target_ids": keep_ids,
+        "tabs_before": len(tabs),
+        "relevant_tabs_before": len(relevant_tabs),
+        "tabs_after": len(remaining_tabs),
+        "closed_target_ids": closed_target_ids,
+        "close_errors": close_errors,
+    }
+    _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
+    return result
+
+
 def _url_matches_target(current_url: str, target_url: str) -> bool:
     current = urllib.parse.urlparse((current_url or "").strip())
     target = urllib.parse.urlparse((target_url or "").strip())
@@ -292,6 +374,16 @@ def recover_browser_channel(task_id: str, expected_domains: Iterable[str] | None
         result["retry_count"] = retry_count
     if reopened is not None:
         result["reopened_tab"] = reopened
+    if result.get("ok"):
+        prune_result = prune_relay_tabs(
+            task_id,
+            keep_target_id=str(result.get("target_id", "")).strip(),
+            preferred_url=preferred_url,
+            last_known_url=last_known_url,
+            expected_domains=expected_domains,
+            max_tabs=1,
+        )
+        result["tab_pruning"] = prune_result
     _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
     return result
 
@@ -409,6 +501,14 @@ def navigate_relay_to_url(task_id: str, url: str, expected_domains: Iterable[str
                 "page_url": current_url,
                 "context": latest,
             }
+            result["tab_pruning"] = prune_relay_tabs(
+                task_id,
+                keep_target_id=str(latest.get("target_id", "")).strip(),
+                preferred_url=url,
+                last_known_url=url,
+                expected_domains=expected,
+                max_tabs=1,
+            )
             _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
             return result
 

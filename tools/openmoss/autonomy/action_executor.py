@@ -206,6 +206,17 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
                 "After confirming you are on Listings overview, open exactly this next draft listing before doing any other seller action.",
             ]
         )
+    if batch_focus and ("seller.neosgo" in normalized_goal or "neosgo" in normalized_goal):
+        prompt_lines.extend(
+            [
+                "Single-tab execution rule: keep seller.neosgo work inside one chrome-relay tab whenever possible.",
+                "Single-tab execution rule: do not intentionally open a new tab for each Draft listing edit page.",
+                "Single-tab execution rule: prefer navigate(current tab, editHref) over clicking a link that may open target=_blank.",
+                "Tab budget: at most 1 active seller.neosgo chrome-relay tab should remain attached after each listing is processed.",
+                "If extra seller.neosgo tabs appear, close the older or duplicate ones and continue with the surviving working tab.",
+                "After finishing a listing, return the same working tab to Listings overview before selecting the next Draft.",
+            ]
+        )
     browser_target_hint = stage_context.get("browser_target_hint", {}) or {}
     last_nav = browser_target_hint.get("last_listings_overview_navigation", {}) or {}
     last_nav_context = last_nav.get("context", {}) or {}
