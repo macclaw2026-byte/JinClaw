@@ -39,8 +39,12 @@ def solve_problem(task_id: str, blockers: List[str], arbitration: Dict[str, obje
         options.extend(["prove_necessity_before_switching", "continue_current_plan"])
     if root_cause in {"missing_dependency", "transient_error"}:
         options.append("repair_and_retry")
+    if root_cause in {"browser_control_channel_lost", "stale_target_id"}:
+        options.append("reacquire_browser_channel")
     if root_cause in {"general_failure", "planning_gap"}:
         options.append("research_alternative_solution")
+    if root_cause == "browser_channel_reacquired":
+        options.append("continue_current_plan")
     if root_cause == "upload_control_path_invalid":
         options.extend(["needs_network_request_level_debugging", "investigate_frontend_binding_and_network_request_chain"])
     if root_cause == "frontend_binding_not_triggered":

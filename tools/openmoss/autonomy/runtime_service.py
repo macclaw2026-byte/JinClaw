@@ -20,6 +20,7 @@ if str(CONTROL_CENTER_DIR) not in sys.path:
     sys.path.insert(0, str(CONTROL_CENTER_DIR))
 
 from mission_loop import run_mission_cycle
+from browser_channel_recovery import recover_browser_channel
 from browser_task_signals import collect_browser_task_signals
 
 
@@ -241,14 +242,35 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "mission_cycle": mission_cycle,
         }
     if action in {
+        "reacquire_browser_channel",
         "needs_network_request_level_debugging",
         "investigate_frontend_binding_and_network_request_chain",
         "normalize_invalid_numeric_fields_then_resubmit",
         "repair_form_validation_then_retry_submit",
     }:
+        if action == "reacquire_browser_channel":
+            recovery = recover_browser_channel(task_id, expected_domains=["seller.neosgo.com"])
+            if recovery.get("ok"):
+                state.status = "planning"
+                state.blockers = []
+                state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+                state.metadata["last_browser_channel_recovery"] = recovery
+                state.last_update_at = utc_now_iso()
+                save_state(state)
+                log_event(task_id, "control_center_browser_channel_recovered", recovery=recovery)
+                return {
+                    "task_id": task_id,
+                    "status": state.status,
+                    "current_stage": state.current_stage,
+                    "next_action": state.next_action,
+                    "action": "browser_channel_recovered",
+                    "recovery": recovery,
+                    "mission_cycle": mission_cycle,
+                }
         state.status = "blocked"
         state.next_action = action
         blocker_map = {
+            "reacquire_browser_channel": "the browser control channel must be reacquired before execution can continue",
             "needs_network_request_level_debugging": "the current browser path needs request-level debugging before retrying",
             "investigate_frontend_binding_and_network_request_chain": "the current upload control requires frontend-binding and request-chain inspection",
             "normalize_invalid_numeric_fields_then_resubmit": "form validation must be normalized before a reliable resubmit",
@@ -462,6 +484,25 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
                 "action": "awaiting_human_checkpoint",
                 "mission_cycle": mission_cycle,
             }
+        if state.next_action == "reacquire_browser_channel":
+            recovery = recover_browser_channel(task_id, expected_domains=["seller.neosgo.com"])
+            if recovery.get("ok"):
+                state.status = "planning"
+                state.blockers = []
+                state.metadata["last_browser_channel_recovery"] = recovery
+                state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+                state.last_update_at = utc_now_iso()
+                save_state(state)
+                log_event(task_id, "recovery_browser_channel_recovered", recovery=recovery)
+                return {
+                    "task_id": task_id,
+                    "status": state.status,
+                    "current_stage": state.current_stage,
+                    "next_action": state.next_action,
+                    "action": "browser_channel_recovered",
+                    "recovery": recovery,
+                    "mission_cycle": mission_cycle,
+                }
         blocker_text = " ".join(state.blockers)
         recurrence = get_error_recurrence(blocker_text) if blocker_text else {"count": 0}
         log_event(task_id, "recovery_watchdog_review", blocker=blocker_text, recurrence=recurrence)
