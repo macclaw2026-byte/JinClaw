@@ -164,10 +164,17 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
             "auto_safe": True,
         }
     elif browser_signals.get("diagnosis") not in {"", "none"}:
+        recommended_action = problem.get("recommended_action", "needs_network_request_level_debugging")
         next_decision = {
-            "action": problem.get("recommended_action", "needs_network_request_level_debugging"),
+            "action": recommended_action,
             "reason": "browser-observed evidence shows the current upload path is not being accepted",
-            "auto_safe": False,
+            "auto_safe": recommended_action in {
+                "needs_network_request_level_debugging",
+                "investigate_frontend_binding_and_network_request_chain",
+                "normalize_invalid_numeric_fields_then_resubmit",
+                "repair_form_validation_then_retry_submit",
+                "confirm_business_outcome_and_finalize",
+            },
         }
     elif current_stage == "execute" and htn_focus.get("focus_node", {}).get("node_id"):
         next_decision = {
