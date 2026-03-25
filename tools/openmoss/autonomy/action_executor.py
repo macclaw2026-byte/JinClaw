@@ -22,7 +22,28 @@ if str(CONTROL_CENTER_DIR) not in sys.path:
 from context_builder import build_stage_context
 
 
-OPENCLAW_BIN = os.environ.get("OPENCLAW_BIN") or shutil.which("openclaw") or "/opt/homebrew/bin/openclaw"
+def _resolve_openclaw_bin() -> str:
+    candidates = []
+    env_value = (os.environ.get("OPENCLAW_BIN") or "").strip()
+    if env_value:
+        candidates.append(env_value)
+        if "/" not in env_value:
+            resolved_env = shutil.which(env_value)
+            if resolved_env:
+                candidates.append(resolved_env)
+    discovered = shutil.which("openclaw")
+    if discovered:
+        candidates.append(discovered)
+    candidates.extend(
+        [
+            "/opt/homebrew/bin/openclaw",
+            "/usr/local/bin/openclaw",
+        ]
+    )
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+    return env_value or "openclaw"
 
 
 def _execution_records_dir(task_id: str) -> Path:
@@ -66,10 +87,11 @@ def _summarize_preflight_block(preflight: Dict) -> list[str]:
 
 
 def _gateway_call(method: str, params: Dict, timeout_seconds: int = 15) -> Dict:
+    openclaw_bin = _resolve_openclaw_bin()
     try:
         proc = subprocess.run(
             [
-                OPENCLAW_BIN,
+                openclaw_bin,
                 "gateway",
                 "call",
                 method,
@@ -86,6 +108,7 @@ def _gateway_call(method: str, params: Dict, timeout_seconds: int = 15) -> Dict:
         return {
             "ok": False,
             "method": method,
+            "openclaw_bin": openclaw_bin,
             "stderr": f"subprocess timeout after {timeout_seconds}s",
             "stdout": (exc.stdout or "")[-1000:],
         }
@@ -93,12 +116,14 @@ def _gateway_call(method: str, params: Dict, timeout_seconds: int = 15) -> Dict:
         return {
             "ok": False,
             "method": method,
+            "openclaw_bin": openclaw_bin,
             "stderr": proc.stderr[-1000:],
             "stdout": proc.stdout[-1000:],
         }
     return {
         "ok": True,
         "method": method,
+        "openclaw_bin": openclaw_bin,
         "response": json.loads(proc.stdout.strip() or "{}"),
     }
 

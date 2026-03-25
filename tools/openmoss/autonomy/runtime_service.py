@@ -55,7 +55,41 @@ def _mark_binding_required(task_id: str, reason: str) -> None:
     log_event(task_id, "binding_required", reason=reason)
 
 
+def _purge_stale_successor_business_outcome(task_id: str) -> dict | None:
+    contract = load_contract(task_id)
+    if not contract.metadata.get("predecessor_task_id"):
+        return None
+    state = load_state(task_id)
+    existing = state.metadata.get("business_outcome", {}) or {}
+    diagnosis = str(existing.get("evidence", {}).get("diagnosis", "")).strip()
+    if diagnosis not in {"upload_saved_successfully", "upload_persisted_in_product_gallery"}:
+        return None
+    state.metadata.pop("business_outcome", None)
+    for stage_name in ("execute", "verify", "learn"):
+        stage = state.stages.get(stage_name)
+        if not stage:
+            continue
+        stage.status = "pending"
+        stage.summary = ""
+        stage.verification_status = "not-run"
+        stage.blocker = ""
+        stage.completed_at = ""
+        stage.updated_at = utc_now_iso()
+    state.status = "planning"
+    state.current_stage = "execute" if "execute" in state.stages else state.first_pending_stage() or ""
+    state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+    state.blockers = []
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    result = {"task_id": task_id, "diagnosis": diagnosis, "reopened_stage": state.current_stage}
+    log_event(task_id, "stale_successor_business_outcome_purged", result=result)
+    return result
+
+
 def _sync_business_outcome_from_live_probe(task_id: str) -> dict | None:
+    contract = load_contract(task_id)
+    if contract.metadata.get("predecessor_task_id") and contract.metadata.get("require_fresh_successor_business_outcome", True):
+        return None
     signals = collect_browser_task_signals(task_id)
     business_outcome = signals.get("business_outcome", {}) or {}
     if not business_outcome:
@@ -204,6 +238,9 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
 def process_task(task_id: str, stale_after_seconds: int) -> dict:
     contract = load_contract(task_id)
     state = load_state(task_id)
+    purged_business_outcome = _purge_stale_successor_business_outcome(task_id)
+    if purged_business_outcome:
+        state = load_state(task_id)
     mission_cycle = run_mission_cycle(task_id, contract.to_dict(), state.to_dict())
     synced_business_outcome = _sync_business_outcome_from_live_probe(task_id)
     if synced_business_outcome:

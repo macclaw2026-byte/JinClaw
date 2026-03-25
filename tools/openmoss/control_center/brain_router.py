@@ -262,6 +262,7 @@ def route_instruction(
                         "predecessor_task_id": existing_task_id,
                         "predecessor_status": existing_state.status,
                         "predecessor_authoritative_summary": predecessor_snapshot.get("authoritative_summary", ""),
+                        "require_fresh_successor_business_outcome": True,
                     },
                     inherited_intent=predecessor_contract.metadata.get("control_center", {}).get("intent", {}),
                 )
