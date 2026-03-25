@@ -52,11 +52,22 @@ ACTION_PATTERNS = (
 
 STATUS_QUERY_PATTERNS = (
     "进展",
+    "进度",
     "状态",
     "结果",
+    "做得怎么样",
+    "做的怎么样",
+    "怎么样了",
+    "如何了",
+    "搞定没",
+    "搞定了吗",
+    "完成了吗",
+    "完成没有",
     "有没有解决",
     "解决了吗",
     "现在怎么样",
+    "现在如何",
+    "现在呢",
     "跑通了吗",
     "闭环",
     "情况",
@@ -108,7 +119,8 @@ def _looks_like_status_query(text: str) -> bool:
     lowered = text.strip().lower()
     if not lowered:
         return False
-    return any(token in lowered for token in STATUS_QUERY_PATTERNS)
+    normalized = re.sub(r"\s+", "", lowered)
+    return any(token in normalized for token in STATUS_QUERY_PATTERNS)
 
 
 def _build_task(task_id: str, goal: str, source: str) -> Dict[str, object]:
