@@ -12,7 +12,7 @@ from pathlib import Path
 
 from action_executor import dispatch_stage, poll_active_execution
 from learning_engine import get_error_recurrence
-from manager import TASKS_ROOT, advance_execute_subtask, apply_recovery, build_args, checkpoint_task, complete_stage_internal, contract_path, load_contract, load_state, log_event, run_once, save_state, state_path, verify_task, write_business_outcome
+from manager import TASKS_ROOT, advance_execute_subtask, apply_recovery, build_args, checkpoint_task, complete_stage_internal, contract_path, load_contract, load_state, log_event, run_once, save_contract, save_state, state_path, verify_task, write_business_outcome
 from promotion_engine import promote_recurring_errors
 
 CONTROL_CENTER_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/control_center")
@@ -22,6 +22,7 @@ if str(CONTROL_CENTER_DIR) not in sys.path:
 from mission_loop import run_mission_cycle
 from browser_channel_recovery import recover_browser_channel
 from browser_task_signals import collect_browser_task_signals
+from orchestrator import derive_business_verification_requirements
 
 
 def utc_now_iso() -> str:
@@ -158,6 +159,32 @@ def _sync_business_outcome_from_live_probe(task_id: str) -> dict | None:
         refreshed=bool(needs_write),
     )
     return {"signals": signals, "written": bool(needs_write), "business_outcome": written or existing}
+
+
+def _upgrade_missing_business_requirements(task_id: str) -> dict | None:
+    contract = load_contract(task_id)
+    metadata = contract.metadata.get("control_center", {}) or {}
+    current_requirements = metadata.get("business_verification_requirements", {}) or {}
+    if current_requirements:
+        return None
+    intent = metadata.get("intent", {}) or {}
+    derived = derive_business_verification_requirements(intent)
+    if not derived:
+        return None
+    metadata["business_verification_requirements"] = derived
+    contract.metadata["control_center"] = metadata
+    save_contract(contract)
+    mission_path = Path(str(metadata.get("mission_path", "")).strip())
+    if mission_path.exists():
+        try:
+            mission_payload = json.loads(mission_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            mission_payload = {}
+        if isinstance(mission_payload, dict):
+            mission_payload["business_verification_requirements"] = derived
+            mission_path.write_text(json.dumps(mission_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    log_event(task_id, "business_requirements_upgraded", requirements=derived)
+    return {"task_id": task_id, "requirements": derived}
 
 
 def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> dict | None:
@@ -304,6 +331,25 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "action": "finalize_business_outcome",
             "mission_cycle": mission_cycle,
         }
+    if action == "continue_current_plan":
+        if state.status in {"recovering", "blocked"}:
+            state.status = "planning"
+            state.blockers = []
+            state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+            state.last_update_at = utc_now_iso()
+            save_state(state)
+            log_event(task_id, "control_center_continued_current_plan")
+            return {
+                "task_id": task_id,
+                "status": state.status,
+                "current_stage": state.current_stage,
+                "next_action": state.next_action,
+                "action": "continued_current_plan",
+                "mission_cycle": mission_cycle,
+            }
+        state.last_update_at = utc_now_iso()
+        save_state(state)
+        return None
     if action.startswith("advance_subtask:"):
         subtask_id = action.split(":", 1)[1]
         result = advance_execute_subtask(task_id, subtask_id, summary=f"HTN subtask focus advanced to {subtask_id}")
@@ -369,6 +415,7 @@ def _auto_finalize_completed_business_task(task_id: str) -> dict | None:
 
 
 def process_task(task_id: str, stale_after_seconds: int) -> dict:
+    _upgrade_missing_business_requirements(task_id)
     contract = load_contract(task_id)
     state = load_state(task_id)
     purged_business_outcome = _purge_stale_successor_business_outcome(task_id)
@@ -620,7 +667,13 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
 
 
 def _task_artifacts_complete(task_id: str) -> bool:
-    return contract_path(task_id).exists() and state_path(task_id).exists()
+    if not (contract_path(task_id).exists() and state_path(task_id).exists()):
+        return False
+    try:
+        payload = json.loads(contract_path(task_id).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return all(str(payload.get(field, "")).strip() for field in ("task_id", "user_goal", "done_definition"))
 
 
 def _invalid_task_artifact_result(task_id: str) -> dict:
