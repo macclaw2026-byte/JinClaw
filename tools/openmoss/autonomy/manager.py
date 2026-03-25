@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,14 +50,23 @@ def task_dir(task_id: str) -> Path:
 def read_json(path: Path, default):
     if not path.exists():
         return default
-    with path.open("r", encoding="utf-8") as fh:
-        return json.load(fh)
+    attempts = 3
+    for attempt in range(attempts):
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                return json.load(fh)
+        except json.JSONDecodeError:
+            if attempt >= attempts - 1:
+                raise
+            time.sleep(0.05)
 
 
 def write_json(path: Path, payload) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as fh:
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    with temp_path.open("w", encoding="utf-8") as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
+    temp_path.replace(path)
 
 
 def append_jsonl(path: Path, payload: Dict) -> None:
