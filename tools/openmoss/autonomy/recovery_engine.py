@@ -22,6 +22,10 @@ def classify_failure(error_text: str) -> str:
         return "upload_control_path_invalid"
     if "frontend_binding_not_triggered" in error:
         return "frontend_binding_not_triggered"
+    if "browser_form_validation_blocking_submit" in error:
+        return "browser_form_validation_blocking_submit"
+    if "upload_saved_successfully" in error:
+        return "upload_saved_successfully"
     if "needs_network_request_level_debugging" in error:
         return "needs_network_request_level_debugging"
     if "timeout" in error or "temporarily" in error:
@@ -55,6 +59,10 @@ def propose_recovery(error_text: str, attempts: int) -> Dict[str, str]:
         action = "needs_network_request_level_debugging"
     elif classification == "frontend_binding_not_triggered":
         action = "investigate_frontend_binding_and_network_request_chain"
+    elif classification == "browser_form_validation_blocking_submit":
+        action = "normalize_invalid_numeric_fields_then_resubmit"
+    elif classification == "upload_saved_successfully":
+        action = "confirm_business_outcome_and_finalize"
     elif classification == "needs_network_request_level_debugging":
         action = "needs_network_request_level_debugging"
     else:
@@ -150,9 +158,29 @@ def apply_recovery_action(action: str, error_text: str, task_id: str = "") -> Di
                 "next_action": "needs_network_request_level_debugging",
                 "blocker": "needs_network_request_level_debugging",
             }
+        if diagnosis == "browser_form_validation_blocking_submit":
+            return {
+                "ok": "false",
+                "status": "browser_form_validation_blocking_submit",
+                "next_action": "normalize_invalid_numeric_fields_then_resubmit",
+                "blocker": "browser_form_validation_blocking_submit",
+            }
+        if diagnosis == "upload_saved_successfully":
+            return {
+                "ok": "true",
+                "status": "business_outcome_confirmed",
+                "next_action": "confirm_business_outcome_and_finalize",
+            }
         return {"ok": "true", "status": "verification_repair_requested"}
 
-    if action in {"needs_network_request_level_debugging", "investigate_frontend_binding_and_network_request_chain"}:
+    if action in {
+        "needs_network_request_level_debugging",
+        "investigate_frontend_binding_and_network_request_chain",
+        "normalize_invalid_numeric_fields_then_resubmit",
+    }:
         return {"ok": "false", "status": action, "next_action": action, "blocker": action}
+
+    if action == "confirm_business_outcome_and_finalize":
+        return {"ok": "true", "status": "business_outcome_confirmed", "next_action": action}
 
     return {"ok": "false", "status": "unknown_action"}
