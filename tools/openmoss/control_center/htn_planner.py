@@ -85,6 +85,13 @@ def select_htn_focus_by_cursor(htn: Dict[str, object], stage_name: str, subtask_
             "focus_node": stage_node,
             "focus_reason": "stage-level_focus",
         }
+    if subtask_cursor >= len(stage_node["children"]):
+        return {
+            "stage_name": stage_name,
+            "focus_node": {},
+            "parent_node": stage_node.get("node_id", ""),
+            "focus_reason": "execute-subtasks_completed",
+        }
     index = min(max(subtask_cursor, 0), len(stage_node["children"]) - 1)
     return {
         "stage_name": stage_name,
