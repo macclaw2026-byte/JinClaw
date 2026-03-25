@@ -37,6 +37,10 @@ def _openclaw_browser_json(*args: str, timeout: int = 20) -> Dict[str, object]:
     return json.loads(proc.stdout or "{}")
 
 
+def _open_relay_tab(url: str, timeout: int = 20) -> Dict[str, object]:
+    return _openclaw_browser_json("open", "--browser-profile", "chrome-relay", url, timeout=timeout)
+
+
 def _url_matches_target(current_url: str, target_url: str) -> bool:
     current = urllib.parse.urlparse((current_url or "").strip())
     target = urllib.parse.urlparse((target_url or "").strip())
@@ -251,10 +255,43 @@ def get_current_relay_context(expected_domains: Iterable[str] | None = None, las
 
 
 def recover_browser_channel(task_id: str, expected_domains: Iterable[str] | None = None, last_known_url: str = "", preferred_url: str = "") -> Dict[str, object]:
+    context = get_current_relay_context(expected_domains=expected_domains, last_known_url=last_known_url, preferred_url=preferred_url)
+    retry_count = 0
+    while (
+        not context.get("ok")
+        and str(context.get("status", "")) == "relay_context_mismatch"
+        and int(context.get("tabs_count", 0) or 0) == 0
+        and retry_count < 3
+    ):
+        retry_count += 1
+        time.sleep(0.75)
+        context = get_current_relay_context(expected_domains=expected_domains, last_known_url=last_known_url, preferred_url=preferred_url)
+
+    reopened = None
+    target_url = str(preferred_url or last_known_url or "").strip()
+    if (
+        not context.get("ok")
+        and target_url
+        and (
+            str(context.get("status", "")) in {"relay_context_mismatch", "relay_context_probe_failed"}
+            or int(context.get("tabs_count", 0) or 0) == 0
+        )
+    ):
+        try:
+            reopened = _open_relay_tab(target_url, timeout=20)
+            time.sleep(1.0)
+            context = get_current_relay_context(expected_domains=expected_domains, last_known_url=last_known_url or target_url, preferred_url=preferred_url or target_url)
+        except Exception as exc:  # pragma: no cover - best-effort recovery
+            reopened = {"ok": False, "status": "relay_open_failed", "error": str(exc), "url": target_url}
+
     result = {
         "task_id": task_id,
-        **get_current_relay_context(expected_domains=expected_domains, last_known_url=last_known_url, preferred_url=preferred_url),
+        **context,
     }
+    if retry_count:
+        result["retry_count"] = retry_count
+    if reopened is not None:
+        result["reopened_tab"] = reopened
     _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
     return result
 
@@ -273,7 +310,7 @@ def navigate_relay_to_url(task_id: str, url: str, expected_domains: Iterable[str
         _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
         return result
 
-    context = get_current_relay_context(expected_domains=expected, last_known_url=url, preferred_url=url)
+    context = recover_browser_channel(task_id, expected_domains=expected, last_known_url=url, preferred_url=url)
     target_id = str(context.get("target_id", "")).strip()
     current_url = str(context.get("page_url", "")).strip()
     if _url_matches_target(current_url, url):
@@ -288,16 +325,38 @@ def navigate_relay_to_url(task_id: str, url: str, expected_domains: Iterable[str
         _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
         return result
     if not target_id:
-        result = {
-            "task_id": task_id,
-            "ok": False,
-            "status": "missing_relay_target",
-            "url": url,
-            "expected_domains": expected,
-            "context": context,
-        }
-        _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
-        return result
+        try:
+            reopened = _open_relay_tab(url, timeout=20)
+            time.sleep(1.0)
+            context = recover_browser_channel(task_id, expected_domains=expected, last_known_url=url, preferred_url=url)
+            target_id = str(context.get("target_id", "")).strip()
+            current_url = str(context.get("page_url", "")).strip()
+            if _url_matches_target(current_url, url):
+                result = {
+                    "task_id": task_id,
+                    "ok": True,
+                    "status": "relay_tab_reopened_at_target_url",
+                    "url": url,
+                    "expected_domains": expected,
+                    "context": context,
+                    "reopened_tab": reopened,
+                }
+                _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
+                return result
+        except Exception as exc:  # pragma: no cover - best-effort recovery
+            reopened = {"ok": False, "status": "relay_open_failed", "error": str(exc), "url": url}
+        if not target_id:
+            result = {
+                "task_id": task_id,
+                "ok": False,
+                "status": "missing_relay_target",
+                "url": url,
+                "expected_domains": expected,
+                "context": context,
+                "reopened_tab": reopened,
+            }
+            _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
+            return result
 
     try:
         browser_control_post(

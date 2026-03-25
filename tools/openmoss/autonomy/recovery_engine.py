@@ -23,6 +23,8 @@ def classify_failure(error_text: str) -> str:
         return "upload_control_path_invalid"
     if "browser_control_channel_lost" in error or "tab not found" in error:
         return "browser_control_channel_lost"
+    if "browser_relay_unattached" in error or "no attached chrome tabs" in error:
+        return "browser_relay_unattached"
     if "stale_target_id" in error:
         return "stale_target_id"
     if "browser_channel_reacquired" in error:
@@ -60,6 +62,8 @@ def propose_recovery(error_text: str, attempts: int) -> Dict[str, str]:
         action = "repair_missing_path_or_dependency"
     elif classification in {"browser_control_channel_lost", "stale_target_id"}:
         action = "reacquire_browser_channel"
+    elif classification == "browser_relay_unattached":
+        action = "await_relay_attach_checkpoint"
     elif classification == "auth_or_config_error":
         action = "repair_credentials_or_configuration"
     elif classification == "anti_automation_or_rate_limit":
@@ -141,6 +145,14 @@ def apply_recovery_action(action: str, error_text: str, task_id: str = "") -> Di
             "status": str(recovery.get("status", "browser_channel_recovery_failed")),
             "next_action": "reacquire_browser_channel",
             "blocker": str(recovery.get("status", "browser_channel_recovery_failed")),
+        }
+
+    if action == "await_relay_attach_checkpoint":
+        return {
+            "ok": "false",
+            "status": "await_relay_attach_checkpoint",
+            "next_action": "await_relay_attach_checkpoint",
+            "blocker": "chrome-relay has no attached tabs",
         }
 
     if action == "install_preflight_guard_and_targeted_recovery":

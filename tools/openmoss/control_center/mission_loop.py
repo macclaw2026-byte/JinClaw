@@ -214,7 +214,10 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
             "auto_safe": True,
         }
     elif browser_signals.get("diagnosis") not in {"", "none"}:
-        recommended_action = problem.get("recommended_action", "needs_network_request_level_debugging")
+        recommended_action = (
+            str(browser_signals.get("recommended_action", "")).strip()
+            or problem.get("recommended_action", "needs_network_request_level_debugging")
+        )
         next_decision = {
             "action": recommended_action,
             "reason": "browser-observed evidence produced a concrete recovery or continuation action",
@@ -228,6 +231,7 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
                 "continue_current_plan",
                 "process_next_draft_listing",
                 "return_to_listings_overview_and_retry_batch_probe",
+                "await_relay_attach_checkpoint",
             },
         }
     elif current_stage == "execute" and htn_focus.get("focus_node", {}).get("node_id"):
