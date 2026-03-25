@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Dict, List
 
 from brain_router import route_instruction
 from paths import BRAIN_ROUTES_ROOT
+from route_guardrails import persist_route, reroot_route_if_needed
+from task_receipt_engine import emit_route_receipt, session_has_assistant_reply_after
 
 SESSIONS_ROOT = Path("/Users/mac_claw/.openclaw/agents/main/sessions")
 MAIN_SESSION_KEY = "agent:main:main"
@@ -34,6 +37,17 @@ def _is_internal_runtime_request(text: str) -> bool:
         and "stage:" in normalized
         and "user_goal:" in normalized
     )
+
+
+def _strip_untrusted_metadata_wrapper(text: str) -> str:
+    cleaned = str(text or "")
+    patterns = [
+        r"Conversation info \(untrusted metadata\):\s*```json.*?```\s*",
+        r"Sender \(untrusted metadata\):\s*```json.*?```\s*",
+    ]
+    for pattern in patterns:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.DOTALL)
+    return cleaned.strip()
 
 
 def _load_main_session_messages(limit: int = 20) -> List[Dict[str, object]]:
@@ -72,6 +86,7 @@ def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
         text_parts = [part.get("text", "") for part in content if part.get("type") == "text"]
         text = "\n".join(part for part in text_parts if part).strip()
         if text and not _is_internal_runtime_request(text):
+            text = _strip_untrusted_metadata_wrapper(text)
             latest_user = {
                 "message_id": record.get("id", ""),
                 "text": text,
@@ -81,10 +96,48 @@ def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
     if not latest_user:
         return {"status": "no_external_user_message"}
     if str(latest_user["message_id"]) == last_external_message_id:
+        route_path = BRAIN_ROUTES_ROOT / "openclaw-main" / "main.json"
+        route = _load_json(route_path)
+        needs_receipt = bool(route) and str(route.get("message_id", "")) == str(latest_user["message_id"]) and not session_has_assistant_reply_after(
+            "agent:main:main",
+            str(latest_user["message_id"]),
+        )
+        if needs_receipt:
+            route = reroot_route_if_needed(
+                route=route,
+                provider="openclaw-main",
+                conversation_id="main",
+                conversation_type="direct",
+                goal=str(route.get("goal") or latest_user["text"]),
+                session_key="agent:main:main",
+            )
+            persist_route("openclaw-main", "main", route)
+            receipt = emit_route_receipt(
+                route,
+                provider="openclaw-main",
+                conversation_id="main",
+                session_key="agent:main:main",
+            )
+            _write_json(
+                ENFORCER_STATE_PATH,
+                {
+                    "last_external_message_id": str(latest_user["message_id"]),
+                    "last_external_timestamp": str(latest_user["timestamp"]),
+                    "last_routed_at": route.get("routed_at", ""),
+                    "last_receipt_at": receipt.get("created_at", ""),
+                },
+            )
+            return {
+                "status": "receipt_backfilled",
+                "latest_user_message": latest_user,
+                "route": route,
+                "receipt": receipt,
+                "route_store": str(route_path),
+            }
         return {
             "status": "no_new_external_user_message",
             "latest_user_message": latest_user,
-            "route_store": str(BRAIN_ROUTES_ROOT / "openclaw-main" / "main.json"),
+            "route_store": str(route_path),
         }
 
     route = route_instruction(
@@ -98,18 +151,35 @@ def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
         message_id=str(latest_user["message_id"]),
         session_key="agent:main:main",
     )
+    route = reroot_route_if_needed(
+        route=route,
+        provider="openclaw-main",
+        conversation_id="main",
+        conversation_type="direct",
+        goal=str(route.get("goal") or latest_user["text"]),
+        session_key="agent:main:main",
+    )
+    persist_route("openclaw-main", "main", route)
+    receipt = emit_route_receipt(
+        route,
+        provider="openclaw-main",
+        conversation_id="main",
+        session_key="agent:main:main",
+    )
     _write_json(
         ENFORCER_STATE_PATH,
         {
             "last_external_message_id": str(latest_user["message_id"]),
             "last_external_timestamp": str(latest_user["timestamp"]),
             "last_routed_at": route.get("routed_at", ""),
+            "last_receipt_at": receipt.get("created_at", ""),
         },
     )
     return {
         "status": "routed",
         "latest_user_message": latest_user,
         "route": route,
+        "receipt": receipt,
         "route_store": str(BRAIN_ROUTES_ROOT / "openclaw-main" / "main.json"),
     }
 
