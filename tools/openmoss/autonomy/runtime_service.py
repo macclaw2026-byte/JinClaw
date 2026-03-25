@@ -331,7 +331,11 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
     state = load_state(task_id)
     if control_center_result and control_center_result.get("action") == "advanced_execute_subtask":
         return control_center_result
-    if control_center_result and state.status not in {"planning", "running"}:
+    if (
+        control_center_result
+        and control_center_result.get("action") != "finalize_business_outcome"
+        and state.status not in {"planning", "running"}
+    ):
         return control_center_result
     if state.status in {"completed", "failed"}:
         return {"task_id": task_id, "status": state.status, "action": "skipped_terminal", "mission_cycle": mission_cycle}
