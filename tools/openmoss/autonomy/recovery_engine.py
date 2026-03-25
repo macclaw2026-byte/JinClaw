@@ -9,9 +9,21 @@ from typing import Dict
 from learning_engine import get_error_recurrence
 from promotion_engine import resolve_rule_for_error
 
+CONTROL_CENTER_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/control_center")
+if str(CONTROL_CENTER_DIR) not in __import__("sys").path:
+    __import__("sys").path.insert(0, str(CONTROL_CENTER_DIR))
+
+from browser_task_signals import collect_browser_task_signals
+
 
 def classify_failure(error_text: str) -> str:
     error = error_text.lower()
+    if "upload_control_path_invalid" in error:
+        return "upload_control_path_invalid"
+    if "frontend_binding_not_triggered" in error:
+        return "frontend_binding_not_triggered"
+    if "needs_network_request_level_debugging" in error:
+        return "needs_network_request_level_debugging"
     if "timeout" in error or "temporarily" in error:
         return "transient_error"
     if "permission" in error or "denied" in error:
@@ -39,6 +51,12 @@ def propose_recovery(error_text: str, attempts: int) -> Dict[str, str]:
         action = "repair_credentials_or_configuration"
     elif classification == "anti_automation_or_rate_limit":
         action = "switch_tool_path_or_slow_down"
+    elif classification == "upload_control_path_invalid":
+        action = "needs_network_request_level_debugging"
+    elif classification == "frontend_binding_not_triggered":
+        action = "investigate_frontend_binding_and_network_request_chain"
+    elif classification == "needs_network_request_level_debugging":
+        action = "needs_network_request_level_debugging"
     else:
         action = "run_root_cause_review_before_retry"
 
@@ -64,7 +82,7 @@ def _extract_path(error_text: str) -> Path | None:
     return Path(matches[0]).expanduser()
 
 
-def apply_recovery_action(action: str, error_text: str) -> Dict[str, str]:
+def apply_recovery_action(action: str, error_text: str, task_id: str = "") -> Dict[str, str]:
     if action == "retry_same_stage_with_fresh_evidence":
         return {"ok": "true", "status": "state_reset_only", "note": "stage can be retried immediately"}
 
@@ -109,6 +127,32 @@ def apply_recovery_action(action: str, error_text: str) -> Dict[str, str]:
         return {"ok": "true", "status": "review_required"}
 
     if action == "repair_verification_failure":
+        signals = collect_browser_task_signals(task_id) if task_id else {"diagnosis": "none"}
+        diagnosis = str(signals.get("diagnosis", "none"))
+        if diagnosis == "upload_control_path_invalid":
+            return {
+                "ok": "false",
+                "status": "upload_control_path_invalid",
+                "next_action": "needs_network_request_level_debugging",
+                "blocker": "upload_control_path_invalid",
+            }
+        if diagnosis == "frontend_binding_not_triggered":
+            return {
+                "ok": "false",
+                "status": "frontend_binding_not_triggered",
+                "next_action": "investigate_frontend_binding_and_network_request_chain",
+                "blocker": "frontend_binding_not_triggered",
+            }
+        if diagnosis == "needs_network_request_level_debugging":
+            return {
+                "ok": "false",
+                "status": "needs_network_request_level_debugging",
+                "next_action": "needs_network_request_level_debugging",
+                "blocker": "needs_network_request_level_debugging",
+            }
         return {"ok": "true", "status": "verification_repair_requested"}
+
+    if action in {"needs_network_request_level_debugging", "investigate_frontend_binding_and_network_request_chain"}:
+        return {"ok": "false", "status": action, "next_action": action, "blocker": action}
 
     return {"ok": "false", "status": "unknown_action"}

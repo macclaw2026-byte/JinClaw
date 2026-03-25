@@ -181,6 +181,15 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
         return control_center_result
     if state.status in {"completed", "failed"}:
         return {"task_id": task_id, "status": state.status, "action": "skipped_terminal", "mission_cycle": mission_cycle}
+    if state.status == "blocked":
+        return {
+            "task_id": task_id,
+            "status": state.status,
+            "current_stage": state.current_stage,
+            "next_action": state.next_action,
+            "action": "blocked_waiting_for_targeted_fix",
+            "mission_cycle": mission_cycle,
+        }
 
     if state.last_update_at:
         updated_at = datetime.fromisoformat(state.last_update_at.replace("Z", "+00:00"))

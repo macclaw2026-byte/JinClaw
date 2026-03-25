@@ -12,6 +12,7 @@ from adaptive_fetch_router import build_fetch_route
 from advisory_engine import build_advisory
 from authorized_session_manager import build_authorized_session_plan
 from bdi_state import build_bdi_state
+from browser_task_signals import collect_browser_task_signals
 from challenge_classifier import classify_challenge
 from context_builder import build_stage_context
 from domain_profile_store import build_domain_profile
@@ -113,6 +114,7 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
     mission["human_checkpoint"] = build_human_checkpoint(task_id, challenge)
     mission["fetch_route"] = build_fetch_route(task_id, mission.get("intent", {}), mission.get("selected_plan", {}), mission.get("domain_profile", {}), challenge)
     mission["resource_scout"] = prepare_research_package(task_id, build_resource_scout_brief(mission.get("intent", {}), mission.get("selected_plan", {}), mission.get("domain_profile", {}), mission.get("fetch_route", {})), mission.get("intent", {}))
+    browser_signals = collect_browser_task_signals(task_id)
     _write_json(MISSIONS_ROOT / f"{task_id}.json", mission)
     stage_state = state.get("stages", {}).get(current_stage, {}) if current_stage else {}
     stage_attempts = int(stage_state.get("attempts", 0) or 0) if current_stage else 0
@@ -160,6 +162,12 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
             "action": "prove_necessity_before_switching",
             "reason": "the current intention is to keep the safer route until the higher-risk path is justified",
             "auto_safe": True,
+        }
+    elif browser_signals.get("diagnosis") not in {"", "none"}:
+        next_decision = {
+            "action": problem.get("recommended_action", "needs_network_request_level_debugging"),
+            "reason": "browser-observed evidence shows the current upload path is not being accepted",
+            "auto_safe": False,
         }
     elif current_stage == "execute" and htn_focus.get("focus_node", {}).get("node_id"):
         next_decision = {
@@ -210,6 +218,7 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
         "authorized_session": mission.get("authorized_session", {}),
         "human_checkpoint": mission.get("human_checkpoint", {}),
         "fetch_route": mission.get("fetch_route", {}),
+        "browser_signals": browser_signals,
         "problem_solver": problem,
         "advisory": advisory,
         "forensic": forensic,
