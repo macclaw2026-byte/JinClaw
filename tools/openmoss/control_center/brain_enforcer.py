@@ -12,12 +12,28 @@ from paths import BRAIN_ROUTES_ROOT
 SESSIONS_ROOT = Path("/Users/mac_claw/.openclaw/agents/main/sessions")
 MAIN_SESSION_KEY = "agent:main:main"
 MAIN_SESSION_REGISTRY = SESSIONS_ROOT / "sessions.json"
+ENFORCER_STATE_PATH = BRAIN_ROUTES_ROOT / "openclaw-main" / "brain_enforcer_state.json"
 
 
 def _load_json(path: Path):
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_json(path: Path, payload: Dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _is_internal_runtime_request(text: str) -> bool:
+    normalized = text.strip()
+    return (
+        "[Autonomy runtime execution request]" in normalized
+        and "task_id:" in normalized
+        and "stage:" in normalized
+        and "user_goal:" in normalized
+    )
 
 
 def _load_main_session_messages(limit: int = 20) -> List[Dict[str, object]]:
@@ -45,6 +61,8 @@ def _load_main_session_messages(limit: int = 20) -> List[Dict[str, object]]:
 
 def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
     messages = _load_main_session_messages(limit=limit)
+    state = _load_json(ENFORCER_STATE_PATH)
+    last_external_message_id = str(state.get("last_external_message_id", ""))
     latest_user = None
     for record in reversed(messages):
         message = record.get("message", {})
@@ -53,7 +71,7 @@ def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
         content = message.get("content", [])
         text_parts = [part.get("text", "") for part in content if part.get("type") == "text"]
         text = "\n".join(part for part in text_parts if part).strip()
-        if text:
+        if text and not _is_internal_runtime_request(text):
             latest_user = {
                 "message_id": record.get("id", ""),
                 "text": text,
@@ -61,7 +79,13 @@ def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
             }
             break
     if not latest_user:
-        return {"status": "no_user_message"}
+        return {"status": "no_external_user_message"}
+    if str(latest_user["message_id"]) == last_external_message_id:
+        return {
+            "status": "no_new_external_user_message",
+            "latest_user_message": latest_user,
+            "route_store": str(BRAIN_ROUTES_ROOT / "openclaw-main" / "main.json"),
+        }
 
     route = route_instruction(
         provider="openclaw-main",
@@ -73,6 +97,14 @@ def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
         sender_name="openclaw-user",
         message_id=str(latest_user["message_id"]),
         session_key="agent:main:main",
+    )
+    _write_json(
+        ENFORCER_STATE_PATH,
+        {
+            "last_external_message_id": str(latest_user["message_id"]),
+            "last_external_timestamp": str(latest_user["timestamp"]),
+            "last_routed_at": route.get("routed_at", ""),
+        },
     )
     return {
         "status": "routed",

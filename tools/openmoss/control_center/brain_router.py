@@ -110,6 +110,16 @@ FOLLOW_UP_ACTION_PATTERNS = (
 TERMINAL_TASK_STATUSES = {"completed", "failed"}
 
 
+def _is_internal_runtime_request_text(text: str) -> bool:
+    normalized = text.strip()
+    return (
+        "[Autonomy runtime execution request]" in normalized
+        and "task_id:" in normalized
+        and "stage:" in normalized
+        and "user_goal:" in normalized
+    )
+
+
 def _write_json(path: Path, payload: object) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -122,6 +132,15 @@ def _strip_transport_wrapper(text: str) -> str:
     cleaned = re.sub(r"Sender \(untrusted metadata\):\s*```[\s\S]*?```", "", cleaned, flags=re.MULTILINE)
     cleaned = re.sub(r"Replied message \(untrusted, for context\):\s*```[\s\S]*?```", "", cleaned, flags=re.MULTILINE)
     cleaned = re.sub(r"^\[[^\]]+\]\s*", "", cleaned).strip()
+    runtime_match = re.search(
+        r"\[Autonomy runtime execution request\][\s\S]*?user_goal:\s*(.+?)\n(?:done_definition:|stage_goal:|selected_plan:)",
+        cleaned,
+        flags=re.MULTILINE,
+    )
+    if runtime_match:
+        extracted_goal = runtime_match.group(1).strip()
+        if extracted_goal:
+            cleaned = extracted_goal
     lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
     if lines:
         return "\n".join(lines)
@@ -147,6 +166,8 @@ def _looks_actionable(text: str, intent: Dict[str, object]) -> bool:
 def _looks_like_status_query(text: str) -> bool:
     lowered = text.strip().lower()
     if not lowered:
+        return False
+    if len(lowered) > 80:
         return False
     normalized = re.sub(r"\s+", "", lowered)
     return any(token in normalized for token in STATUS_QUERY_PATTERNS)
@@ -269,6 +290,32 @@ def _resolve_linked_active_task_id(existing_task_id: str) -> str:
     return active_task_id or existing_task_id
 
 
+def _normalize_goal_text(text: str) -> str:
+    return re.sub(r"\s+", "", text.strip().lower())
+
+
+def _should_branch_from_active_task(existing_task_id: str, goal: str, intent: Dict[str, object]) -> bool:
+    contract = _safe_load_contract(existing_task_id)
+    state = _safe_load_state(existing_task_id)
+    if not contract or not state:
+        return False
+    if state.status in TERMINAL_TASK_STATUSES:
+        return False
+    raw_current_goal = str(contract.user_goal)
+    current_goal = _normalize_goal_text(_strip_transport_wrapper(raw_current_goal))
+    new_goal = _normalize_goal_text(goal)
+    if _is_internal_runtime_request_text(raw_current_goal) and not _is_internal_runtime_request_text(goal):
+        return True
+    if not current_goal or not new_goal or current_goal == new_goal:
+        return False
+    if not _looks_like_followup_goal(goal, intent):
+        return False
+    numbered_scope = bool(re.search(r"(1[\.\u3001:：]|2[\.\u3001:：]|3[\.\u3001:：]|4[\.\u3001:：])", goal))
+    materially_longer = len(new_goal) >= len(current_goal) + 18
+    explicit_remaining_scope = any(token in new_goal for token in ("剩下", "环节", "补到", "补齐", "提交审核", "提审", "闭环"))
+    return numbered_scope or materially_longer or explicit_remaining_scope
+
+
 def _build_task(
     task_id: str,
     goal: str,
@@ -342,19 +389,22 @@ def route_instruction(
         existing["last_sender_id"] = sender_id
         existing["last_sender_name"] = sender_name
         existing["last_goal"] = goal
-        if _looks_like_status_query(goal):
+        actionable = _looks_actionable(goal, intent)
+        status_query = _looks_like_status_query(goal) and not actionable
+        if status_query:
             snapshot = build_task_status_snapshot(str(existing.get("task_id", "")))
             route["mode"] = "authoritative_task_status"
             route["authoritative_task_status"] = snapshot
             route["response_constraints"] = snapshot.get("reply_contract", {})
             route["link_path"] = write_link(provider, conversation_id, existing)
-        elif _looks_actionable(goal, intent):
+        elif actionable:
             existing_task_id = str(existing.get("task_id", ""))
             existing_state = load_state(existing_task_id) if existing_task_id else None
-            if existing_state and existing_state.status == "completed" and _looks_like_followup_goal(goal, intent):
+            should_branch_from_active = bool(existing_task_id) and _should_branch_from_active_task(existing_task_id, goal, intent)
+            if (existing_state and existing_state.status == "completed" and _looks_like_followup_goal(goal, intent)) or should_branch_from_active:
                 root_task_id = _lineage_root_task_id(existing_task_id)
                 active_task_id = _find_active_lineage_task(root_task_id, preferred_task_id=existing_task_id)
-                if active_task_id and active_task_id != existing_task_id:
+                if existing_state and existing_state.status == "completed" and active_task_id and active_task_id != existing_task_id:
                     existing["task_id"] = active_task_id
                     existing["goal"] = goal
                     route["mode"] = "append_to_active_successor_task"
@@ -366,6 +416,12 @@ def route_instruction(
                     predecessor_task_id = existing_task_id
                     predecessor_contract = load_contract(predecessor_task_id)
                     predecessor_snapshot = build_task_status_snapshot(predecessor_task_id)
+                    if _is_internal_runtime_request_text(str(predecessor_contract.user_goal)):
+                        inherited_intent = {}
+                    else:
+                        inherited_intent = predecessor_contract.metadata.get("control_center", {}).get("inherited_intent", {})
+                        if not inherited_intent:
+                            inherited_intent = predecessor_contract.metadata.get("control_center", {}).get("intent", {})
                     _build_task(
                         task_id,
                         goal,
@@ -377,7 +433,7 @@ def route_instruction(
                             "lineage_root_task_id": root_task_id,
                             "require_fresh_successor_business_outcome": True,
                         },
-                        inherited_intent=predecessor_contract.metadata.get("control_center", {}).get("intent", {}),
+                        inherited_intent=inherited_intent,
                     )
                     payload = {
                         "provider": provider,
@@ -396,7 +452,7 @@ def route_instruction(
                     if session_key:
                         payload["session_key"] = session_key
                     for stale_task_id in _lineage_task_ids(root_task_id):
-                        if stale_task_id in {task_id, predecessor_task_id, root_task_id}:
+                        if stale_task_id in {task_id, root_task_id}:
                             continue
                         stale_state = _safe_load_state(stale_task_id)
                         if stale_state and stale_state.status not in TERMINAL_TASK_STATUSES:
@@ -411,6 +467,8 @@ def route_instruction(
                     route["task_id"] = task_id
                     route["predecessor_task_id"] = predecessor_task_id
                     route["lineage_root_task_id"] = root_task_id
+                    if should_branch_from_active:
+                        route["mode"] = "branch_from_active_task"
                     route["link_path"] = write_link(provider, conversation_id, payload)
             else:
                 route["mode"] = "append_to_existing_task"
