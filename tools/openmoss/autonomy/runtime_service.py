@@ -316,6 +316,36 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
     return None
 
 
+def _auto_finalize_completed_business_task(task_id: str) -> dict | None:
+    state = load_state(task_id)
+    business = state.metadata.get("business_outcome", {}) or {}
+    if not (
+        business.get("goal_satisfied") is True
+        and business.get("user_visible_result_confirmed") is True
+        and str(business.get("proof_summary", "")).strip()
+    ):
+        return None
+    incomplete = [name for name in state.stage_order if state.stages.get(name) and state.stages[name].status != "completed"]
+    if incomplete != ["learn"]:
+        return None
+    completion = complete_stage_internal(
+        task_id=task_id,
+        stage_name="learn",
+        summary="Business outcome already confirmed; runtime finalized learning and closure automatically.",
+    )
+    verify_task(build_args(task_id=task_id))
+    state = load_state(task_id)
+    log_event(task_id, "business_outcome_auto_finalized", completion=completion)
+    return {
+        "task_id": task_id,
+        "status": state.status,
+        "current_stage": state.current_stage,
+        "next_action": state.next_action,
+        "action": "business_outcome_auto_finalized",
+        "completion": completion,
+    }
+
+
 def process_task(task_id: str, stale_after_seconds: int) -> dict:
     contract = load_contract(task_id)
     state = load_state(task_id)
@@ -327,6 +357,9 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
     if synced_business_outcome:
         state = load_state(task_id)
         mission_cycle = run_mission_cycle(task_id, contract.to_dict(), state.to_dict())
+    auto_finalized = _auto_finalize_completed_business_task(task_id)
+    if auto_finalized:
+        return auto_finalized
     control_center_result = _apply_control_center_decision(task_id, state, mission_cycle)
     state = load_state(task_id)
     if control_center_result and control_center_result.get("action") == "advanced_execute_subtask":
