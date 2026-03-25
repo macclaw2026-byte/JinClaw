@@ -11,7 +11,7 @@ from pathlib import Path
 
 from action_executor import dispatch_stage, poll_active_execution
 from learning_engine import get_error_recurrence
-from manager import TASKS_ROOT, advance_execute_subtask, apply_recovery, build_args, checkpoint_task, complete_stage_internal, load_contract, load_state, log_event, run_once, save_state, verify_task
+from manager import TASKS_ROOT, advance_execute_subtask, apply_recovery, build_args, checkpoint_task, complete_stage_internal, load_contract, load_state, log_event, run_once, save_state, verify_task, write_business_outcome
 from promotion_engine import promote_recurring_errors
 
 CONTROL_CENTER_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/control_center")
@@ -19,6 +19,7 @@ if str(CONTROL_CENTER_DIR) not in sys.path:
     sys.path.insert(0, str(CONTROL_CENTER_DIR))
 
 from mission_loop import run_mission_cycle
+from browser_task_signals import collect_browser_task_signals
 
 
 def utc_now_iso() -> str:
@@ -52,6 +53,37 @@ def _mark_binding_required(task_id: str, reason: str) -> None:
     state.last_update_at = utc_now_iso()
     save_state(state)
     log_event(task_id, "binding_required", reason=reason)
+
+
+def _sync_business_outcome_from_live_probe(task_id: str) -> dict | None:
+    signals = collect_browser_task_signals(task_id)
+    business_outcome = signals.get("business_outcome", {}) or {}
+    if not business_outcome:
+        return None
+    current_state = load_state(task_id)
+    existing = current_state.metadata.get("business_outcome", {}) or {}
+    if (
+        existing.get("goal_satisfied") is True
+        and existing.get("user_visible_result_confirmed") is True
+        and str(existing.get("proof_summary", "")).strip()
+    ):
+        return {"signals": signals, "written": False}
+    written = write_business_outcome(
+        task_id,
+        goal_satisfied=bool(business_outcome.get("goal_satisfied")),
+        user_visible_result_confirmed=bool(business_outcome.get("user_visible_result_confirmed")),
+        proof_summary=str(business_outcome.get("proof_summary", "")).strip(),
+        evidence=business_outcome.get("evidence", {}),
+    )
+    state = load_state(task_id)
+    state.blockers = []
+    state.status = "verifying"
+    state.current_stage = "verify"
+    state.next_action = "verify_done_definition"
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    log_event(task_id, "business_outcome_synced_from_live_probe", outcome=written, diagnosis=signals.get("diagnosis", ""))
+    return {"signals": signals, "written": True, "business_outcome": written}
 
 
 def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> dict | None:
@@ -173,6 +205,9 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
     contract = load_contract(task_id)
     state = load_state(task_id)
     mission_cycle = run_mission_cycle(task_id, contract.to_dict(), state.to_dict())
+    synced_business_outcome = _sync_business_outcome_from_live_probe(task_id)
+    if synced_business_outcome:
+        state = load_state(task_id)
     control_center_result = _apply_control_center_decision(task_id, state, mission_cycle)
     state = load_state(task_id)
     if control_center_result and control_center_result.get("action") == "advanced_execute_subtask":

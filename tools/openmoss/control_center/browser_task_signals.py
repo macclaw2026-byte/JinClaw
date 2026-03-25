@@ -42,6 +42,26 @@ def _load_link(task_id: str) -> Dict[str, object]:
     return {}
 
 
+def _is_browser_gallery_task(task_id: str) -> bool:
+    contract_path = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/autonomy/tasks") / task_id / "contract.json"
+    try:
+        payload = json.loads(contract_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    metadata = payload.get("metadata", {}) or {}
+    intent = metadata.get("control_center", {}).get("intent", {}) or {}
+    task_types = {str(item).strip().lower() for item in intent.get("task_types", []) if str(item).strip()}
+    goal = str(payload.get("user_goal", "") or intent.get("goal", "")).lower()
+    return bool(
+        intent.get("needs_browser")
+        and (
+            "marketplace" in task_types
+            or "image" in task_types
+            or any(token in goal for token in ["upload", "上传", "image", "图片", "seller", "product", "详情页", "gallery", "图区"])
+        )
+    )
+
+
 def _candidate_session_files(last_message_id: str) -> List[Path]:
     if not last_message_id or not OPENCLAW_SESSIONS_ROOT.exists():
         return []
@@ -235,6 +255,7 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
             "file_input_count": state_result.get("fileCount"),
             "form_valid": state_result.get("formValid"),
             "invalid_fields": state_result.get("invalidFields", []),
+            "last_images": state_result.get("lastImgs", []),
             "save_request_succeeded": bool(save_request),
             "save_request_url": str(save_request.get("url", "")) if save_request else "",
         }
@@ -253,6 +274,17 @@ def _collect_live_browser_probe(task_id: str, lines: List[str]) -> Dict[str, obj
 
 
 def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
+    if not _is_browser_gallery_task(task_id):
+        payload = {
+            "task_id": task_id,
+            "diagnosis": "none",
+            "recommended_action": "continue_current_plan",
+            "evidence": [],
+            "reason": "task is not a browser-backed image or marketplace gallery workflow",
+        }
+        _write_json(BROWSER_SIGNALS_ROOT / f"{task_id}.json", payload)
+        return payload
+
     link = _load_link(task_id)
     last_message_id = str(link.get("last_message_id", "")).strip()
     session_files = _candidate_session_files(last_message_id)
@@ -295,12 +327,58 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
         payload["live_file_input_count"] = live_probe.get("file_input_count")
         payload["live_form_valid"] = live_probe.get("form_valid")
         payload["live_invalid_fields"] = live_probe.get("invalid_fields", [])
+        payload["live_last_images"] = live_probe.get("last_images", [])
         payload["save_request_succeeded"] = live_probe.get("save_request_succeeded", False)
         payload["save_request_url"] = live_probe.get("save_request_url", "")
         if live_probe.get("save_request_succeeded"):
             payload["diagnosis"] = "upload_saved_successfully"
             payload["recommended_action"] = "confirm_business_outcome_and_finalize"
             payload["evidence"] = sorted(set([*payload.get("evidence", []), *live_probe.get("evidence", [])]))
+            payload["business_outcome"] = {
+                "goal_satisfied": True,
+                "user_visible_result_confirmed": True,
+                "proof_summary": (
+                    f"Live browser probe observed seller.neosgo product image save success; "
+                    f"product image count is {live_probe.get('product_image_count')}, "
+                    f"save request succeeded via {live_probe.get('save_request_url', '') or 'product PATCH'}."
+                ),
+                "evidence": {
+                    "diagnosis": "upload_saved_successfully",
+                    "live_product_image_count": live_probe.get("product_image_count"),
+                    "live_file_input_count": live_probe.get("file_input_count"),
+                    "save_request_succeeded": live_probe.get("save_request_succeeded", False),
+                    "save_request_url": live_probe.get("save_request_url", ""),
+                    "page_url": live_probe.get("page_url", ""),
+                    "evidence": live_probe.get("evidence", []),
+                },
+            }
+        elif live_probe.get("product_image_count") and any(
+            "neosgo-prod-" in str(src) and "/products/" in str(src) for src in live_probe.get("last_images", [])
+        ):
+            payload["diagnosis"] = "upload_persisted_in_product_gallery"
+            payload["recommended_action"] = "confirm_business_outcome_and_finalize"
+            payload["evidence"] = sorted(
+                set(
+                    [
+                        *payload.get("evidence", []),
+                        "live browser probe observed persisted product image in the product gallery after reload",
+                    ]
+                )
+            )
+            payload["business_outcome"] = {
+                "goal_satisfied": True,
+                "user_visible_result_confirmed": True,
+                "proof_summary": (
+                    f"Live browser probe observed persisted product image in seller.neosgo gallery; "
+                    f"product image count is {live_probe.get('product_image_count')} and the gallery includes a saved neosgo-prod product image URL."
+                ),
+                "evidence": {
+                    "diagnosis": "upload_persisted_in_product_gallery",
+                    "live_product_image_count": live_probe.get("product_image_count"),
+                    "live_last_images": live_probe.get("last_images", []),
+                    "page_url": live_probe.get("page_url", ""),
+                },
+            }
         elif live_probe.get("file_input_count") and live_probe.get("form_valid") is False:
             payload["diagnosis"] = "browser_form_validation_blocking_submit"
             payload["recommended_action"] = "normalize_invalid_numeric_fields_then_resubmit"
