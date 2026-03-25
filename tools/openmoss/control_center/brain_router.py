@@ -6,7 +6,7 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
 from intent_analyzer import analyze_intent
 from orchestrator import build_control_center_package
@@ -19,7 +19,7 @@ import sys
 if str(AUTONOMY_DIR) not in sys.path:
     sys.path.insert(0, str(AUTONOMY_DIR))
 
-from manager import build_args, contract_path, create_task, load_contract, load_state, read_link, utc_now_iso, write_link
+from manager import TASKS_ROOT, build_args, contract_path, create_task, load_contract, load_state, log_event, read_link, save_state, state_path, utc_now_iso, write_link
 from task_ingress import slugify
 
 
@@ -107,6 +107,8 @@ FOLLOW_UP_ACTION_PATTERNS = (
     "continue",
 )
 
+TERMINAL_TASK_STATUSES = {"completed", "failed"}
+
 
 def _write_json(path: Path, payload: object) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -162,14 +164,109 @@ def _looks_like_followup_goal(text: str, intent: Dict[str, object]) -> bool:
     return intent.get("task_types", ["general"]) != ["general"]
 
 
+def _safe_load_contract(task_id: str):
+    if not task_id or not contract_path(task_id).exists():
+        return None
+    return load_contract(task_id)
+
+
+def _safe_load_state(task_id: str):
+    path = state_path(task_id)
+    if not task_id or not path.exists():
+        return None
+    return load_state(task_id)
+
+
+def _task_predecessor(task_id: str) -> str:
+    contract = _safe_load_contract(task_id)
+    if not contract:
+        return ""
+    return str(contract.metadata.get("predecessor_task_id", "")).strip()
+
+
+def _lineage_root_task_id(task_id: str) -> str:
+    current = task_id
+    seen = set()
+    while current and current not in seen:
+        seen.add(current)
+        predecessor = _task_predecessor(current)
+        if not predecessor:
+            return current
+        current = predecessor
+    return task_id
+
+
+def _task_created_at(task_id: str) -> str:
+    contract = _safe_load_contract(task_id)
+    if not contract:
+        return ""
+    return str(contract.metadata.get("created_at", "")).strip()
+
+
+def _lineage_task_ids(root_task_id: str) -> List[str]:
+    task_ids: List[str] = []
+    if contract_path(root_task_id).exists():
+        task_ids.append(root_task_id)
+    if not TASKS_ROOT.exists():
+        return task_ids
+    for candidate in sorted(path.name for path in TASKS_ROOT.iterdir() if path.is_dir()):
+        if candidate == root_task_id:
+            continue
+        if _lineage_root_task_id(candidate) == root_task_id:
+            task_ids.append(candidate)
+    return sorted(task_ids, key=lambda task_id: (_task_created_at(task_id), task_id))
+
+
+def _find_active_lineage_task(root_task_id: str, *, preferred_task_id: str = "") -> str:
+    active_candidates: List[str] = []
+    for task_id in _lineage_task_ids(root_task_id):
+        state = _safe_load_state(task_id)
+        if not state:
+            continue
+        if state.metadata.get("superseded_by_task_id"):
+            continue
+        if state.status in TERMINAL_TASK_STATUSES:
+            continue
+        active_candidates.append(task_id)
+    if preferred_task_id in active_candidates:
+        return preferred_task_id
+    if not active_candidates:
+        return ""
+    return active_candidates[-1]
+
+
 def _next_successor_task_id(parent_task_id: str) -> str:
-    base = f"{parent_task_id}-followup"
+    root_task_id = _lineage_root_task_id(parent_task_id)
+    base = f"{root_task_id}-followup"
     candidate = base
     counter = 2
     while contract_path(candidate).exists():
         candidate = f"{base}-{counter}"
         counter += 1
     return candidate
+
+
+def _mark_task_superseded(task_id: str, replacement_task_id: str, reason: str) -> None:
+    state = _safe_load_state(task_id)
+    if not state:
+        return
+    if state.metadata.get("superseded_by_task_id") == replacement_task_id:
+        return
+    state.status = "blocked"
+    state.next_action = f"superseded_by:{replacement_task_id}"
+    state.blockers = [reason]
+    state.last_update_at = utc_now_iso()
+    state.metadata["superseded_by_task_id"] = replacement_task_id
+    save_state(state)
+    log_event(task_id, "task_superseded", replacement_task_id=replacement_task_id, reason=reason)
+
+
+def _resolve_linked_active_task_id(existing_task_id: str) -> str:
+    if not existing_task_id:
+        return ""
+    root_task_id = _lineage_root_task_id(existing_task_id)
+    active_task_id = _find_active_lineage_task(root_task_id, preferred_task_id=existing_task_id)
+    return active_task_id or existing_task_id
 
 
 def _build_task(
@@ -236,6 +333,10 @@ def route_instruction(
     }
 
     if existing:
+        resolved_task_id = _resolve_linked_active_task_id(str(existing.get("task_id", "")))
+        if resolved_task_id and resolved_task_id != existing.get("task_id"):
+            existing["superseded_task_id"] = existing.get("task_id")
+            existing["task_id"] = resolved_task_id
         existing["updated_at"] = utc_now_iso()
         existing["last_message_id"] = message_id
         existing["last_sender_id"] = sender_id
@@ -251,44 +352,70 @@ def route_instruction(
             existing_task_id = str(existing.get("task_id", ""))
             existing_state = load_state(existing_task_id) if existing_task_id else None
             if existing_state and existing_state.status == "completed" and _looks_like_followup_goal(goal, intent):
-                task_id = _next_successor_task_id(existing_task_id)
-                predecessor_contract = load_contract(existing_task_id)
-                predecessor_snapshot = build_task_status_snapshot(existing_task_id)
-                _build_task(
-                    task_id,
-                    goal,
-                    source=f"{source}:successor",
-                    metadata_extra={
-                        "predecessor_task_id": existing_task_id,
-                        "predecessor_status": existing_state.status,
-                        "predecessor_authoritative_summary": predecessor_snapshot.get("authoritative_summary", ""),
-                        "require_fresh_successor_business_outcome": True,
-                    },
-                    inherited_intent=predecessor_contract.metadata.get("control_center", {}).get("intent", {}),
-                )
-                payload = {
-                    "provider": provider,
-                    "conversation_id": conversation_id,
-                    "conversation_type": conversation_type,
-                    "task_id": task_id,
-                    "goal": goal,
-                    "updated_at": utc_now_iso(),
-                    "last_message_id": message_id,
-                    "last_sender_id": sender_id,
-                    "last_sender_name": sender_name,
-                    "brain_source": source,
-                    "predecessor_task_id": existing_task_id,
-                }
-                if session_key:
-                    payload["session_key"] = session_key
-                route["mode"] = "create_successor_task"
-                route["created_task"] = True
-                route["attached_existing"] = False
-                route["task_id"] = task_id
-                route["predecessor_task_id"] = existing_task_id
-                route["link_path"] = write_link(provider, conversation_id, payload)
+                root_task_id = _lineage_root_task_id(existing_task_id)
+                active_task_id = _find_active_lineage_task(root_task_id, preferred_task_id=existing_task_id)
+                if active_task_id and active_task_id != existing_task_id:
+                    existing["task_id"] = active_task_id
+                    existing["goal"] = goal
+                    route["mode"] = "append_to_active_successor_task"
+                    route["task_id"] = active_task_id
+                    route["lineage_root_task_id"] = root_task_id
+                    route["link_path"] = write_link(provider, conversation_id, existing)
+                else:
+                    task_id = _next_successor_task_id(existing_task_id)
+                    predecessor_task_id = existing_task_id
+                    predecessor_contract = load_contract(predecessor_task_id)
+                    predecessor_snapshot = build_task_status_snapshot(predecessor_task_id)
+                    _build_task(
+                        task_id,
+                        goal,
+                        source=f"{source}:successor",
+                        metadata_extra={
+                            "predecessor_task_id": predecessor_task_id,
+                            "predecessor_status": existing_state.status,
+                            "predecessor_authoritative_summary": predecessor_snapshot.get("authoritative_summary", ""),
+                            "lineage_root_task_id": root_task_id,
+                            "require_fresh_successor_business_outcome": True,
+                        },
+                        inherited_intent=predecessor_contract.metadata.get("control_center", {}).get("intent", {}),
+                    )
+                    payload = {
+                        "provider": provider,
+                        "conversation_id": conversation_id,
+                        "conversation_type": conversation_type,
+                        "task_id": task_id,
+                        "goal": goal,
+                        "updated_at": utc_now_iso(),
+                        "last_message_id": message_id,
+                        "last_sender_id": sender_id,
+                        "last_sender_name": sender_name,
+                        "brain_source": source,
+                        "predecessor_task_id": predecessor_task_id,
+                        "lineage_root_task_id": root_task_id,
+                    }
+                    if session_key:
+                        payload["session_key"] = session_key
+                    for stale_task_id in _lineage_task_ids(root_task_id):
+                        if stale_task_id in {task_id, predecessor_task_id, root_task_id}:
+                            continue
+                        stale_state = _safe_load_state(stale_task_id)
+                        if stale_state and stale_state.status not in TERMINAL_TASK_STATUSES:
+                            _mark_task_superseded(
+                                stale_task_id,
+                                task_id,
+                                reason=f"superseded by active successor {task_id}",
+                            )
+                    route["mode"] = "create_successor_task"
+                    route["created_task"] = True
+                    route["attached_existing"] = False
+                    route["task_id"] = task_id
+                    route["predecessor_task_id"] = predecessor_task_id
+                    route["lineage_root_task_id"] = root_task_id
+                    route["link_path"] = write_link(provider, conversation_id, payload)
             else:
                 route["mode"] = "append_to_existing_task"
+                route["task_id"] = existing_task_id
+                route["link_path"] = write_link(provider, conversation_id, existing)
         else:
             route["mode"] = "append_to_existing_task"
             route["task_id"] = existing.get("task_id")
