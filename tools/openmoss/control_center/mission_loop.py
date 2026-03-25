@@ -186,6 +186,7 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
                 "repair_form_validation_then_retry_submit",
                 "confirm_business_outcome_and_finalize",
                 "continue_current_plan",
+                "process_next_draft_listing",
             },
         }
     elif current_stage == "execute" and htn_focus.get("focus_node", {}).get("node_id"):
