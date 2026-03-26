@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict
 
+from control_plane_builder import build_control_plane
 from paths import CONTROL_CENTER_RUNTIME_ROOT
 from mission_supervisor import run_mission_supervisor
 from response_policy_engine import build_supervisor_status_text
@@ -69,8 +70,12 @@ def diagnose_task(task_id: str, *, idle_after_seconds: int = 180) -> Dict[str, o
         "stuck": False,
         "reason": "healthy_or_recently_updated",
     }
-    if state.status in {"completed", "failed"}:
+    if state.status == "completed":
         diagnosis["reason"] = "terminal"
+        return diagnosis
+    if state.status == "failed":
+        diagnosis["stuck"] = True
+        diagnosis["reason"] = "terminal_failure_requires_takeover"
         return diagnosis
     if age < idle_after_seconds:
         return diagnosis
@@ -119,6 +124,7 @@ def repair_task_if_possible(task_id: str, diagnosis: Dict[str, object]) -> Dict[
     if diagnosis.get("reason") == "stale_waiting_external":
         state.status = "planning"
         state.blockers = []
+        state.metadata.pop("waiting_external", None)
         state.metadata.pop("active_execution", None)
         state.metadata.pop("last_dispatched_marker", None)
         state.metadata.pop("last_dispatch_at", None)
@@ -127,17 +133,37 @@ def repair_task_if_possible(task_id: str, diagnosis: Dict[str, object]) -> Dict[
         save_state(state)
         log_event(task_id, "system_doctor_repaired_stale_waiting_external", diagnosis=diagnosis)
         return {"task_id": task_id, "repaired": True, "reason": "restarted_after_stale_waiting_external"}
+    if diagnosis.get("reason") == "terminal_failure_requires_takeover":
+        state.status = "recovering"
+        state.blockers = list(dict.fromkeys([*state.blockers, "terminal_failure_detected"]))
+        state.metadata.pop("active_execution", None)
+        state.metadata.pop("waiting_external", None)
+        state.metadata["doctor_takeover"] = {
+            "active": True,
+            "reason": "terminal_failure_requires_takeover",
+            "taken_over_at": _utc_now_iso(),
+        }
+        state.next_action = "doctor_investigating_failure"
+        state.last_update_at = _utc_now_iso()
+        save_state(state)
+        log_event(task_id, "system_doctor_took_over_failed_task", diagnosis=diagnosis)
+        return {"task_id": task_id, "repaired": True, "reason": "doctor_failure_takeover_started"}
     return {"task_id": task_id, "repaired": False, "reason": diagnosis.get("reason", "unhandled")}
 
 
 def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds: int = 600) -> Dict[str, object]:
+    control_plane = build_control_plane(
+        stale_after_seconds=max(120, idle_after_seconds),
+        escalation_after_seconds=max(300, escalation_after_seconds),
+    )
     reports = []
-    if not TASKS_ROOT.exists():
-        return {"checked_at": _utc_now_iso(), "reports": reports}
-    for task_root in sorted(TASKS_ROOT.iterdir()):
-        if not task_root.is_dir():
+    doctor_items = control_plane.get("doctor_queue", {}).get("items", [])
+    seen_task_ids = set()
+    for item in doctor_items:
+        task_id = str(item.get("task_id", "")).strip()
+        if not task_id or task_id in seen_task_ids:
             continue
-        task_id = task_root.name
+        seen_task_ids.add(task_id)
         diagnosis = diagnose_task(task_id, idle_after_seconds=idle_after_seconds)
         repair = repair_task_if_possible(task_id, diagnosis)
         report = {"diagnosis": diagnosis, "repair": repair}
@@ -171,6 +197,15 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
         stale_after_seconds=max(120, idle_after_seconds),
         escalation_after_seconds=max(300, escalation_after_seconds),
     )
-    result = {"checked_at": _utc_now_iso(), "reports": reports, "mission_supervisor": supervisor}
+    result = {
+        "checked_at": _utc_now_iso(),
+        "control_plane": {
+            "system_snapshot": control_plane.get("system_snapshot", {}),
+            "doctor_queue_count": len(control_plane.get("doctor_queue", {}).get("items", [])),
+            "alerts_count": len(control_plane.get("alerts", {}).get("items", [])),
+        },
+        "reports": reports,
+        "mission_supervisor": supervisor,
+    }
     _write_json(DOCTOR_ROOT / "last_run.json", result)
     return result
