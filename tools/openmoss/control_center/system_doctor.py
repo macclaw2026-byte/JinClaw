@@ -19,6 +19,9 @@ if str(AUTONOMY_DIR) not in sys.path:
     sys.path.insert(0, str(AUTONOMY_DIR))
 
 from manager import LINKS_ROOT, TASKS_ROOT, load_state, log_event, save_state
+from learning_engine import get_error_recurrence, load_task_summary
+from promotion_engine import resolve_rule_for_error
+from plan_history import load_history_profile
 
 DOCTOR_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "doctor"
 
@@ -70,6 +73,24 @@ def diagnose_task(task_id: str, *, idle_after_seconds: int = 180) -> Dict[str, o
         "stuck": False,
         "reason": "healthy_or_recently_updated",
     }
+    summary = load_task_summary(task_id)
+    last_failure = summary.get("last_failure", {}) or {}
+    last_failure_error = str(last_failure.get("error", "")).strip()
+    recurrence = get_error_recurrence(last_failure_error) if last_failure_error else {"count": 0, "tasks": []}
+    promoted_rule = resolve_rule_for_error(last_failure_error) if last_failure_error else None
+    diagnosis["memory"] = {
+        "task_summary": summary,
+        "last_failure": last_failure,
+        "error_recurrence": recurrence,
+        "promoted_rule": promoted_rule,
+    }
+    contract_metadata = state.metadata.get("contract_metadata", {}) or {}
+    control_center = contract_metadata.get("control_center", {}) or {}
+    selected_plan = control_center.get("selected_plan", {}) or {}
+    plan_id = str(selected_plan.get("plan_id", "")).strip()
+    task_types = [str(item) for item in ((control_center.get("intent", {}) or {}).get("task_types", []))]
+    risk_level = str((control_center.get("intent", {}) or {}).get("risk_level", "")).strip()
+    diagnosis["plan_history"] = load_history_profile(plan_id, task_types=task_types, risk_level=risk_level) if plan_id else {}
     if state.status == "completed":
         diagnosis["reason"] = "terminal"
         return diagnosis
@@ -226,6 +247,7 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
         "checked_at": _utc_now_iso(),
         "control_plane": {
             "system_snapshot": control_plane.get("system_snapshot", {}),
+            "ops_doctor": control_plane.get("ops_registry", {}).get("doctor", {}),
             "doctor_queue_count": len(control_plane.get("doctor_queue", {}).get("items", [])),
             "alerts_count": len(control_plane.get("alerts", {}).get("items", [])),
         },

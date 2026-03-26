@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
@@ -14,12 +15,26 @@ from paths import (
     ALERTS_PATH,
     CONTROL_PLANE_ROOT,
     DOCTOR_QUEUE_PATH,
+    OPS_REGISTRY_PATH,
     PROCESS_REGISTRY_PATH,
     SYSTEM_SNAPSHOT_PATH,
     TASK_REGISTRY_PATH,
+    TASK_LIFECYCLE_PATH,
     WAITING_REGISTRY_PATH,
 )
 from progress_evidence import build_progress_evidence
+from task_lifecycle import classify_task_lifecycle
+
+OPS_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/ops")
+AUTONOMY_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy")
+if str(OPS_DIR) not in sys.path:
+    sys.path.insert(0, str(OPS_DIR))
+if str(AUTONOMY_DIR) not in sys.path:
+    sys.path.insert(0, str(AUTONOMY_DIR))
+
+from jinclaw_ops import doctor_payload
+from learning_engine import get_error_recurrence, load_task_summary
+from promotion_engine import resolve_rule_for_error
 
 
 AUTONOMY_TASKS_ROOT = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/autonomy/tasks")
@@ -94,6 +109,15 @@ def build_process_registry() -> Dict[str, Any]:
     return registry
 
 
+def build_ops_registry() -> Dict[str, Any]:
+    registry = {
+        "generated_at": _utc_now_iso(),
+        "doctor": doctor_payload(),
+    }
+    registry["path"] = _write_json(OPS_REGISTRY_PATH, registry)
+    return registry
+
+
 def _load_task_state(task_id: str) -> Dict[str, Any]:
     return _read_json(AUTONOMY_TASKS_ROOT / task_id / "state.json", {})
 
@@ -140,6 +164,7 @@ def build_task_registry(*, stale_after_seconds: int = 300, escalation_after_seco
     doctor_queue: List[Dict[str, Any]] = []
     alerts: List[Dict[str, Any]] = []
     seen_canonical: set[str] = set()
+    lifecycle_counts = {"active": 0, "warm": 0, "archive": 0, "quarantine": 0}
 
     if AUTONOMY_TASKS_ROOT.exists():
         for task_root in sorted(AUTONOMY_TASKS_ROOT.iterdir()):
@@ -152,6 +177,13 @@ def build_task_registry(*, stale_after_seconds: int = 300, escalation_after_seco
             canonical_task_id = str(canonical.get("canonical_task_id", task_id)).strip() or task_id
             evidence = build_progress_evidence(canonical_task_id, stale_after_seconds=stale_after_seconds)
             links = _conversation_links_for_task(task_id, canonical_task_id)
+            lifecycle = classify_task_lifecycle(state)
+            lifecycle_counts[lifecycle["tier"]] = lifecycle_counts.get(lifecycle["tier"], 0) + 1
+            summary = load_task_summary(canonical_task_id)
+            last_failure = summary.get("last_failure", {}) or {}
+            last_failure_error = str(last_failure.get("error", "")).strip()
+            recurrence = get_error_recurrence(last_failure_error) if last_failure_error else {"count": 0, "tasks": []}
+            promoted_rule = resolve_rule_for_error(last_failure_error) if last_failure_error else None
             entry = {
                 "task_id": task_id,
                 "canonical_task_id": canonical_task_id,
@@ -168,13 +200,20 @@ def build_task_registry(*, stale_after_seconds: int = 300, escalation_after_seco
                 "active_execution": state.get("metadata", {}).get("active_execution", {}) or {},
                 "waiting_external": state.get("metadata", {}).get("waiting_external", {}) or {},
                 "run_liveness": evidence.get("run_liveness", {}),
+                "lifecycle": lifecycle,
+                "memory": {
+                    "summary": summary,
+                    "last_failure": last_failure,
+                    "error_recurrence": recurrence,
+                    "promoted_rule": promoted_rule,
+                },
                 "conversation_links": links,
                 "canonical": canonical,
             }
             tasks.append(entry)
             if canonical_task_id == task_id and canonical_task_id not in seen_canonical:
                 seen_canonical.add(canonical_task_id)
-            if entry["waiting_external"]:
+            if entry["waiting_external"] and lifecycle["tier"] == "active":
                 waiting.append(
                     {
                         "task_id": task_id,
@@ -185,7 +224,7 @@ def build_task_registry(*, stale_after_seconds: int = 300, escalation_after_seco
                         "run_liveness": entry["run_liveness"],
                     }
                 )
-            if entry["needs_intervention"]:
+            if entry["needs_intervention"] and lifecycle["tier"] == "active":
                 doctor_entry = {
                     "task_id": task_id,
                     "canonical_task_id": canonical_task_id,
@@ -195,6 +234,10 @@ def build_task_registry(*, stale_after_seconds: int = 300, escalation_after_seco
                     "current_stage": entry["current_stage"],
                     "next_action": entry["next_action"],
                     "idle_seconds": entry["idle_seconds"],
+                    "lifecycle_tier": lifecycle["tier"],
+                    "error_recurrence_count": recurrence.get("count", 0),
+                    "has_promoted_rule": bool(promoted_rule),
+                    "promoted_rule": promoted_rule or {},
                 }
                 doctor_queue.append(doctor_entry)
                 if entry["idle_seconds"] >= escalation_after_seconds:
@@ -211,15 +254,32 @@ def build_task_registry(*, stale_after_seconds: int = 300, escalation_after_seco
         "items": tasks,
         "canonical_active_tasks": sorted(seen_canonical),
     }
+    lifecycle_registry = {
+        "generated_at": task_registry["generated_at"],
+        "counts": lifecycle_counts,
+        "items": [
+            {
+                "task_id": item["task_id"],
+                "canonical_task_id": item["canonical_task_id"],
+                "tier": item["lifecycle"]["tier"],
+                "reason": item["lifecycle"]["reason"],
+                "status": item["status"],
+                "current_stage": item["current_stage"],
+            }
+            for item in tasks
+        ],
+    }
     waiting_registry = {"generated_at": task_registry["generated_at"], "items": waiting}
     doctor_queue_registry = {"generated_at": task_registry["generated_at"], "items": doctor_queue}
     alerts_registry = {"generated_at": task_registry["generated_at"], "items": alerts}
     _write_json(TASK_REGISTRY_PATH, task_registry)
+    _write_json(TASK_LIFECYCLE_PATH, lifecycle_registry)
     _write_json(WAITING_REGISTRY_PATH, waiting_registry)
     _write_json(DOCTOR_QUEUE_PATH, doctor_queue_registry)
     _write_json(ALERTS_PATH, alerts_registry)
     return {
         "task_registry": task_registry,
+        "task_lifecycle": lifecycle_registry,
         "waiting_registry": waiting_registry,
         "doctor_queue": doctor_queue_registry,
         "alerts": alerts_registry,
@@ -228,6 +288,7 @@ def build_task_registry(*, stale_after_seconds: int = 300, escalation_after_seco
 
 def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seconds: int = 900) -> Dict[str, Any]:
     process_registry = build_process_registry()
+    ops_registry = build_ops_registry()
     task_views = build_task_registry(
         stale_after_seconds=stale_after_seconds,
         escalation_after_seconds=escalation_after_seconds,
@@ -235,14 +296,21 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
     snapshot = {
         "generated_at": _utc_now_iso(),
         "process_registry_path": process_registry.get("path"),
+        "ops_registry_path": ops_registry.get("path"),
         "task_registry_path": str(TASK_REGISTRY_PATH),
+        "task_lifecycle_path": str(TASK_LIFECYCLE_PATH),
         "waiting_registry_path": str(WAITING_REGISTRY_PATH),
         "doctor_queue_path": str(DOCTOR_QUEUE_PATH),
         "alerts_path": str(ALERTS_PATH),
         "summary": {
             "processes_running": sum(1 for item in process_registry.get("items", []) if item.get("state") == "running"),
             "processes_total": len(process_registry.get("items", [])),
+            "ops_doctor_ok": bool(ops_registry.get("doctor", {}).get("ok")),
             "tasks_total": len(task_views["task_registry"].get("items", [])),
+            "tasks_active": int(task_views["task_lifecycle"].get("counts", {}).get("active", 0)),
+            "tasks_warm": int(task_views["task_lifecycle"].get("counts", {}).get("warm", 0)),
+            "tasks_archive": int(task_views["task_lifecycle"].get("counts", {}).get("archive", 0)),
+            "tasks_quarantine": int(task_views["task_lifecycle"].get("counts", {}).get("quarantine", 0)),
             "waiting_total": len(task_views["waiting_registry"].get("items", [])),
             "doctor_queue_total": len(task_views["doctor_queue"].get("items", [])),
             "alerts_total": len(task_views["alerts"].get("items", [])),
@@ -251,6 +319,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
     snapshot["path"] = _write_json(SYSTEM_SNAPSHOT_PATH, snapshot)
     return {
         "process_registry": process_registry,
+        "ops_registry": ops_registry,
         **task_views,
         "system_snapshot": snapshot,
     }

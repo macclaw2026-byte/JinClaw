@@ -9,6 +9,14 @@ from typing import Any, Dict, List
 from canonical_active_task import resolve_canonical_active_task
 from paths import BROWSER_SIGNALS_ROOT, OPENMOSS_ROOT, TASK_STATUS_ROOT
 from run_liveness_verifier import build_run_liveness
+from task_lifecycle import classify_task_lifecycle
+
+AUTONOMY_DIR = OPENMOSS_ROOT / "autonomy"
+if str(AUTONOMY_DIR) not in __import__("sys").path:
+    __import__("sys").path.insert(0, str(AUTONOMY_DIR))
+
+from learning_engine import get_error_recurrence, load_task_summary
+from promotion_engine import resolve_rule_for_error
 
 
 AUTONOMY_TASKS_ROOT = OPENMOSS_ROOT / "runtime/autonomy/tasks"
@@ -84,6 +92,9 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
     contract = _load_task_contract(canonical_task_id)
     browser_signals = _load_browser_signals(canonical_task_id)
     business = state.get("metadata", {}).get("business_outcome", {}) or {}
+    summary = load_task_summary(canonical_task_id)
+    last_failure = summary.get("last_failure", {}) or {}
+    last_failure_error = str(last_failure.get("error", "")).strip()
     snapshot: Dict[str, Any] = {
         "requested_task_id": task_id,
         "task_id": canonical_task_id,
@@ -94,6 +105,13 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
         "next_action": state.get("next_action", ""),
         "blockers": state.get("blockers", []),
         "business_outcome": business,
+        "lifecycle": classify_task_lifecycle(state),
+        "memory": {
+            "task_summary": summary,
+            "last_failure": last_failure,
+            "error_recurrence": get_error_recurrence(last_failure_error) if last_failure_error else {"count": 0, "tasks": []},
+            "promoted_rule": resolve_rule_for_error(last_failure_error) if last_failure_error else None,
+        },
         "run_liveness": build_run_liveness(canonical_task_id),
         "browser_signals": {
             "diagnosis": browser_signals.get("diagnosis", "none"),
