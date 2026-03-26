@@ -29,6 +29,7 @@ from solution_arbitrator import arbitrate_solution_path
 from stpa_auditor import audit_mission
 from topology_mapper import build_topology
 from workflow_planner import build_workflow_blueprint
+from mission_profiles import detect_root_mission_profile
 
 
 def _utc_now_iso() -> str:
@@ -149,6 +150,7 @@ def _derive_stage_contracts(task_id: str, blueprint: Dict[str, object]) -> List[
     intent = blueprint["intent"]
     selected_plan = blueprint["selected_plan"]
     approval = blueprint["approval"]
+    mission_profile = blueprint.get("mission_profile", {}) or {}
     pending_approvals = approval.get("pending", [])
     require_business_proof = _requires_explicit_business_proof(intent, selected_plan)
     execute_policy = {
@@ -167,6 +169,62 @@ def _derive_stage_contracts(task_id: str, blueprint: Dict[str, object]) -> List[
         execute_policy["require_verifier_before_complete"] = True
         execute_verifier = _business_outcome_verifier(task_id)
         verify_verifier = _business_outcome_verifier(task_id)
+    if mission_profile.get("profile_id") == "neosgo_lead_engine":
+        execute_policy["auto_complete_on_wait_ok"] = False
+        return [
+            {
+                "name": "understand",
+                "goal": "Inventory the local Neosgo lead-engine assets: current DuckDB state, download archives, prior reports, and execution boundaries.",
+                "expected_output": "lead-engine inventory and environment brief",
+                "acceptance_check": "inventory, counts, and source locations are recorded into task metadata and mission summary",
+                "execution_policy": {"auto_complete_on_wait_ok": True},
+            },
+            {
+                "name": "plan",
+                "goal": "Translate the ideal plan into an executable phased root mission for data ingress, normalization, prospect scoring, strategy, outreach, and daily reporting.",
+                "expected_output": "phased lead-engine execution contract and phase order",
+                "acceptance_check": "phase sequence, next deliverables, and reporting cadence are recorded clearly",
+                "execution_policy": {"auto_complete_on_wait_ok": True},
+            },
+            {
+                "name": "execute",
+                "goal": (
+                    "Continuously execute the Neosgo lead-engine phases in order: import remaining archives, normalize and deduplicate records, "
+                    "derive prospect scoring logic and personas, produce marketing/outreach strategy, and keep a daily report loop alive."
+                ),
+                "expected_output": "observable progress artifacts such as database growth, imported file inventory, reports, scoring logic, and outreach artifacts",
+                "acceptance_check": "the mission keeps making real progress or escalates a truthful blocker instead of silently waiting",
+                "verifier": {
+                    "type": "all",
+                    "checks": [
+                        {"type": "file_exists", "path": str(Path("/Users/mac_claw/.openclaw/workspace/data/neosgo_leads.duckdb"))},
+                        {"type": "file_exists", "path": str(mission_profile.get("ideal_plan_path", ""))},
+                    ],
+                },
+                "execution_policy": execute_policy,
+            },
+            {
+                "name": "verify",
+                "goal": "Verify the lead-engine root mission still has a truthful active plan, a real data warehouse, and no silent waiting without liveness evidence.",
+                "expected_output": "verification decision with waiting/run liveness and current phase evidence",
+                "acceptance_check": "verification records the truthful task status and either confirms progress or escalates a concrete blocker",
+                "verifier": {
+                    "type": "all",
+                    "checks": [
+                        {"type": "file_exists", "path": str(Path("/Users/mac_claw/.openclaw/workspace/data/neosgo_leads.duckdb"))},
+                        {"type": "task_state_metadata_nonempty", "task_id": task_id, "field": "contract_metadata.control_center.mission_profile_id"},
+                    ],
+                },
+                "execution_policy": {"auto_complete_on_wait_ok": False},
+            },
+            {
+                "name": "learn",
+                "goal": "Persist lead-engine lessons, scoring refinements, marketing improvements, and daily reporting guidance.",
+                "expected_output": "updated learning artifacts and reusable lead-engine guidance",
+                "acceptance_check": "learning artifacts and a truthful progress summary are written",
+                "execution_policy": {"auto_complete_on_wait_ok": True},
+            },
+        ]
     return [
         {
             "name": "understand",
@@ -211,6 +269,9 @@ def _derive_stage_contracts(task_id: str, blueprint: Dict[str, object]) -> List[
 def build_control_center_package(task_id: str, goal: str, *, source: str = "manual", inherited_intent: Dict[str, object] | None = None) -> Dict[str, object]:
     raw_intent = analyze_intent(goal, source=source)
     intent = _merge_inherited_intent(raw_intent, inherited_intent)
+    mission_profile = detect_root_mission_profile(goal, task_id=task_id, intent=intent)
+    if mission_profile.get("matched"):
+        intent["done_definition"] = str(mission_profile.get("done_definition", intent.get("done_definition", "")))
     capabilities = build_capability_registry()
     blueprint = build_workflow_blueprint(intent, capabilities)
     judgment = judge_proposals(intent, capabilities, blueprint["candidate_plans"])
@@ -262,6 +323,7 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
         "resource_scout": scout,
         "arbitration": arbitration,
         "adoption_flow": adoption_flow,
+        "mission_profile": mission_profile,
     }
     should_clone_capability = selected_plan.get("plan_id") == "in_house_capability_rebuild"
     if should_clone_capability:
@@ -298,6 +360,8 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
             "arbitration": arbitration,
             "adoption_flow": adoption_flow,
             "capability_clone": mission.get("capability_clone", {}),
+            "mission_profile_id": mission_profile.get("profile_id", ""),
+            "mission_profile": mission_profile,
         },
         "approval": approval,
         "security": {
@@ -312,7 +376,7 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
         "done_definition": intent["done_definition"],
         "hard_constraints": intent["hard_constraints"],
         "allowed_tools": _derive_allowed_tools({**blueprint, "intent": intent, "selected_plan": selected_plan}),
-        "stages": _derive_stage_contracts(task_id, {**blueprint, "approval": approval, "intent": intent, "selected_plan": selected_plan}),
+        "stages": _derive_stage_contracts(task_id, {**blueprint, "approval": approval, "intent": intent, "selected_plan": selected_plan, "mission_profile": mission_profile}),
         "metadata": metadata,
         "mission_path": str(MISSIONS_ROOT / f"{task_id}.json"),
     }

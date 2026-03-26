@@ -12,7 +12,7 @@ from pathlib import Path
 
 from action_executor import dispatch_stage, poll_active_execution
 from learning_engine import get_error_recurrence
-from manager import TASKS_ROOT, advance_execute_subtask, apply_recovery, build_args, checkpoint_task, complete_stage_internal, contract_path, find_link_by_task_id, load_contract, load_state, log_event, run_once, save_contract, save_state, state_path, verify_task, write_business_outcome, write_link
+from manager import TASKS_ROOT, advance_execute_subtask, apply_recovery, build_args, checkpoint_task, complete_stage_internal, contract_path, find_link_by_task_id, infer_link_session_key, load_contract, load_state, log_event, run_once, save_contract, save_state, state_path, verify_task, write_business_outcome, write_link
 from promotion_engine import promote_recurring_errors
 
 CONTROL_CENTER_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/control_center")
@@ -24,6 +24,7 @@ from browser_channel_recovery import prune_relay_tabs, recover_browser_channel, 
 from browser_task_signals import collect_browser_task_signals
 from mission_supervisor import supervise_task
 from orchestrator import derive_business_verification_requirements
+from paths import CONTRACT_QUARANTINE_ROOT
 from progress_evidence import build_progress_evidence
 from system_doctor import run_system_doctor
 
@@ -67,6 +68,42 @@ def _mark_binding_required(task_id: str, reason: str) -> None:
     state.last_update_at = utc_now_iso()
     save_state(state)
     log_event(task_id, "binding_required", reason=reason)
+
+
+def _recover_direct_session_link(task_id: str) -> dict | None:
+    link = find_link_by_task_id(task_id)
+    if not link:
+        return None
+    session_key = infer_link_session_key(link)
+    if session_key and not str(link.get("session_key", "")).strip():
+        provider = str(link.get("provider", "")).strip()
+        conversation_id = str(link.get("conversation_id", "")).strip()
+        if provider and conversation_id:
+            payload = {k: v for k, v in link.items() if not str(k).startswith("_")}
+            payload["session_key"] = session_key
+            payload["updated_at"] = utc_now_iso()
+            write_link(provider, conversation_id, payload)
+            link = find_link_by_task_id(task_id)
+    state = load_state(task_id)
+    state.status = "planning"
+    state.blockers = []
+    state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+    state.metadata.pop("superseded_by_task_id", None)
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    log_event(
+        task_id,
+        "session_link_recovered_from_direct_binding",
+        provider=str(link.get("provider", "")).strip(),
+        conversation_id=str(link.get("conversation_id", "")).strip(),
+        session_key=str(link.get("session_key", "")).strip(),
+    )
+    return {
+        "task_id": task_id,
+        "provider": str(link.get("provider", "")).strip(),
+        "conversation_id": str(link.get("conversation_id", "")).strip(),
+        "session_key": str(link.get("session_key", "")).strip(),
+    }
 
 
 def _inherit_lineage_session_link(task_id: str) -> dict | None:
@@ -688,10 +725,17 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
     if state.status in {"completed", "failed"}:
         return {"task_id": task_id, "status": state.status, "action": "skipped_terminal", "mission_cycle": mission_cycle}
     if state.status == "blocked" and state.next_action == "bind_session_link":
-        inherited_link = _inherit_lineage_session_link(task_id)
-        if inherited_link:
+        direct_link = _recover_direct_session_link(task_id)
+        inherited_link = None
+        if direct_link:
             state = load_state(task_id)
-            log_event(task_id, "binding_auto_recovered_from_lineage", link=inherited_link)
+            log_event(task_id, "binding_auto_recovered_from_direct_link", link=direct_link)
+        else:
+            inherited_link = _inherit_lineage_session_link(task_id)
+        if direct_link or inherited_link:
+            state = load_state(task_id)
+            if inherited_link:
+                log_event(task_id, "binding_auto_recovered_from_lineage", link=inherited_link)
         else:
             return {
                 "task_id": task_id,
@@ -699,6 +743,23 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
                 "current_stage": state.current_stage,
                 "next_action": state.next_action,
                 "action": "blocked_waiting_for_targeted_fix",
+                "mission_cycle": mission_cycle,
+            }
+
+    if state.status == "blocked" and state.next_action == "repair_runtime_failure":
+        if any("runtime isolated" in str(item).lower() for item in state.blockers or []):
+            state.status = "planning"
+            state.blockers = []
+            state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+            state.last_update_at = utc_now_iso()
+            save_state(state)
+            log_event(task_id, "runtime_failure_auto_recovered")
+            return {
+                "task_id": task_id,
+                "status": state.status,
+                "current_stage": state.current_stage,
+                "next_action": state.next_action,
+                "action": "runtime_failure_auto_recovered",
                 "mission_cycle": mission_cycle,
             }
 
@@ -945,6 +1006,61 @@ def _task_artifacts_complete(task_id: str) -> bool:
     return all(str(payload.get(field, "")).strip() for field in ("task_id", "user_goal", "done_definition"))
 
 
+def _write_contract_quarantine_record(task_id: str, *, artifact: str, error: Exception | str) -> str:
+    CONTRACT_QUARANTINE_ROOT.mkdir(parents=True, exist_ok=True)
+    path = CONTRACT_QUARANTINE_ROOT / f"{task_id}.json"
+    payload = {
+        "task_id": task_id,
+        "artifact": artifact,
+        "quarantined_at": utc_now_iso(),
+        "error_type": type(error).__name__ if not isinstance(error, str) else "RuntimeValidationError",
+        "error": str(error),
+        "contract_path": str(contract_path(task_id)),
+        "state_path": str(state_path(task_id)),
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return str(path)
+
+
+def _quarantine_invalid_runtime_artifacts(task_id: str, *, artifact: str, error: Exception | str) -> dict:
+    quarantine_path = _write_contract_quarantine_record(task_id, artifact=artifact, error=error)
+    if state_path(task_id).exists():
+        try:
+            state = load_state(task_id)
+            state.status = "blocked"
+            state.next_action = "repair_invalid_contract"
+            state.blockers = [f"{artifact} invalid: {str(error)}"]
+            state.last_update_at = utc_now_iso()
+            save_state(state)
+            log_event(task_id, "invalid_task_artifact_quarantined", artifact=artifact, quarantine_path=quarantine_path, error=str(error))
+        except Exception:
+            pass
+    return {
+        "task_id": task_id,
+        "status": "isolated_invalid_task_artifact",
+        "action": "contract_quarantined",
+        "artifact": artifact,
+        "error": str(error),
+        "quarantine_path": quarantine_path,
+    }
+
+
+def _validate_runtime_artifacts(task_id: str) -> dict | None:
+    if not contract_path(task_id).exists():
+        return _quarantine_invalid_runtime_artifacts(task_id, artifact="contract", error="contract.json is missing")
+    if not state_path(task_id).exists():
+        return _quarantine_invalid_runtime_artifacts(task_id, artifact="state", error="state.json is missing")
+    try:
+        load_contract(task_id)
+    except Exception as exc:
+        return _quarantine_invalid_runtime_artifacts(task_id, artifact="contract", error=exc)
+    try:
+        load_state(task_id)
+    except Exception as exc:
+        return _quarantine_invalid_runtime_artifacts(task_id, artifact="state", error=exc)
+    return None
+
+
 def _invalid_task_artifact_result(task_id: str) -> dict:
     state_file = state_path(task_id)
     if state_file.exists():
@@ -1004,6 +1120,10 @@ def main() -> int:
             for task_root in sorted(TASKS_ROOT.iterdir()):
                 if task_root.is_dir():
                     task_id = task_root.name
+                    validation = _validate_runtime_artifacts(task_id)
+                    if validation:
+                        results.append(validation)
+                        continue
                     supervision = supervise_task(
                         task_id,
                         stale_after_seconds=max(120, min(args.stale_after_seconds, 180)),
