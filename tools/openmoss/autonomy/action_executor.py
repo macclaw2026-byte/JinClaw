@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 from typing import Dict
 
-from manager import complete_stage_internal, find_link_by_task_id, load_contract, load_state, log_event, save_state, task_dir, utc_now_iso, verify_task, build_args
+from manager import build_args, complete_stage_internal, find_link_by_task_id, infer_link_session_key, load_contract, load_state, log_event, save_state, task_dir, utc_now_iso, verify_task
 from preflight_engine import run_stage_preflight
 from verifier_registry import run_verifier
 
@@ -344,7 +344,7 @@ def dispatch_stage(task_id: str) -> Dict:
         return {"ok": False, "status": "no_current_stage"}
 
     link = find_link_by_task_id(task_id)
-    linked_session_key = link.get("session_key", "")
+    linked_session_key = str(link.get("session_key", "")).strip() or infer_link_session_key(link)
     if not linked_session_key:
         return {"ok": False, "status": "no_bound_session"}
     session_key = _derive_execution_session_key(linked_session_key, task_id)

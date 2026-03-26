@@ -15,6 +15,7 @@ if str(CONTROL_CENTER_DIR) not in sys.path:
     sys.path.insert(0, str(CONTROL_CENTER_DIR))
 
 from orchestrator import build_control_center_package
+from mission_profiles import detect_root_mission_profile
 
 
 def slugify(value: str) -> str:
@@ -29,12 +30,15 @@ def main() -> int:
     parser.add_argument("--done-definition", default="")
     args = parser.parse_args()
 
-    task_id = args.task_id or slugify(args.goal)
-    package = build_control_center_package(task_id, args.goal, source="task_ingress")
+    inferred_intent = None
+    mission_profile = detect_root_mission_profile(args.goal, task_id=args.task_id or "")
+    task_id = args.task_id or str(mission_profile.get("root_task_id", "")).strip() or slugify(args.goal)
+    goal = str(mission_profile.get("canonical_goal", "")).strip() or args.goal
+    package = build_control_center_package(task_id, goal, source="task_ingress")
     done_definition = args.done_definition or str(package["done_definition"])
     create_args = argparse.Namespace(
         task_id=task_id,
-        goal=args.goal,
+        goal=goal,
         done_definition=done_definition,
         stage=[],
         stage_json=json.dumps(package["stages"], ensure_ascii=False),

@@ -160,12 +160,32 @@ def read_link(provider: str, conversation_id: str) -> Dict:
     return read_json(link_path(provider, conversation_id), {})
 
 
+def infer_link_session_key(payload: Dict) -> str:
+    session_key = str(payload.get("session_key", "")).strip()
+    if session_key:
+        return session_key
+    provider = str(payload.get("provider", "")).strip().lower()
+    conversation_id = str(payload.get("conversation_id", "")).strip()
+    conversation_type = str(payload.get("conversation_type", "")).strip().lower() or "direct"
+    if provider == "openclaw-main" and conversation_id == "main":
+        return "agent:main:main"
+    if provider == "telegram" and conversation_id:
+        if conversation_id.startswith("-") or conversation_type == "group":
+            return f"agent:main:telegram:group:{conversation_id}"
+        return f"agent:main:telegram:direct:{conversation_id}"
+    return ""
+
+
 def find_link_by_task_id(task_id: str) -> Dict:
     if not LINKS_ROOT.exists():
         return {}
     for path in sorted(LINKS_ROOT.glob("*.json")):
         payload = read_json(path, {})
         if payload.get("task_id") == task_id:
+            inferred_session_key = infer_link_session_key(payload)
+            if inferred_session_key and not str(payload.get("session_key", "")).strip():
+                payload["session_key"] = inferred_session_key
+                write_json(path, payload)
             payload["_path"] = str(path)
             return payload
     return {}
