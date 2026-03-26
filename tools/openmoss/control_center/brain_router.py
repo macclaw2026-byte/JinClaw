@@ -14,6 +14,7 @@ from mission_profiles import detect_root_mission_profile
 from orchestrator import build_control_center_package
 from paths import BRAIN_ROUTES_ROOT
 from task_status_snapshot import build_task_status_snapshot
+from task_lifecycle import classify_task_lifecycle
 
 AUTONOMY_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy")
 import sys
@@ -195,6 +196,13 @@ def _safe_load_state(task_id: str):
     if not task_id or not path.exists():
         return None
     return load_state(task_id)
+
+
+def _task_lifecycle_tier(task_id: str) -> str:
+    state = _safe_load_state(task_id)
+    if not state:
+        return ""
+    return str(classify_task_lifecycle(state.to_dict()).get("tier", "")).strip()
 
 
 def _task_predecessor(task_id: str) -> str:
@@ -551,10 +559,12 @@ def route_instruction(
                     return route
                 existing_state = load_state(existing_task_id) if existing_task_id else None
                 should_branch_from_active = bool(existing_task_id) and _should_branch_from_active_task(existing_task_id, goal, intent)
-                if (existing_state and existing_state.status == "completed" and _looks_like_followup_goal(goal, intent)) or should_branch_from_active:
+                existing_lifecycle_tier = _task_lifecycle_tier(existing_task_id) if existing_task_id else ""
+                archived_reactivation = existing_lifecycle_tier == "archive" and _looks_like_followup_goal(goal, intent)
+                if (existing_state and existing_state.status == "completed" and _looks_like_followup_goal(goal, intent)) or should_branch_from_active or archived_reactivation:
                     root_task_id = _lineage_root_task_id(existing_task_id)
                     active_task_id = _find_active_lineage_task(root_task_id, preferred_task_id=existing_task_id)
-                    if existing_state and existing_state.status == "completed" and active_task_id and active_task_id != existing_task_id:
+                    if existing_state and existing_state.status == "completed" and active_task_id and active_task_id != existing_task_id and not archived_reactivation:
                         existing["task_id"] = active_task_id
                         existing["goal"] = goal
                         route["mode"] = "append_to_active_successor_task"
@@ -582,6 +592,8 @@ def route_instruction(
                                 "predecessor_authoritative_summary": predecessor_snapshot.get("authoritative_summary", ""),
                                 "lineage_root_task_id": root_task_id,
                                 "require_fresh_successor_business_outcome": True,
+                                "reactivated_from_archive": archived_reactivation,
+                                "predecessor_lifecycle_tier": existing_lifecycle_tier,
                             },
                             inherited_intent=inherited_intent,
                         )
@@ -619,6 +631,8 @@ def route_instruction(
                         route["lineage_root_task_id"] = root_task_id
                         if should_branch_from_active:
                             route["mode"] = "branch_from_active_task"
+                        elif archived_reactivation:
+                            route["mode"] = "reopen_from_archive_task"
                         route["link_path"] = write_link(provider, conversation_id, payload)
                 else:
                     rooted_mission_task_id = _lineage_root_mission_task_id(existing_task_id) if existing_task_id else ""

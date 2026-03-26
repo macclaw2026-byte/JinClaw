@@ -13,7 +13,6 @@ from paths import CONTROL_CENTER_RUNTIME_ROOT
 from mission_supervisor import run_mission_supervisor
 from response_policy_engine import build_supervisor_status_text
 from task_receipt_engine import emit_route_receipt
-
 AUTONOMY_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy")
 if str(AUTONOMY_DIR) not in sys.path:
     sys.path.insert(0, str(AUTONOMY_DIR))
@@ -132,17 +131,30 @@ def repair_task_if_possible(task_id: str, diagnosis: Dict[str, object]) -> Dict[
     if not diagnosis.get("stuck"):
         return {"task_id": task_id, "repaired": False, "reason": "not_stuck"}
     state = load_state(task_id)
+    memory = diagnosis.get("memory", {}) or {}
+    recurrence = memory.get("error_recurrence", {}) or {}
+    promoted_rule = memory.get("promoted_rule", {}) or {}
+    recurrence_count = int(recurrence.get("count", 0) or 0)
+    preferred_action = str(promoted_rule.get("preferred_action", "")).strip()
+    doctor_memory_guidance = {
+        "recurrence_count": recurrence_count,
+        "has_promoted_rule": bool(promoted_rule),
+        "preferred_action": preferred_action,
+        "recommended_fix": str(promoted_rule.get("recommended_fix", "")).strip(),
+        "prevention_hint": str(promoted_rule.get("prevention_hint", "")).strip(),
+    }
     if diagnosis.get("reason") == "idle_without_active_execution":
         state.status = "planning"
         state.blockers = []
         state.metadata.pop("active_execution", None)
         state.metadata.pop("last_dispatched_marker", None)
         state.metadata.pop("last_dispatch_at", None)
+        state.metadata["doctor_memory_guidance"] = doctor_memory_guidance
         state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
         state.last_update_at = _utc_now_iso()
         save_state(state)
         log_event(task_id, "system_doctor_repaired_idle_execution_gap", diagnosis=diagnosis)
-        return {"task_id": task_id, "repaired": True, "reason": "restarted_stage_execution"}
+        return {"task_id": task_id, "repaired": True, "reason": "restarted_stage_execution", "memory_guidance": doctor_memory_guidance}
     if diagnosis.get("reason") == "waiting_external_without_active_execution":
         state.status = "planning"
         state.blockers = []
@@ -150,11 +162,12 @@ def repair_task_if_possible(task_id: str, diagnosis: Dict[str, object]) -> Dict[
         state.metadata.pop("active_execution", None)
         state.metadata.pop("last_dispatched_marker", None)
         state.metadata.pop("last_dispatch_at", None)
+        state.metadata["doctor_memory_guidance"] = doctor_memory_guidance
         state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
         state.last_update_at = _utc_now_iso()
         save_state(state)
         log_event(task_id, "system_doctor_repaired_waiting_external_without_execution", diagnosis=diagnosis)
-        return {"task_id": task_id, "repaired": True, "reason": "restarted_after_waiting_external_without_execution"}
+        return {"task_id": task_id, "repaired": True, "reason": "restarted_after_waiting_external_without_execution", "memory_guidance": doctor_memory_guidance}
     if diagnosis.get("reason") == "stale_waiting_external":
         state.status = "planning"
         state.blockers = []
@@ -162,11 +175,12 @@ def repair_task_if_possible(task_id: str, diagnosis: Dict[str, object]) -> Dict[
         state.metadata.pop("active_execution", None)
         state.metadata.pop("last_dispatched_marker", None)
         state.metadata.pop("last_dispatch_at", None)
+        state.metadata["doctor_memory_guidance"] = doctor_memory_guidance
         state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
         state.last_update_at = _utc_now_iso()
         save_state(state)
         log_event(task_id, "system_doctor_repaired_stale_waiting_external", diagnosis=diagnosis)
-        return {"task_id": task_id, "repaired": True, "reason": "restarted_after_stale_waiting_external"}
+        return {"task_id": task_id, "repaired": True, "reason": "restarted_after_stale_waiting_external", "memory_guidance": doctor_memory_guidance}
     if diagnosis.get("reason") == "waiting_external_metadata_mismatch":
         state.status = "planning"
         state.blockers = []
@@ -174,12 +188,16 @@ def repair_task_if_possible(task_id: str, diagnosis: Dict[str, object]) -> Dict[
         state.metadata.pop("active_execution", None)
         state.metadata.pop("last_dispatched_marker", None)
         state.metadata.pop("last_dispatch_at", None)
+        state.metadata["doctor_memory_guidance"] = doctor_memory_guidance
         state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
         state.last_update_at = _utc_now_iso()
         save_state(state)
         log_event(task_id, "system_doctor_repaired_waiting_external_metadata_mismatch", diagnosis=diagnosis)
-        return {"task_id": task_id, "repaired": True, "reason": "restarted_after_waiting_external_metadata_mismatch"}
+        return {"task_id": task_id, "repaired": True, "reason": "restarted_after_waiting_external_metadata_mismatch", "memory_guidance": doctor_memory_guidance}
     if diagnosis.get("reason") == "terminal_failure_requires_takeover":
+        next_action = "doctor_investigating_failure"
+        if preferred_action:
+            next_action = f"doctor_apply_rule:{preferred_action}"
         state.status = "recovering"
         state.blockers = list(dict.fromkeys([*state.blockers, "terminal_failure_detected"]))
         state.metadata.pop("active_execution", None)
@@ -188,12 +206,15 @@ def repair_task_if_possible(task_id: str, diagnosis: Dict[str, object]) -> Dict[
             "active": True,
             "reason": "terminal_failure_requires_takeover",
             "taken_over_at": _utc_now_iso(),
+            "preferred_action": preferred_action,
+            "recurrence_count": recurrence_count,
         }
-        state.next_action = "doctor_investigating_failure"
+        state.metadata["doctor_memory_guidance"] = doctor_memory_guidance
+        state.next_action = next_action
         state.last_update_at = _utc_now_iso()
         save_state(state)
         log_event(task_id, "system_doctor_took_over_failed_task", diagnosis=diagnosis)
-        return {"task_id": task_id, "repaired": True, "reason": "doctor_failure_takeover_started"}
+        return {"task_id": task_id, "repaired": True, "reason": "doctor_failure_takeover_started", "memory_guidance": doctor_memory_guidance, "next_action": next_action}
     return {"task_id": task_id, "repaired": False, "reason": diagnosis.get("reason", "unhandled")}
 
 
