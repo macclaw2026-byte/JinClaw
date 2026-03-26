@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict
 
 from paths import BRAIN_RECEIPTS_ROOT, OPENCLAW_SESSIONS_ROOT
+from response_policy_engine import build_route_receipt_text
 
 
 def _utc_now_iso() -> str:
@@ -121,19 +122,7 @@ def session_has_assistant_reply_after(session_key: str, user_message_id: str) ->
 
 
 def build_receipt_text(route: Dict[str, object]) -> str:
-    mode = str(route.get("mode", "instant_reply_only"))
-    task_id = str(route.get("task_id", "")).strip()
-    goal = str(route.get("goal", "")).strip()
-    if mode == "authoritative_task_status":
-        snapshot = route.get("authoritative_task_status", {}) or {}
-        return str(snapshot.get("authoritative_summary", "")).strip() or f"当前任务状态已刷新，任务 ID: {task_id or 'unknown'}。"
-    if mode in {"create_new_root_task", "create_or_attach"}:
-        return f"已识别为新任务，任务 ID: {task_id}。我会先进入 understand 阶段，梳理目标、约束和所需条件，然后继续推进。"
-    if mode in {"create_successor_task", "branch_from_active_task", "append_to_active_successor_task"}:
-        return f"已识别为后续任务，任务 ID: {task_id}。我会在当前链路上继续推进，并在遇到明确阻塞时如实反馈。"
-    if mode == "append_to_existing_task":
-        return f"已把这条新指令挂到当前任务 {task_id}，会继续按现有任务链推进。"
-    return f"已收到任务型指令。当前路由模式: {mode}。任务 ID: {task_id or '未创建'}。"
+    return build_route_receipt_text(route)
 
 
 def emit_route_receipt(route: Dict[str, object], *, provider: str, conversation_id: str, session_key: str = "") -> Dict[str, object]:

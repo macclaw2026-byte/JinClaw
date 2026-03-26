@@ -22,6 +22,7 @@ if str(CONTROL_CENTER_DIR) not in sys.path:
 from mission_loop import run_mission_cycle
 from browser_channel_recovery import prune_relay_tabs, recover_browser_channel, navigate_relay_to_url
 from browser_task_signals import collect_browser_task_signals
+from mission_supervisor import supervise_task
 from orchestrator import derive_business_verification_requirements
 from system_doctor import run_system_doctor
 
@@ -974,6 +975,20 @@ def main() -> int:
             for task_root in sorted(TASKS_ROOT.iterdir()):
                 if task_root.is_dir():
                     task_id = task_root.name
+                    supervision = supervise_task(
+                        task_id,
+                        stale_after_seconds=max(120, min(args.stale_after_seconds, 180)),
+                        escalation_after_seconds=max(300, args.stale_after_seconds),
+                    )
+                    if supervision.get("repair", {}).get("repaired"):
+                        results.append(
+                            {
+                                "task_id": task_id,
+                                "status": "supervisor_repaired",
+                                "action": "mission_supervisor_restarted_task",
+                                "supervision": supervision,
+                            }
+                        )
                     if not _task_artifacts_complete(task_id):
                         results.append(_invalid_task_artifact_result(task_id))
                         continue
