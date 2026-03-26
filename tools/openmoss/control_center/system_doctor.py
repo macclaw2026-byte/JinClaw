@@ -77,6 +77,9 @@ def diagnose_task(task_id: str, *, idle_after_seconds: int = 180) -> Dict[str, o
     if not has_active_execution and state.status in {"planning", "running", "recovering"}:
         diagnosis["stuck"] = True
         diagnosis["reason"] = "idle_without_active_execution"
+    elif state.status == "waiting_external" and not has_active_execution:
+        diagnosis["stuck"] = True
+        diagnosis["reason"] = "waiting_external_without_active_execution"
     elif state.status == "blocked":
         diagnosis["stuck"] = True
         diagnosis["reason"] = f"blocked:{state.next_action or 'unknown'}"
@@ -101,6 +104,18 @@ def repair_task_if_possible(task_id: str, diagnosis: Dict[str, object]) -> Dict[
         save_state(state)
         log_event(task_id, "system_doctor_repaired_idle_execution_gap", diagnosis=diagnosis)
         return {"task_id": task_id, "repaired": True, "reason": "restarted_stage_execution"}
+    if diagnosis.get("reason") == "waiting_external_without_active_execution":
+        state.status = "planning"
+        state.blockers = []
+        state.metadata.pop("waiting_external", None)
+        state.metadata.pop("active_execution", None)
+        state.metadata.pop("last_dispatched_marker", None)
+        state.metadata.pop("last_dispatch_at", None)
+        state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+        state.last_update_at = _utc_now_iso()
+        save_state(state)
+        log_event(task_id, "system_doctor_repaired_waiting_external_without_execution", diagnosis=diagnosis)
+        return {"task_id": task_id, "repaired": True, "reason": "restarted_after_waiting_external_without_execution"}
     if diagnosis.get("reason") == "stale_waiting_external":
         state.status = "planning"
         state.blockers = []
