@@ -179,15 +179,39 @@ def infer_link_session_key(payload: Dict) -> str:
 def find_link_by_task_id(task_id: str) -> Dict:
     if not LINKS_ROOT.exists():
         return {}
+    candidates = []
     for path in sorted(LINKS_ROOT.glob("*.json")):
         payload = read_json(path, {})
-        if payload.get("task_id") == task_id:
-            inferred_session_key = infer_link_session_key(payload)
-            if inferred_session_key and not str(payload.get("session_key", "")).strip():
-                payload["session_key"] = inferred_session_key
-                write_json(path, payload)
-            payload["_path"] = str(path)
-            return payload
+        payload_task_id = str(payload.get("task_id", "")).strip()
+        lineage_root_task_id = str(payload.get("lineage_root_task_id", "")).strip()
+        predecessor_task_id = str(payload.get("predecessor_task_id", "")).strip()
+        if task_id not in {payload_task_id, lineage_root_task_id, predecessor_task_id}:
+            continue
+        inferred_session_key = infer_link_session_key(payload)
+        if inferred_session_key and not str(payload.get("session_key", "")).strip():
+            payload["session_key"] = inferred_session_key
+            write_json(path, payload)
+        payload["_path"] = str(path)
+        provider = str(payload.get("provider", "")).strip().lower()
+        session_key = str(payload.get("session_key", "")).strip()
+        updated_at = str(payload.get("updated_at", "")).strip()
+        exact_match_bonus = 4 if payload_task_id == task_id else 0
+        lineage_match_bonus = 2 if lineage_root_task_id == task_id else 0
+        predecessor_match_bonus = 1 if predecessor_task_id == task_id else 0
+        score = (
+            3 if session_key else 0,
+            2 if provider == "openclaw-main" else 0,
+            1 if provider == "telegram" else 0,
+            exact_match_bonus,
+            lineage_match_bonus,
+            predecessor_match_bonus,
+            updated_at,
+            str(path),
+        )
+        candidates.append((score, payload))
+    if candidates:
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return candidates[0][1]
     return {}
 
 

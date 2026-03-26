@@ -89,6 +89,7 @@ def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> 
         "next_action": next_action,
         "has_active_execution": has_active_execution,
         "active_execution_run_id": str(active_execution.get("run_id", "")),
+        "active_execution_stage_name": str(active_execution.get("stage_name", "")),
         "idle_seconds": idle_seconds,
         "stale_after_seconds": stale_after_seconds,
         "recent_event_types": event_types,
@@ -99,6 +100,21 @@ def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> 
         "needs_intervention": False,
         "reason": "healthy",
     }
+    waiting_external = metadata.get("waiting_external", {}) or {}
+    waiting_stage_name = str(waiting_external.get("stage_name", ""))
+    waiting_run_id = str(waiting_external.get("run_id", ""))
+    active_stage_name = str(active_execution.get("stage_name", ""))
+    active_run_id = str(active_execution.get("run_id", ""))
+
+    if status == "waiting_external" and (
+        (waiting_stage_name and current_stage and waiting_stage_name != current_stage)
+        or (waiting_stage_name and active_stage_name and waiting_stage_name != active_stage_name)
+        or (waiting_run_id and active_run_id and waiting_run_id != active_run_id)
+    ):
+        evidence["progress_state"] = "waiting_external_state_mismatch"
+        evidence["needs_intervention"] = True
+        evidence["reason"] = "waiting_external_metadata_mismatch"
+        return evidence
 
     if status in {"completed", "failed"}:
         evidence["progress_state"] = "terminal"

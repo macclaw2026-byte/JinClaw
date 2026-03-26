@@ -80,6 +80,19 @@ def diagnose_task(task_id: str, *, idle_after_seconds: int = 180) -> Dict[str, o
     elif state.status == "waiting_external" and not has_active_execution:
         diagnosis["stuck"] = True
         diagnosis["reason"] = "waiting_external_without_active_execution"
+    elif state.status == "waiting_external":
+        waiting_external = state.metadata.get("waiting_external", {}) or {}
+        waiting_stage_name = str(waiting_external.get("stage_name", ""))
+        waiting_run_id = str(waiting_external.get("run_id", ""))
+        active_stage_name = str(active_execution.get("stage_name", ""))
+        active_run_id = str(active_execution.get("run_id", ""))
+        if (
+            (waiting_stage_name and state.current_stage and waiting_stage_name != state.current_stage)
+            or (waiting_stage_name and active_stage_name and waiting_stage_name != active_stage_name)
+            or (waiting_run_id and active_run_id and waiting_run_id != active_run_id)
+        ):
+            diagnosis["stuck"] = True
+            diagnosis["reason"] = "waiting_external_metadata_mismatch"
     elif state.status == "blocked":
         diagnosis["stuck"] = True
         diagnosis["reason"] = f"blocked:{state.next_action or 'unknown'}"
@@ -119,6 +132,7 @@ def repair_task_if_possible(task_id: str, diagnosis: Dict[str, object]) -> Dict[
     if diagnosis.get("reason") == "stale_waiting_external":
         state.status = "planning"
         state.blockers = []
+        state.metadata.pop("waiting_external", None)
         state.metadata.pop("active_execution", None)
         state.metadata.pop("last_dispatched_marker", None)
         state.metadata.pop("last_dispatch_at", None)
@@ -127,6 +141,18 @@ def repair_task_if_possible(task_id: str, diagnosis: Dict[str, object]) -> Dict[
         save_state(state)
         log_event(task_id, "system_doctor_repaired_stale_waiting_external", diagnosis=diagnosis)
         return {"task_id": task_id, "repaired": True, "reason": "restarted_after_stale_waiting_external"}
+    if diagnosis.get("reason") == "waiting_external_metadata_mismatch":
+        state.status = "planning"
+        state.blockers = []
+        state.metadata.pop("waiting_external", None)
+        state.metadata.pop("active_execution", None)
+        state.metadata.pop("last_dispatched_marker", None)
+        state.metadata.pop("last_dispatch_at", None)
+        state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+        state.last_update_at = _utc_now_iso()
+        save_state(state)
+        log_event(task_id, "system_doctor_repaired_waiting_external_metadata_mismatch", diagnosis=diagnosis)
+        return {"task_id": task_id, "repaired": True, "reason": "restarted_after_waiting_external_metadata_mismatch"}
     return {"task_id": task_id, "repaired": False, "reason": diagnosis.get("reason", "unhandled")}
 
 

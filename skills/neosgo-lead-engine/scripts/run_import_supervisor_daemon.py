@@ -1,7 +1,38 @@
 #!/usr/bin/env python3
-import argparse, json, os, signal, subprocess, time
+import argparse
+import json
+import os
+import signal
+import subprocess
+import time
 from pathlib import Path
+
 import duckdb
+
+SCHEMA_SQL = '''
+create table if not exists import_job_files (
+  file_id varchar primary key,
+  source_path varchar,
+  file_name varchar,
+  file_size bigint,
+  mtime double,
+  sha256 varchar,
+  discovered_at timestamp default current_timestamp,
+  status varchar,
+  started_at timestamp,
+  finished_at timestamp,
+  rows_imported bigint,
+  error_text varchar,
+  pid bigint,
+  progress_file varchar,
+  heartbeat_at timestamp,
+  attempt_count integer default 0,
+  last_progress_at timestamp,
+  exit_code integer,
+  member_name varchar,
+  archive_path varchar
+);
+'''
 
 ROOT_DEFAULT = str(Path('~/Downloads/US Business Data').expanduser())
 RUNNER_DEFAULT = '/Users/mac_claw/.openclaw/workspace/skills/neosgo-lead-engine/scripts/import_batch_runner.py'
@@ -11,23 +42,12 @@ STATUS_FILE_DEFAULT = '/Users/mac_claw/.openclaw/workspace/tmp/lead-import-daemo
 STALE_SECONDS = 180
 
 
-def db_connect(db_path):
-    return duckdb.connect(db_path)
-
-
 def counts(db_path):
     con = duckdb.connect(db_path, read_only=True)
     rows = dict(con.execute("select coalesce(status,'null'), count(*) from import_job_files group by 1").fetchall())
     raw = con.execute("select count(*) from raw_contacts").fetchone()[0]
     con.close()
     return rows, raw
-
-
-def running_rows(db_path):
-    con = duckdb.connect(db_path, read_only=True)
-    rows = con.execute("select file_id,file_name,pid,progress_file,status from import_job_files where status='running'").fetchall()
-    con.close()
-    return rows
 
 
 def process_alive(pid):
@@ -41,11 +61,11 @@ def process_alive(pid):
 
 
 def heal_stale_running(db_path):
-    con = db_connect(db_path)
+    con = duckdb.connect(db_path)
     healed = []
-    rows = con.execute("select file_id,file_name,pid,progress_file from import_job_files where status='running'").fetchall()
+    rows = con.execute("select file_id,file_name,member_name,pid,progress_file from import_job_files where status='running'").fetchall()
     now = time.time()
-    for fid, name, pid, progress_file in rows:
+    for fid, name, member_name, pid, progress_file in rows:
         progress_ts = None
         if progress_file and Path(progress_file).exists():
             try:
@@ -62,7 +82,12 @@ def heal_stale_running(db_path):
             except Exception:
                 pass
             con.execute("update import_job_files set status='interrupted', pid=null, error_text=? where file_id=?", [f'daemon healed stale running pid={pid} alive={alive} stale={stale}', fid])
-            healed.append({'file': name, 'pid': pid, 'alive': alive, 'stale': stale})
+            healed.append({'file': name, 'member': member_name, 'pid': pid, 'alive': alive, 'stale': stale})
+        else:
+            con.execute(
+                "update import_job_files set heartbeat_at=current_timestamp, last_progress_at=coalesce(to_timestamp(?), last_progress_at, heartbeat_at, started_at) where file_id=?",
+                [progress_ts, fid],
+            )
     con.close()
     return healed
 
@@ -96,7 +121,6 @@ def main():
         status_counts, raw = counts(args.db)
         pending_like = sum(status_counts.get(k, 0) for k in ['pending', 'failed', 'interrupted', 'stalled'])
         running = status_counts.get('running', 0)
-        done = status_counts.get('done', 0)
         write_status(args.status_file, {
             'cycle': cycle,
             'healed': healed,
@@ -152,6 +176,7 @@ def main():
             'stderr_tail': (proc.stderr or '')[-4000:],
         })
         time.sleep(args.sleep_seconds)
+
 
 if __name__ == '__main__':
     main()
