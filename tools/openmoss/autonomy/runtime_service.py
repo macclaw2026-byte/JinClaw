@@ -969,7 +969,7 @@ def _invalid_task_artifact_result(task_id: str) -> dict:
 
 def _repair_stale_waiting_external(task_id: str, *, stale_after_seconds: int) -> dict | None:
     evidence = build_progress_evidence(task_id, stale_after_seconds=stale_after_seconds)
-    if evidence.get("progress_state") != "stalled_waiting_external":
+    if evidence.get("progress_state") not in {"stalled_waiting_external", "waiting_external_without_execution"}:
         return None
     state = load_state(task_id)
     state.status = "planning"

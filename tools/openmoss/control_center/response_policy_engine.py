@@ -38,12 +38,21 @@ def build_supervisor_status_text(task_id: str, evidence: Dict[str, Any], repair:
     status = str(evidence.get("status", "unknown"))
     stage = str(evidence.get("current_stage", ""))
     next_action = str(evidence.get("next_action", ""))
+    run_liveness = evidence.get("run_liveness", {}) or {}
+    waiting_reason = str(run_liveness.get("waiting_reason", "")).strip()
+    wait_status = str(run_liveness.get("wait_status", "")).strip()
+    waiting_fragment = ""
+    if status == "waiting_external":
+        waiting_fragment = f" 当前等待原因是 {waiting_reason or 'unknown'}"
+        if wait_status:
+            waiting_fragment += f"，最近一次 wait 状态是 {wait_status}"
+        waiting_fragment += "。"
     if repair.get("repaired"):
         return (
             f"系统医生检测到任务 {task_id} 处于 {status} / {stage or 'none'}，原因是 {reason}。"
-            f" 已自动修复并重新拉回执行，下一步是 {repair.get('next_action', next_action or 'unknown')}。"
+            f"{waiting_fragment} 已自动修复并重新拉回执行，下一步是 {repair.get('next_action', next_action or 'unknown')}。"
         )
     return (
         f"系统医生检测到任务 {task_id} 处于 {status} / {stage or 'none'}，原因是 {reason}。"
-        f" 当前还没有自动修复成功，下一步卡在 {next_action or 'unknown'}。"
+        f"{waiting_fragment} 当前还没有自动修复成功，下一步卡在 {next_action or 'unknown'}。"
     )

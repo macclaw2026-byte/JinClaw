@@ -69,6 +69,17 @@ def _record_execution(task_id: str, payload: Dict) -> str:
     return str(record_path)
 
 
+def _set_waiting_external_metadata(state, *, run_id: str, stage_name: str, reason: str, wait_status: str = "", wait_error: str = "") -> None:
+    state.metadata["waiting_external"] = {
+        "run_id": str(run_id or "").strip(),
+        "stage_name": str(stage_name or "").strip(),
+        "reason": str(reason or "").strip(),
+        "wait_status": str(wait_status or "").strip(),
+        "wait_error": str(wait_error or "").strip(),
+        "last_polled_at": utc_now_iso(),
+    }
+
+
 def _batch_execution_should_continue(task_id: str) -> Dict | None:
     contract = load_contract(task_id)
     requirements = contract.metadata.get("control_center", {}).get("business_verification_requirements", {}) or {}
@@ -426,6 +437,12 @@ def dispatch_stage(task_id: str) -> Dict:
     }
     state.status = "waiting_external"
     state.next_action = f"poll_run:{run_id}" if run_id else f"poll_stage:{stage_name}"
+    _set_waiting_external_metadata(
+        state,
+        run_id=run_id,
+        stage_name=stage_name,
+        reason="dispatched_waiting_for_agent_completion",
+    )
     state.last_update_at = utc_now_iso()
     stage = state.stages.get(stage_name)
     if stage:
@@ -538,6 +555,14 @@ def poll_active_execution(task_id: str) -> Dict:
     if result["status"] == "waiting_external":
         state.status = "waiting_external"
         state.next_action = f"poll_run:{run_id}"
+        _set_waiting_external_metadata(
+            state,
+            run_id=run_id,
+            stage_name=stage_name,
+            reason="agent_wait_timeout" if str((result.get("wait", {}) or {}).get("status", "")).strip() == "timeout" else "waiting_for_agent_completion",
+            wait_status=str((result.get("wait", {}) or {}).get("status", "")).strip(),
+            wait_error=str(result.get("wait_error", "")).strip(),
+        )
         state.last_update_at = utc_now_iso()
         save_state(state)
         record_path = _record_execution(task_id, result)
@@ -548,4 +573,6 @@ def poll_active_execution(task_id: str) -> Dict:
     record_path = _record_execution(task_id, result)
     result["record_path"] = record_path
     log_event(task_id, "stage_execution_polled", stage=stage_name, result=result)
+    state.metadata.pop("waiting_external", None)
+    save_state(state)
     return _finalize_stage_wait_result(task_id, stage_name, result, record_path)

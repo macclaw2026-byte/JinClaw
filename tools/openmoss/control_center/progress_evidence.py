@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from paths import OPENMOSS_ROOT
+from run_liveness_verifier import build_run_liveness
 
 
 AUTONOMY_TASKS_ROOT = OPENMOSS_ROOT / "runtime/autonomy/tasks"
@@ -78,6 +79,7 @@ def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> 
     business_outcome = metadata.get("business_outcome", {}) or {}
     events = _recent_events(task_id)
     event_types = [str(item.get("type", "")) for item in events if str(item.get("type", "")).strip()]
+    run_liveness = build_run_liveness(task_id)
 
     evidence = {
         "task_id": task_id,
@@ -92,6 +94,7 @@ def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> 
         "recent_event_types": event_types,
         "business_goal_satisfied": business_outcome.get("goal_satisfied") is True,
         "user_visible_result_confirmed": business_outcome.get("user_visible_result_confirmed") is True,
+        "run_liveness": run_liveness,
         "progress_state": "healthy",
         "needs_intervention": False,
         "reason": "healthy",
@@ -100,6 +103,12 @@ def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> 
     if status in {"completed", "failed"}:
         evidence["progress_state"] = "terminal"
         evidence["reason"] = status
+        return evidence
+
+    if status == "waiting_external" and not has_active_execution:
+        evidence["progress_state"] = "waiting_external_without_execution"
+        evidence["needs_intervention"] = True
+        evidence["reason"] = "waiting_external_without_active_execution"
         return evidence
 
     if status == "waiting_external" and next_action.startswith("poll_run:") and idle_seconds >= stale_after_seconds:

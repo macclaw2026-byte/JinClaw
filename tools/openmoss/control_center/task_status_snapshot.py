@@ -8,6 +8,7 @@ from typing import Any, Dict, List
 
 from canonical_active_task import resolve_canonical_active_task
 from paths import BROWSER_SIGNALS_ROOT, OPENMOSS_ROOT, TASK_STATUS_ROOT
+from run_liveness_verifier import build_run_liveness
 
 
 AUTONOMY_TASKS_ROOT = OPENMOSS_ROOT / "runtime/autonomy/tasks"
@@ -93,6 +94,7 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
         "next_action": state.get("next_action", ""),
         "blockers": state.get("blockers", []),
         "business_outcome": business,
+        "run_liveness": build_run_liveness(canonical_task_id),
         "browser_signals": {
             "diagnosis": browser_signals.get("diagnosis", "none"),
             "recommended_action": browser_signals.get("recommended_action", "continue_current_plan"),
