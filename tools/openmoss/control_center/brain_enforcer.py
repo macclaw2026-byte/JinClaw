@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 from brain_router import route_instruction
 from paths import BRAIN_ROUTES_ROOT
@@ -73,12 +74,8 @@ def _load_main_session_messages(limit: int = 20) -> List[Dict[str, object]]:
     return records
 
 
-def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
-    messages = _load_main_session_messages(limit=limit)
-    state = _load_json(ENFORCER_STATE_PATH)
-    last_external_message_id = str(state.get("last_external_message_id", ""))
-    latest_user = None
-    for record in reversed(messages):
+def _latest_external_user_message(records: List[Dict[str, object]]) -> Dict[str, object] | None:
+    for record in reversed(records):
         message = record.get("message", {})
         if message.get("role") != "user":
             continue
@@ -86,15 +83,103 @@ def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
         text_parts = [part.get("text", "") for part in content if part.get("type") == "text"]
         text = "\n".join(part for part in text_parts if part).strip()
         if text and not _is_internal_runtime_request(text):
-            text = _strip_untrusted_metadata_wrapper(text)
-            latest_user = {
+            return {
                 "message_id": record.get("id", ""),
-                "text": text,
+                "text": _strip_untrusted_metadata_wrapper(text),
                 "timestamp": record.get("timestamp", ""),
             }
-            break
+    return None
+
+
+def _latest_prompt_error_after(records: List[Dict[str, object]], message_id: str) -> Dict[str, object] | None:
+    if not message_id:
+        return None
+    seen_user = False
+    latest_error: Dict[str, object] | None = None
+    for record in records:
+        if str(record.get("id", "")).strip() == str(message_id).strip():
+            seen_user = True
+            continue
+        if not seen_user:
+            continue
+        if str(record.get("customType", "")).strip() == "openclaw:prompt-error":
+            latest_error = {
+                "record_id": str(record.get("id", "")).strip(),
+                "timestamp": str(record.get("timestamp", "")).strip(),
+                "error": str((record.get("data", {}) or {}).get("error", "")).strip(),
+                "run_id": str((record.get("data", {}) or {}).get("runId", "")).strip(),
+            }
+    return latest_error
+
+
+def _resolve_route_for_message(latest_user: Dict[str, object]) -> Tuple[Dict[str, object], Path]:
+    route_path = BRAIN_ROUTES_ROOT / "openclaw-main" / "main.json"
+    route = _load_json(route_path)
+    if str(route.get("message_id", "")) != str(latest_user["message_id"]):
+        route = route_instruction(
+            provider="openclaw-main",
+            conversation_id="main",
+            conversation_type="direct",
+            text=str(latest_user["text"]),
+            source="brain_enforcer",
+            sender_id="user",
+            sender_name="openclaw-user",
+            message_id=str(latest_user["message_id"]),
+            session_key="agent:main:main",
+        )
+    route = reroot_route_if_needed(
+        route=route,
+        provider="openclaw-main",
+        conversation_id="main",
+        conversation_type="direct",
+        goal=str(route.get("goal") or latest_user["text"]),
+        session_key="agent:main:main",
+    )
+    persist_route("openclaw-main", "main", route)
+    return route, route_path
+
+
+def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
+    messages = _load_main_session_messages(limit=limit)
+    state = _load_json(ENFORCER_STATE_PATH)
+    last_external_message_id = str(state.get("last_external_message_id", ""))
+    last_prompt_error_id = str(state.get("last_prompt_error_id", ""))
+    latest_user = _latest_external_user_message(messages)
     if not latest_user:
         return {"status": "no_external_user_message"}
+    latest_prompt_error = _latest_prompt_error_after(messages, str(latest_user["message_id"]))
+    if latest_prompt_error and not session_has_assistant_reply_after(
+        "agent:main:main",
+        str(latest_prompt_error.get("record_id", "")),
+    ) and str(latest_prompt_error.get("record_id", "")) != last_prompt_error_id:
+        route, route_path = _resolve_route_for_message(latest_user)
+        route = dict(route)
+        route["mode"] = "authoritative_task_status"
+        route["prompt_error"] = latest_prompt_error
+        receipt = emit_route_receipt(
+            route,
+            provider="openclaw-main",
+            conversation_id="main",
+            session_key="agent:main:main",
+        )
+        _write_json(
+            ENFORCER_STATE_PATH,
+            {
+                "last_external_message_id": str(latest_user["message_id"]),
+                "last_external_timestamp": str(latest_user["timestamp"]),
+                "last_routed_at": route.get("routed_at", ""),
+                "last_receipt_at": receipt.get("created_at", ""),
+                "last_prompt_error_id": str(latest_prompt_error.get("record_id", "")),
+            },
+        )
+        return {
+            "status": "prompt_error_backfilled",
+            "latest_user_message": latest_user,
+            "prompt_error": latest_prompt_error,
+            "route": route,
+            "receipt": receipt,
+            "route_store": str(route_path),
+        }
     if str(latest_user["message_id"]) == last_external_message_id:
         route_path = BRAIN_ROUTES_ROOT / "openclaw-main" / "main.json"
         route = _load_json(route_path)
@@ -125,6 +210,7 @@ def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
                     "last_external_timestamp": str(latest_user["timestamp"]),
                     "last_routed_at": route.get("routed_at", ""),
                     "last_receipt_at": receipt.get("created_at", ""),
+                    "last_prompt_error_id": last_prompt_error_id,
                 },
             )
             return {
@@ -140,26 +226,7 @@ def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
             "route_store": str(route_path),
         }
 
-    route = route_instruction(
-        provider="openclaw-main",
-        conversation_id="main",
-        conversation_type="direct",
-        text=latest_user["text"],
-        source="brain_enforcer",
-        sender_id="user",
-        sender_name="openclaw-user",
-        message_id=str(latest_user["message_id"]),
-        session_key="agent:main:main",
-    )
-    route = reroot_route_if_needed(
-        route=route,
-        provider="openclaw-main",
-        conversation_id="main",
-        conversation_type="direct",
-        goal=str(route.get("goal") or latest_user["text"]),
-        session_key="agent:main:main",
-    )
-    persist_route("openclaw-main", "main", route)
+    route, route_path = _resolve_route_for_message(latest_user)
     receipt = emit_route_receipt(
         route,
         provider="openclaw-main",
@@ -173,6 +240,7 @@ def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
             "last_external_timestamp": str(latest_user["timestamp"]),
             "last_routed_at": route.get("routed_at", ""),
             "last_receipt_at": receipt.get("created_at", ""),
+            "last_prompt_error_id": last_prompt_error_id,
         },
     )
     return {
@@ -180,7 +248,7 @@ def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
         "latest_user_message": latest_user,
         "route": route,
         "receipt": receipt,
-        "route_store": str(BRAIN_ROUTES_ROOT / "openclaw-main" / "main.json"),
+        "route_store": str(route_path),
     }
 
 
@@ -189,8 +257,19 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="Ensure ordinary main-session instructions are routed through the control-center brain")
     parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument("--forever", action="store_true")
+    parser.add_argument("--interval-seconds", type=float, default=5.0)
     args = parser.parse_args()
-    print(json.dumps(enforce_brain_first(limit=args.limit), ensure_ascii=False, indent=2))
+    if not args.forever:
+        print(json.dumps(enforce_brain_first(limit=args.limit), ensure_ascii=False, indent=2))
+        return 0
+    while True:
+        try:
+            result = enforce_brain_first(limit=args.limit)
+        except Exception as exc:
+            result = {"status": "brain_enforcer_exception", "error": str(exc)}
+        print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
+        time.sleep(max(1.0, float(args.interval_seconds)))
     return 0
 
 

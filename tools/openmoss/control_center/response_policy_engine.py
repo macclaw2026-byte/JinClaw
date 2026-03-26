@@ -8,9 +8,14 @@ from typing import Any, Dict
 def build_route_receipt_text(route: Dict[str, Any]) -> str:
     mode = str(route.get("mode", "instant_reply_only"))
     task_id = str(route.get("task_id", "")).strip()
+    prompt_error = route.get("prompt_error", {}) or {}
+    prompt_error_message = str(prompt_error.get("error", "")).strip()
     if mode == "authoritative_task_status":
         snapshot = route.get("authoritative_task_status", {}) or {}
-        return str(snapshot.get("authoritative_summary", "")).strip() or f"当前任务状态已刷新，任务 ID: {task_id or 'unknown'}。"
+        summary = str(snapshot.get("authoritative_summary", "")).strip() or f"当前任务状态已刷新，任务 ID: {task_id or 'unknown'}。"
+        if prompt_error_message:
+            return f"主回复链刚刚发生异常（{prompt_error_message}），我已自动降级到权威状态回复。{summary}"
+        return summary
     if mode in {"create_new_root_task", "create_or_attach"}:
         return f"已识别为新任务，任务 ID: {task_id}。我会先进入 understand 阶段，梳理目标、约束、交付物和执行条件，然后持续推进。"
     if mode in {"create_successor_task", "branch_from_active_task", "append_to_active_successor_task"}:
