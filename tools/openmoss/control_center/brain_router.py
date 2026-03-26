@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
 
+from goal_sanitizer import sanitize_goal_text
 from intent_analyzer import analyze_intent
 from mission_profiles import detect_root_mission_profile
 from orchestrator import build_control_center_package
@@ -128,10 +129,7 @@ def _write_json(path: Path, payload: object) -> str:
 
 
 def _strip_transport_wrapper(text: str) -> str:
-    cleaned = text
-    cleaned = re.sub(r"Conversation info \(untrusted metadata\):\s*```[\s\S]*?```", "", cleaned, flags=re.MULTILINE)
-    cleaned = re.sub(r"Sender \(untrusted metadata\):\s*```[\s\S]*?```", "", cleaned, flags=re.MULTILINE)
-    cleaned = re.sub(r"Replied message \(untrusted, for context\):\s*```[\s\S]*?```", "", cleaned, flags=re.MULTILINE)
+    cleaned = sanitize_goal_text(text)
     cleaned = re.sub(r"^\[[^\]]+\]\s*", "", cleaned).strip()
     runtime_match = re.search(
         r"\[Autonomy runtime execution request\][\s\S]*?user_goal:\s*(.+?)\n(?:done_definition:|stage_goal:|selected_plan:)",
@@ -144,8 +142,8 @@ def _strip_transport_wrapper(text: str) -> str:
             cleaned = extracted_goal
     lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
     if lines:
-        return "\n".join(lines)
-    return text.strip()
+        return sanitize_goal_text("\n".join(lines))
+    return sanitize_goal_text(text.strip())
 
 
 def _looks_actionable(text: str, intent: Dict[str, object]) -> bool:
@@ -375,6 +373,18 @@ def _task_matches_root_mission_profile(task_id: str, mission_profile: Dict[str, 
     return str(control_center.get("mission_profile_id", "")).strip() == str(mission_profile.get("profile_id", "")).strip()
 
 
+def _lineage_root_mission_task_id(task_id: str) -> str:
+    root_task_id = _lineage_root_task_id(task_id)
+    contract = _safe_load_contract(root_task_id)
+    if not contract:
+        return ""
+    metadata = contract.metadata or {}
+    control_center = metadata.get("control_center", {}) or {}
+    if metadata.get("root_mission") or control_center.get("mission_profile_id"):
+        return root_task_id
+    return ""
+
+
 def route_instruction(
     *,
     provider: str,
@@ -477,10 +487,68 @@ def route_instruction(
                 route["task_id"] = task_id
                 route["link_path"] = write_link(provider, conversation_id, payload)
             elif mission_profile.get("matched") and _task_matches_root_mission_profile(existing_task_id, mission_profile):
-                route["mode"] = "append_to_existing_task"
-                route["task_id"] = existing_task_id
-                route["link_path"] = write_link(provider, conversation_id, existing)
+                root_task_id = str(mission_profile.get("root_task_id", "")).strip() or existing_task_id
+                canonical_goal = str(mission_profile.get("canonical_goal", "")).strip() or goal
+                if not contract_path(root_task_id).exists():
+                    _build_task(
+                        root_task_id,
+                        canonical_goal,
+                        source=f"{source}:root_mission",
+                        metadata_extra={
+                            "root_mission": True,
+                            "root_task_id": root_task_id,
+                            "ideal_plan_path": mission_profile.get("ideal_plan_path", ""),
+                        },
+                    )
+                    route["created_task"] = True
+                payload = {
+                    "provider": provider,
+                    "conversation_id": conversation_id,
+                    "conversation_type": conversation_type,
+                    "task_id": root_task_id,
+                    "goal": canonical_goal,
+                    "updated_at": utc_now_iso(),
+                    "last_message_id": message_id,
+                    "last_sender_id": sender_id,
+                    "last_sender_name": sender_name,
+                    "brain_source": source,
+                    "mission_profile_id": mission_profile.get("profile_id", ""),
+                }
+                if session_key:
+                    payload["session_key"] = session_key
+                elif str(existing.get("session_key", "")).strip():
+                    payload["session_key"] = str(existing.get("session_key", "")).strip()
+                route["mode"] = "append_to_root_mission_task"
+                route["attached_existing"] = True
+                route["task_id"] = root_task_id
+                route["lineage_root_task_id"] = root_task_id
+                route["link_path"] = write_link(provider, conversation_id, payload)
             else:
+                rooted_mission_task_id = _lineage_root_mission_task_id(existing_task_id) if existing_task_id else ""
+                if rooted_mission_task_id:
+                    payload = {
+                        "provider": provider,
+                        "conversation_id": conversation_id,
+                        "conversation_type": conversation_type,
+                        "task_id": rooted_mission_task_id,
+                        "goal": load_contract(rooted_mission_task_id).user_goal,
+                        "updated_at": utc_now_iso(),
+                        "last_message_id": message_id,
+                        "last_sender_id": sender_id,
+                        "last_sender_name": sender_name,
+                        "brain_source": source,
+                    }
+                    if session_key:
+                        payload["session_key"] = session_key
+                    elif str(existing.get("session_key", "")).strip():
+                        payload["session_key"] = str(existing.get("session_key", "")).strip()
+                    route["mode"] = "append_to_root_mission_task"
+                    route["task_id"] = rooted_mission_task_id
+                    route["lineage_root_task_id"] = rooted_mission_task_id
+                    route["attached_existing"] = True
+                    route["link_path"] = write_link(provider, conversation_id, payload)
+                    route["route_path"] = _write_json(BRAIN_ROUTES_ROOT / provider / f"{conversation_id}.json", route)
+                    return route
                 existing_state = load_state(existing_task_id) if existing_task_id else None
                 should_branch_from_active = bool(existing_task_id) and _should_branch_from_active_task(existing_task_id, goal, intent)
                 if (existing_state and existing_state.status == "completed" and _looks_like_followup_goal(goal, intent)) or should_branch_from_active:
@@ -553,13 +621,68 @@ def route_instruction(
                             route["mode"] = "branch_from_active_task"
                         route["link_path"] = write_link(provider, conversation_id, payload)
                 else:
-                    route["mode"] = "append_to_existing_task"
-                    route["task_id"] = existing_task_id
-                    route["link_path"] = write_link(provider, conversation_id, existing)
+                    rooted_mission_task_id = _lineage_root_mission_task_id(existing_task_id) if existing_task_id else ""
+                    if rooted_mission_task_id:
+                        payload = {
+                            "provider": provider,
+                            "conversation_id": conversation_id,
+                            "conversation_type": conversation_type,
+                            "task_id": rooted_mission_task_id,
+                            "goal": load_contract(rooted_mission_task_id).user_goal,
+                            "updated_at": utc_now_iso(),
+                            "last_message_id": message_id,
+                            "last_sender_id": sender_id,
+                            "last_sender_name": sender_name,
+                            "brain_source": source,
+                            "lineage_root_task_id": rooted_mission_task_id,
+                            "last_goal": goal,
+                            "superseded_task_id": existing_task_id,
+                        }
+                        if session_key:
+                            payload["session_key"] = session_key
+                        elif str(existing.get("session_key", "")).strip():
+                            payload["session_key"] = str(existing.get("session_key", "")).strip()
+                        route["mode"] = "append_to_root_mission_task"
+                        route["task_id"] = rooted_mission_task_id
+                        route["lineage_root_task_id"] = rooted_mission_task_id
+                        route["attached_existing"] = True
+                        route["link_path"] = write_link(provider, conversation_id, payload)
+                    else:
+                        route["mode"] = "append_to_existing_task"
+                        route["task_id"] = existing_task_id
+                        route["link_path"] = write_link(provider, conversation_id, existing)
         else:
-            route["mode"] = "append_to_existing_task"
-            route["task_id"] = existing.get("task_id")
-            route["link_path"] = write_link(provider, conversation_id, existing)
+            existing_task_id = str(existing.get("task_id", ""))
+            rooted_mission_task_id = _lineage_root_mission_task_id(existing_task_id) if existing_task_id else ""
+            if rooted_mission_task_id:
+                payload = {
+                    "provider": provider,
+                    "conversation_id": conversation_id,
+                    "conversation_type": conversation_type,
+                    "task_id": rooted_mission_task_id,
+                    "goal": load_contract(rooted_mission_task_id).user_goal,
+                    "updated_at": utc_now_iso(),
+                    "last_message_id": message_id,
+                    "last_sender_id": sender_id,
+                    "last_sender_name": sender_name,
+                    "brain_source": source,
+                    "lineage_root_task_id": rooted_mission_task_id,
+                    "last_goal": goal,
+                    "superseded_task_id": existing_task_id,
+                }
+                if session_key:
+                    payload["session_key"] = session_key
+                elif str(existing.get("session_key", "")).strip():
+                    payload["session_key"] = str(existing.get("session_key", "")).strip()
+                route["mode"] = "append_to_root_mission_task"
+                route["task_id"] = rooted_mission_task_id
+                route["lineage_root_task_id"] = rooted_mission_task_id
+                route["attached_existing"] = True
+                route["link_path"] = write_link(provider, conversation_id, payload)
+            else:
+                route["mode"] = "append_to_existing_task"
+                route["task_id"] = existing.get("task_id")
+                route["link_path"] = write_link(provider, conversation_id, existing)
     elif _looks_actionable(goal, intent):
         if mission_profile.get("matched"):
             task_id = str(mission_profile.get("root_task_id", "")).strip() or slugify(goal)

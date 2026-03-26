@@ -719,6 +719,7 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
     if (
         control_center_result
         and control_center_result.get("action") != "finalize_business_outcome"
+        and not (state.status == "blocked" and state.next_action == "bind_session_link")
         and state.status not in {"planning", "running"}
     ):
         return control_center_result
@@ -1085,11 +1086,16 @@ def _invalid_task_artifact_result(task_id: str) -> dict:
 
 def _repair_stale_waiting_external(task_id: str, *, stale_after_seconds: int) -> dict | None:
     evidence = build_progress_evidence(task_id, stale_after_seconds=stale_after_seconds)
-    if evidence.get("progress_state") not in {"stalled_waiting_external", "waiting_external_without_execution"}:
+    if evidence.get("progress_state") not in {
+        "stalled_waiting_external",
+        "waiting_external_without_execution",
+        "waiting_external_state_mismatch",
+    }:
         return None
     state = load_state(task_id)
     state.status = "planning"
     state.blockers = []
+    state.metadata.pop("waiting_external", None)
     state.metadata.pop("active_execution", None)
     state.metadata.pop("last_dispatched_marker", None)
     state.metadata.pop("last_dispatch_at", None)

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from brain_router import route_instruction
+from goal_sanitizer import sanitize_goal_text
 from paths import BRAIN_ROUTES_ROOT
 from route_guardrails import persist_route, reroot_route_if_needed
 from task_receipt_engine import emit_route_receipt, session_has_assistant_reply_after
@@ -17,6 +18,8 @@ SESSIONS_ROOT = Path("/Users/mac_claw/.openclaw/agents/main/sessions")
 MAIN_SESSION_KEY = "agent:main:main"
 MAIN_SESSION_REGISTRY = SESSIONS_ROOT / "sessions.json"
 ENFORCER_STATE_PATH = BRAIN_ROUTES_ROOT / "openclaw-main" / "brain_enforcer_state.json"
+LINKS_ROOT = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/autonomy/links")
+TASKS_ROOT = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/autonomy/tasks")
 
 
 def _load_json(path: Path):
@@ -41,14 +44,89 @@ def _is_internal_runtime_request(text: str) -> bool:
 
 
 def _strip_untrusted_metadata_wrapper(text: str) -> str:
-    cleaned = str(text or "")
-    patterns = [
-        r"Conversation info \(untrusted metadata\):\s*```json.*?```\s*",
-        r"Sender \(untrusted metadata\):\s*```json.*?```\s*",
-    ]
-    for pattern in patterns:
-        cleaned = re.sub(pattern, "", cleaned, flags=re.DOTALL)
-    return cleaned.strip()
+    return sanitize_goal_text(str(text or ""))
+
+
+def _looks_like_transport_noise(original_text: str, cleaned_text: str) -> bool:
+    raw = str(original_text or "")
+    cleaned = str(cleaned_text or "").strip()
+    normalized = re.sub(r"\s+", "", cleaned)
+    if not cleaned:
+        return True
+    if "Read HEARTBEAT.md if it exists" in raw or "Current time:" in raw:
+        return True
+    if raw.count("System:") >= 1 and normalized in {"?", "？", "done"}:
+        return True
+    if raw.count("System:") >= 2 and len(normalized) <= 8:
+        return True
+    return False
+
+
+def _load_task_contract_payload(task_id: str) -> Dict[str, object]:
+    path = TASKS_ROOT / task_id / "contract.json"
+    return _load_json(path) if path.exists() else {}
+
+
+def _load_task_state_payload(task_id: str) -> Dict[str, object]:
+    path = TASKS_ROOT / task_id / "state.json"
+    return _load_json(path) if path.exists() else {}
+
+
+def _goal_looks_like_transport_noise(goal: str) -> bool:
+    normalized = re.sub(r"\s+", "", str(goal or ""))
+    if not normalized:
+        return True
+    if "ReadHEARTBEAT.mdifitexists" in normalized or "Currenttime:" in normalized:
+        return True
+    if normalized in {"?", "？", "好", "好的"}:
+        return False
+    if normalized.count("System:") >= 1 and "Queued#1" in normalized:
+        return True
+    if normalized.count("System:") >= 2:
+        return True
+    return False
+
+
+def _find_active_root_mission_task_id() -> str:
+    candidates: list[str] = []
+    if not TASKS_ROOT.exists():
+        return ""
+    for task_root in sorted(TASKS_ROOT.iterdir()):
+        if not task_root.is_dir():
+            continue
+        contract = _load_task_contract_payload(task_root.name)
+        metadata = contract.get("metadata", {}) or {}
+        control_center = metadata.get("control_center", {}) or {}
+        is_root = bool(metadata.get("root_mission")) or bool(control_center.get("mission_profile_id"))
+        if not is_root:
+            continue
+        state = _load_task_state_payload(task_root.name)
+        if str(state.get("status", "")).strip() in {"completed", "failed"}:
+            continue
+        candidates.append(task_root.name)
+    return candidates[-1] if candidates else ""
+
+
+def _repair_noisy_main_link() -> Dict[str, object] | None:
+    link_path = LINKS_ROOT / "openclaw-main__main.json"
+    payload = _load_json(link_path)
+    if not payload:
+        return None
+    if not _goal_looks_like_transport_noise(str(payload.get("goal", ""))):
+        return None
+    target_task_id = _find_active_root_mission_task_id()
+    if not target_task_id or target_task_id == str(payload.get("task_id", "")).strip():
+        return None
+    contract = _load_task_contract_payload(target_task_id)
+    payload["task_id"] = target_task_id
+    payload["goal"] = str(contract.get("user_goal", "")).strip() or str(payload.get("goal", "")).strip()
+    payload["updated_at"] = str(int(time.time() * 1000))
+    _write_json(link_path, payload)
+    return {
+        "repaired": True,
+        "task_id": target_task_id,
+        "link_path": str(link_path),
+    }
 
 
 def _load_main_session_messages(limit: int = 20) -> List[Dict[str, object]]:
@@ -81,11 +159,14 @@ def _latest_external_user_message(records: List[Dict[str, object]]) -> Dict[str,
             continue
         content = message.get("content", [])
         text_parts = [part.get("text", "") for part in content if part.get("type") == "text"]
-        text = "\n".join(part for part in text_parts if part).strip()
-        if text and not _is_internal_runtime_request(text):
+        original_text = "\n".join(part for part in text_parts if part).strip()
+        if original_text and not _is_internal_runtime_request(original_text):
+            text = _strip_untrusted_metadata_wrapper(original_text)
+            if _looks_like_transport_noise(original_text, text):
+                continue
             return {
                 "message_id": record.get("id", ""),
-                "text": _strip_untrusted_metadata_wrapper(text),
+                "text": text,
                 "timestamp": record.get("timestamp", ""),
             }
     return None
@@ -140,13 +221,14 @@ def _resolve_route_for_message(latest_user: Dict[str, object]) -> Tuple[Dict[str
 
 
 def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
+    link_repair = _repair_noisy_main_link()
     messages = _load_main_session_messages(limit=limit)
     state = _load_json(ENFORCER_STATE_PATH)
     last_external_message_id = str(state.get("last_external_message_id", ""))
     last_prompt_error_id = str(state.get("last_prompt_error_id", ""))
     latest_user = _latest_external_user_message(messages)
     if not latest_user:
-        return {"status": "no_external_user_message"}
+        return {"status": "no_external_user_message", "link_repair": link_repair}
     latest_prompt_error = _latest_prompt_error_after(messages, str(latest_user["message_id"]))
     if latest_prompt_error and not session_has_assistant_reply_after(
         "agent:main:main",
@@ -179,6 +261,7 @@ def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
             "route": route,
             "receipt": receipt,
             "route_store": str(route_path),
+            "link_repair": link_repair,
         }
     if str(latest_user["message_id"]) == last_external_message_id:
         route_path = BRAIN_ROUTES_ROOT / "openclaw-main" / "main.json"
@@ -219,11 +302,13 @@ def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
                 "route": route,
                 "receipt": receipt,
                 "route_store": str(route_path),
+                "link_repair": link_repair,
             }
         return {
             "status": "no_new_external_user_message",
             "latest_user_message": latest_user,
             "route_store": str(route_path),
+            "link_repair": link_repair,
         }
 
     route, route_path = _resolve_route_for_message(latest_user)
@@ -249,6 +334,7 @@ def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
         "route": route,
         "receipt": receipt,
         "route_store": str(route_path),
+        "link_repair": link_repair,
     }
 
 
