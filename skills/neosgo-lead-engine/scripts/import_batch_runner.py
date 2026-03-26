@@ -286,14 +286,15 @@ def supervisor_loop(db_path: str, importer: str, stale_seconds: int, sleep_secon
         snapshot = counts(db_path)
         print({'pass': pass_num, 'queue_size': len(queue), 'status_counts': snapshot})
 
+        running_left = snapshot.get('running', 0)
+        if running_left:
+            print({'waiting_on_running': running_left})
+            if pass_num >= max_passes:
+                break
+            time.sleep(sleep_seconds)
+            continue
+
         if not queue:
-            running_left = snapshot.get('running', 0)
-            if running_left:
-                print({'waiting_on_running': running_left})
-                if pass_num >= max_passes:
-                    break
-                time.sleep(sleep_seconds)
-                continue
             break
 
         for idx, (src, fid, file_name, status, attempt_count) in enumerate(queue, start=1):
