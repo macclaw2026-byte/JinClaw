@@ -41,9 +41,22 @@ def _seconds_since(iso_text: str) -> float:
     return max(0.0, (datetime.now(timezone.utc) - dt).total_seconds())
 
 
+def _progress_age_seconds(*, status: str, next_action: str, last_progress_at: str, last_update_at: str) -> float:
+    progress_age = _seconds_since(last_progress_at)
+    update_age = _seconds_since(last_update_at)
+    if status == "waiting_external" and next_action.startswith("poll_run:"):
+        return progress_age
+    return min(progress_age, update_age)
+
+
 def diagnose_task(task_id: str, *, idle_after_seconds: int = 180) -> Dict[str, object]:
     state = load_state(task_id)
-    age = min(_seconds_since(state.last_progress_at), _seconds_since(state.last_update_at))
+    age = _progress_age_seconds(
+        status=state.status,
+        next_action=state.next_action,
+        last_progress_at=state.last_progress_at,
+        last_update_at=state.last_update_at,
+    )
     active_execution = state.metadata.get("active_execution", {}) or {}
     has_active_execution = bool(active_execution.get("run_id"))
     diagnosis = {
@@ -88,6 +101,17 @@ def repair_task_if_possible(task_id: str, diagnosis: Dict[str, object]) -> Dict[
         save_state(state)
         log_event(task_id, "system_doctor_repaired_idle_execution_gap", diagnosis=diagnosis)
         return {"task_id": task_id, "repaired": True, "reason": "restarted_stage_execution"}
+    if diagnosis.get("reason") == "stale_waiting_external":
+        state.status = "planning"
+        state.blockers = []
+        state.metadata.pop("active_execution", None)
+        state.metadata.pop("last_dispatched_marker", None)
+        state.metadata.pop("last_dispatch_at", None)
+        state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+        state.last_update_at = _utc_now_iso()
+        save_state(state)
+        log_event(task_id, "system_doctor_repaired_stale_waiting_external", diagnosis=diagnosis)
+        return {"task_id": task_id, "repaired": True, "reason": "restarted_after_stale_waiting_external"}
     return {"task_id": task_id, "repaired": False, "reason": diagnosis.get("reason", "unhandled")}
 
 
