@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import hashlib
+import json
 import os
 import re
 import signal
@@ -11,7 +12,7 @@ from pathlib import Path
 import duckdb
 
 ARCHIVE_EXTS = {'.zip'}
-DEFAULT_STALE_SECONDS = 300
+DEFAULT_STALE_SECONDS = 180
 
 SCHEMA_SQL = '''
 create table if not exists import_job_files (
@@ -31,26 +32,13 @@ create table if not exists import_job_files (
 '''
 
 OPTIONAL_COLUMNS = [
-  ("pid", "bigint"),
-  ("heartbeat_at", "timestamp"),
-  ("attempt_count", "integer default 0"),
-  ("last_progress_at", "timestamp"),
-  ("exit_code", "integer"),
+    ("pid", "bigint"),
+    ("progress_file", "varchar"),
+    ("heartbeat_at", "timestamp"),
+    ("attempt_count", "integer default 0"),
+    ("last_progress_at", "timestamp"),
+    ("exit_code", "integer"),
 ]
-
-TERMINAL_STATUSES = {"done"}
-RETRYABLE_STATUSES = {None, "pending", "failed", "interrupted"}
-
-
-def sha256_file(path: Path, chunk=1024 * 1024):
-    h = hashlib.sha256()
-    with path.open('rb') as f:
-        while True:
-            b = f.read(chunk)
-            if not b:
-                break
-            h.update(b)
-    return h.hexdigest()
 
 
 def connect(db_path: str, read_only: bool = False):
@@ -68,6 +56,17 @@ def ensure_schema(db_path: str):
     con.close()
 
 
+def sha256_file(path: Path, chunk=1024 * 1024):
+    h = hashlib.sha256()
+    with path.open('rb') as f:
+        while True:
+            b = f.read(chunk)
+            if not b:
+                break
+            h.update(b)
+    return h.hexdigest()
+
+
 def process_alive(pid):
     if pid in (None, 0):
         return False
@@ -78,7 +77,34 @@ def process_alive(pid):
         return False
 
 
-def discover(db_path: str, roots):
+def set_status(db_path: str, fid: str, **fields):
+    con = connect(db_path)
+    sets = []
+    vals = []
+    for k, v in fields.items():
+        sets.append(f"{k}=?")
+        vals.append(v)
+    vals.append(fid)
+    con.execute(f"update import_job_files set {', '.join(sets)} where file_id=?", vals)
+    con.close()
+
+
+def progress_path_for(progress_dir: Path, source_path: str):
+    safe = hashlib.md5(source_path.encode()).hexdigest()
+    return str(progress_dir / f'{safe}.json')
+
+
+def load_progress(progress_file: str):
+    path = Path(progress_file)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except Exception:
+        return None
+
+
+def discover(db_path: str, roots, progress_dir: Path):
     rows = []
     for root in roots:
         r = Path(root).expanduser()
@@ -88,159 +114,78 @@ def discover(db_path: str, roots):
             if p.is_file() and p.suffix.lower() in ARCHIVE_EXTS:
                 st = p.stat()
                 fid = hashlib.md5(str(p).encode()).hexdigest()
-                rows.append((fid, str(p), p.name, st.st_size, st.st_mtime, sha256_file(p)))
-
+                rows.append((fid, str(p), p.name, st.st_size, st.st_mtime, sha256_file(p), progress_path_for(progress_dir, str(p))))
     con = connect(db_path)
-    for fid, source_path, file_name, file_size, mtime, sha256 in rows:
-        existing = con.execute(
-            "select status from import_job_files where file_id=?", [fid]
-        ).fetchone()
+    for fid, source_path, file_name, file_size, mtime, sha256, progress_file in rows:
+        existing = con.execute("select status from import_job_files where file_id=?", [fid]).fetchone()
         if existing is None:
             con.execute(
-                '''insert into import_job_files(
-                       file_id, source_path, file_name, file_size, mtime, sha256, status
-                   ) values (?, ?, ?, ?, ?, ?, 'pending')''',
-                [fid, source_path, file_name, file_size, mtime, sha256],
+                '''insert into import_job_files(file_id, source_path, file_name, file_size, mtime, sha256, status, progress_file)
+                   values (?, ?, ?, ?, ?, ?, 'pending', ?)''',
+                [fid, source_path, file_name, file_size, mtime, sha256, progress_file],
             )
         else:
             con.execute(
                 '''update import_job_files
-                   set source_path=?, file_name=?, file_size=?, mtime=?, sha256=?
+                   set source_path=?, file_name=?, file_size=?, mtime=?, sha256=?, progress_file=?
                    where file_id=?''',
-                [source_path, file_name, file_size, mtime, sha256, fid],
+                [source_path, file_name, file_size, mtime, sha256, progress_file, fid],
             )
     con.close()
     return len(rows)
 
 
-def heal_stale_running(db_path: str, stale_seconds: int):
-    con = connect(db_path)
+def heal_or_wait_running(db_path: str, stale_seconds: int):
+    con = connect(db_path, read_only=True)
     rows = con.execute(
-        """
-        select file_id, file_name, pid,
-               epoch(coalesce(heartbeat_at, last_progress_at, started_at)) as last_ts
-        from import_job_files
-        where status='running'
-        """
+        "select file_id,file_name,pid,progress_file,epoch(coalesce(last_progress_at, heartbeat_at, started_at)) from import_job_files where status='running'"
     ).fetchall()
-    healed = []
-    now = time.time()
-    for fid, file_name, pid, last_ts in rows:
-        last_ts = float(last_ts) if last_ts is not None else None
-        stale = (last_ts is None) or ((now - last_ts) > stale_seconds)
-        alive = process_alive(pid)
-        if not alive:
-            reason = f"stale_running_recovered pid={pid} alive={alive} stale={stale}"
-            con.execute(
-                '''update import_job_files
-                   set status='interrupted',
-                       finished_at=current_timestamp,
-                       error_text=?,
-                       pid=null,
-                       exit_code=null
-                   where file_id=?''',
-                [reason, fid],
-            )
-            healed.append((file_name, reason))
     con.close()
-    return healed
+    actions = []
+    now = time.time()
+    for fid, file_name, pid, progress_file, last_ts in rows:
+        alive = process_alive(pid)
+        payload = load_progress(progress_file) if progress_file else None
+        progress_ts = payload.get('updated_at') if payload else None
+        effective_ts = progress_ts or last_ts
+        stale = effective_ts is None or ((now - float(effective_ts)) > stale_seconds)
+        if not alive:
+            set_status(db_path, fid, status='interrupted', pid=None, error_text=f'process_not_alive pid={pid}', exit_code=None)
+            actions.append({'healed': file_name, 'reason': 'dead-process'})
+        elif stale:
+            try:
+                os.kill(int(pid), signal.SIGTERM)
+            except Exception:
+                pass
+            set_status(db_path, fid, status='stalled', pid=None, error_text=f'stalled_progress_timeout pid={pid}', exit_code=124)
+            actions.append({'healed': file_name, 'reason': 'stalled-progress-timeout'})
+        else:
+            actions.append({'waiting': file_name, 'pid': pid, 'progress': payload})
+    return actions
 
 
 def fetch_queue(db_path: str):
     con = connect(db_path, read_only=True)
     rows = con.execute(
-        """
-        select source_path, file_id, file_name, status, attempt_count
-        from import_job_files
-        where status is null or status in ('pending','failed','interrupted')
-        order by source_path
-        """
+        "select source_path,file_id,file_name,status,coalesce(attempt_count,0),progress_file from import_job_files where status is null or status in ('pending','failed','interrupted','stalled') order by source_path"
     ).fetchall()
     con.close()
     return rows
 
 
-def update_running(db_path: str, fid: str, pid: int):
-    con = connect(db_path)
-    con.execute(
-        '''update import_job_files
-           set status='running',
-               started_at=current_timestamp,
-               heartbeat_at=current_timestamp,
-               last_progress_at=current_timestamp,
-               pid=?,
-               exit_code=null,
-               error_text=null,
-               attempt_count=coalesce(attempt_count, 0) + 1
-           where file_id=?''',
-        [pid, fid],
-    )
-    con.close()
-
-
-def update_child_pid(db_path: str, fid: str, pid: int):
-    con = connect(db_path)
-    con.execute(
-        "update import_job_files set pid=?, heartbeat_at=current_timestamp, last_progress_at=current_timestamp where file_id=?",
-        [pid, fid],
-    )
-    con.close()
-
-
-def heartbeat(db_path: str, fid: str):
-    try:
-        con = connect(db_path)
-        con.execute(
-            "update import_job_files set heartbeat_at=current_timestamp where file_id=?",
-            [fid],
-        )
-        con.close()
-        return True
-    except Exception:
-        return False
-
-
-def mark_done(db_path: str, fid: str, rows_imported, exit_code: int):
-    con = connect(db_path)
-    con.execute(
-        '''update import_job_files
-           set status='done',
-               finished_at=current_timestamp,
-               rows_imported=?,
-               exit_code=?,
-               heartbeat_at=current_timestamp,
-               last_progress_at=current_timestamp,
-               pid=null
-           where file_id=?''',
-        [rows_imported, exit_code, fid],
-    )
-    con.close()
-
-
-def mark_failed(db_path: str, fid: str, error_text: str, exit_code: int):
-    con = connect(db_path)
-    con.execute(
-        '''update import_job_files
-           set status='failed',
-               finished_at=current_timestamp,
-               error_text=?,
-               exit_code=?,
-               heartbeat_at=current_timestamp,
-               last_progress_at=current_timestamp,
-               pid=null
-           where file_id=?''',
-        [error_text, exit_code, fid],
-    )
-    con.close()
-
-
 def counts(db_path: str):
     con = connect(db_path, read_only=True)
-    rows = con.execute(
-        "select coalesce(status, 'null'), count(*) from import_job_files group by 1 order by 1"
-    ).fetchall()
+    rows = con.execute("select coalesce(status,'null'), count(*) from import_job_files group by 1 order by 1").fetchall()
     con.close()
     return dict(rows)
+
+
+def increment_attempt(db_path: str, fid: str):
+    con = connect(db_path)
+    con.execute("update import_job_files set attempt_count=coalesce(attempt_count,0)+1 where file_id=?", [fid])
+    count = con.execute("select attempt_count from import_job_files where file_id=?", [fid]).fetchone()[0]
+    con.close()
+    return count
 
 
 def parse_rows_imported(stdout: str):
@@ -248,86 +193,107 @@ def parse_rows_imported(stdout: str):
     return int(m.group(1)) if m else None
 
 
-def run_one(importer: str, db_path: str, src: str, fid: str):
-    supervisor_pid = os.getpid()
-    update_running(db_path, fid, supervisor_pid)
+def mark_done(db_path: str, fid: str, rows_imported, exit_code: int):
+    set_status(db_path, fid, status='done', finished_at=time.strftime('%Y-%m-%d %H:%M:%S'), rows_imported=rows_imported, exit_code=exit_code, pid=None)
+
+
+def mark_failed(db_path: str, fid: str, error_text: str, exit_code: int):
+    set_status(db_path, fid, status='failed', finished_at=time.strftime('%Y-%m-%d %H:%M:%S'), error_text=error_text, exit_code=exit_code, pid=None)
+
+
+def run_one(importer: str, db_path: str, src: str, fid: str, progress_file: str, chunk_rows: int, stale_seconds: int):
+    attempt_count = increment_attempt(db_path, fid)
     proc = subprocess.Popen(
-        ['python3', importer, '--db', db_path, src],
+        ['python3', importer, '--db', db_path, '--chunk-rows', str(chunk_rows), '--progress-file', progress_file, src],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
-    update_child_pid(db_path, fid, proc.pid)
-
+    set_status(db_path, fid, status='running', started_at=time.strftime('%Y-%m-%d %H:%M:%S'), pid=proc.pid, error_text=None, exit_code=None, attempt_count=attempt_count)
+    last_progress = time.time()
+    last_payload = None
     while True:
         rc = proc.poll()
+        payload = load_progress(progress_file)
+        if payload and payload.get('updated_at'):
+            last_progress = payload['updated_at']
+            last_payload = payload
         if rc is not None:
             out, err = proc.communicate()
             out = (out or '')[-12000:]
             err = (err or '')[-12000:]
             if rc == 0:
-                mark_done(db_path, fid, parse_rows_imported(out), rc)
-                return True, out, err, rc
+                rows_imported = parse_rows_imported(out)
+                if rows_imported is None and last_payload:
+                    rows_imported = last_payload.get('rows_imported') or last_payload.get('rows_imported_total')
+                mark_done(db_path, fid, rows_imported, rc)
+                return True, out, err, rc, last_payload
             mark_failed(db_path, fid, (out + '\n' + err).strip(), rc)
-            return False, out, err, rc
-        heartbeat(db_path, fid)
+            return False, out, err, rc, last_payload
+        if (time.time() - last_progress) > stale_seconds:
+            try:
+                os.kill(proc.pid, signal.SIGTERM)
+            except Exception:
+                pass
+            mark_failed(db_path, fid, f'stalled_progress_file_timeout pid={proc.pid}', 124)
+            return False, '', 'stalled_progress_file_timeout', 124, last_payload
         time.sleep(2)
 
 
-def supervisor_loop(db_path: str, importer: str, stale_seconds: int, sleep_seconds: int, max_passes: int):
+def supervisor_loop(db_path: str, importer: str, stale_seconds: int, sleep_seconds: int, max_passes: int, progress_dir: Path, chunk_rows: int):
     pass_num = 0
     while True:
         pass_num += 1
-        healed = heal_stale_running(db_path, stale_seconds)
-        if healed:
-            print({'healed_stale_running': healed})
-
+        actions = heal_or_wait_running(db_path, stale_seconds)
+        if actions:
+            print(json.dumps({'running_actions': actions}, ensure_ascii=False))
+            if any('waiting' in a for a in actions):
+                if pass_num >= max_passes:
+                    break
+                time.sleep(sleep_seconds)
+                continue
         queue = fetch_queue(db_path)
-        snapshot = counts(db_path)
-        print({'pass': pass_num, 'queue_size': len(queue), 'status_counts': snapshot})
-
-        running_left = snapshot.get('running', 0)
-        if running_left:
-            print({'waiting_on_running': running_left})
-            if pass_num >= max_passes:
-                break
-            time.sleep(sleep_seconds)
-            continue
-
+        print(json.dumps({'pass': pass_num, 'queue_size': len(queue), 'status_counts': counts(db_path)}, ensure_ascii=False))
         if not queue:
+            if counts(db_path).get('running', 0):
+                if pass_num >= max_passes:
+                    break
+                time.sleep(sleep_seconds)
+                continue
             break
-
-        for idx, (src, fid, file_name, status, attempt_count) in enumerate(queue, start=1):
-            print({'importing': file_name, 'source': src, 'index': idx, 'queue_size': len(queue), 'prior_status': status, 'attempt_count': attempt_count})
-            ok, out, err, code = run_one(importer, db_path, src, fid)
-            if ok:
-                print({'done': file_name, 'rows_imported': parse_rows_imported(out), 'exit_code': code})
-            else:
-                print({'failed': file_name, 'exit_code': code})
-
+        src, fid, file_name, status, attempt_count, progress_file = queue[0]
+        print(json.dumps({'importing': file_name, 'source': src, 'prior_status': status, 'attempt_count': attempt_count}, ensure_ascii=False))
+        ok, out, err, code, payload = run_one(importer, db_path, src, fid, progress_file, chunk_rows, stale_seconds)
+        if ok:
+            print(json.dumps({'done': file_name, 'rows_imported': parse_rows_imported(out), 'progress': payload, 'exit_code': code}, ensure_ascii=False))
+        else:
+            print(json.dumps({'failed': file_name, 'progress': payload, 'exit_code': code}, ensure_ascii=False))
         if pass_num >= max_passes:
-            print({'stopped_reason': 'max_passes_reached', 'max_passes': max_passes})
+            print(json.dumps({'stopped_reason': 'max_passes_reached', 'max_passes': max_passes}, ensure_ascii=False))
             break
-
         time.sleep(sleep_seconds)
-
-    print({'final_status_counts': counts(db_path)})
+    print(json.dumps({'final_status_counts': counts(db_path)}, ensure_ascii=False))
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--db', required=True)
     ap.add_argument('--importer', required=True)
+    ap.add_argument('--progress-dir', required=True)
+    ap.add_argument('--chunk-rows', type=int, default=5000)
     ap.add_argument('--stale-seconds', type=int, default=DEFAULT_STALE_SECONDS)
     ap.add_argument('--sleep-seconds', type=int, default=2)
     ap.add_argument('--max-passes', type=int, default=1000)
     ap.add_argument('roots', nargs='+')
     args = ap.parse_args()
 
+    progress_dir = Path(args.progress_dir).expanduser()
+    progress_dir.mkdir(parents=True, exist_ok=True)
+
     ensure_schema(args.db)
-    discovered = discover(args.db, args.roots)
-    print({'discovered_archives': discovered})
-    supervisor_loop(args.db, args.importer, args.stale_seconds, args.sleep_seconds, args.max_passes)
+    discovered = discover(args.db, args.roots, progress_dir)
+    print(json.dumps({'discovered_archives': discovered}, ensure_ascii=False))
+    supervisor_loop(args.db, args.importer, args.stale_seconds, args.sleep_seconds, args.max_passes, progress_dir, args.chunk_rows)
 
 
 if __name__ == '__main__':
