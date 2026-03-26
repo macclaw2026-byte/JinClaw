@@ -70,8 +70,12 @@ def diagnose_task(task_id: str, *, idle_after_seconds: int = 180) -> Dict[str, o
         "stuck": False,
         "reason": "healthy_or_recently_updated",
     }
-    if state.status in {"completed", "failed"}:
+    if state.status == "completed":
         diagnosis["reason"] = "terminal"
+        return diagnosis
+    if state.status == "failed":
+        diagnosis["stuck"] = True
+        diagnosis["reason"] = "terminal_failure_requires_takeover"
         return diagnosis
     if age < idle_after_seconds:
         return diagnosis
@@ -154,6 +158,21 @@ def repair_task_if_possible(task_id: str, diagnosis: Dict[str, object]) -> Dict[
         save_state(state)
         log_event(task_id, "system_doctor_repaired_waiting_external_metadata_mismatch", diagnosis=diagnosis)
         return {"task_id": task_id, "repaired": True, "reason": "restarted_after_waiting_external_metadata_mismatch"}
+    if diagnosis.get("reason") == "terminal_failure_requires_takeover":
+        state.status = "recovering"
+        state.blockers = list(dict.fromkeys([*state.blockers, "terminal_failure_detected"]))
+        state.metadata.pop("active_execution", None)
+        state.metadata.pop("waiting_external", None)
+        state.metadata["doctor_takeover"] = {
+            "active": True,
+            "reason": "terminal_failure_requires_takeover",
+            "taken_over_at": _utc_now_iso(),
+        }
+        state.next_action = "doctor_investigating_failure"
+        state.last_update_at = _utc_now_iso()
+        save_state(state)
+        log_event(task_id, "system_doctor_took_over_failed_task", diagnosis=diagnosis)
+        return {"task_id": task_id, "repaired": True, "reason": "doctor_failure_takeover_started"}
     return {"task_id": task_id, "repaired": False, "reason": diagnosis.get("reason", "unhandled")}
 
 

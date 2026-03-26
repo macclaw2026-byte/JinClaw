@@ -27,6 +27,8 @@ from orchestrator import derive_business_verification_requirements
 from paths import CONTRACT_QUARANTINE_ROOT
 from progress_evidence import build_progress_evidence
 from system_doctor import run_system_doctor
+from task_receipt_engine import emit_route_receipt
+from task_status_snapshot import build_task_status_snapshot
 
 
 def utc_now_iso() -> str:
@@ -1113,6 +1115,72 @@ def _repair_stale_waiting_external(task_id: str, *, stale_after_seconds: int) ->
     }
 
 
+def _emit_terminal_receipt(task_id: str, *, mode: str) -> dict | None:
+    link = find_link_by_task_id(task_id)
+    if not link:
+        return None
+    provider = str(link.get("provider", "")).strip() or "openclaw-main"
+    conversation_id = str(link.get("conversation_id", "")).strip()
+    if not conversation_id:
+        return None
+    route = {
+        "mode": mode,
+        "task_id": task_id,
+        "goal": str(link.get("goal", "")).strip(),
+        "authoritative_task_status": build_task_status_snapshot(task_id),
+    }
+    return emit_route_receipt(
+        route,
+        provider=provider,
+        conversation_id=conversation_id,
+        session_key=str(link.get("session_key", "")).strip(),
+    )
+
+
+def _maybe_notify_completion(task_id: str) -> dict | None:
+    state = load_state(task_id)
+    if state.status != "completed" or state.metadata.get("completion_notice_sent") is True:
+        return None
+    receipt = _emit_terminal_receipt(task_id, mode="task_completed_notice")
+    state = load_state(task_id)
+    state.metadata["completion_notice_sent"] = True
+    state.metadata["completion_notice_sent_at"] = utc_now_iso()
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    log_event(task_id, "task_completed_notice_sent", delivered=bool(receipt))
+    return receipt
+
+
+def _maybe_take_over_failed_task(task_id: str) -> dict | None:
+    state = load_state(task_id)
+    takeover = state.metadata.get("doctor_takeover", {}) or {}
+    if state.status != "failed" or takeover.get("active") is True:
+        return None
+    receipt = _emit_terminal_receipt(task_id, mode="failed_task_doctor_takeover")
+    state = load_state(task_id)
+    state.status = "recovering"
+    state.blockers = list(dict.fromkeys([*state.blockers, "terminal_failure_detected"]))
+    state.metadata.pop("active_execution", None)
+    state.metadata.pop("waiting_external", None)
+    state.metadata["doctor_takeover"] = {
+        "active": True,
+        "reason": "terminal_failure_requires_takeover",
+        "taken_over_at": utc_now_iso(),
+        "notified": bool(receipt),
+    }
+    state.next_action = "doctor_investigating_failure"
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    log_event(task_id, "failed_task_escalated_to_doctor", delivered=bool(receipt))
+    run_system_doctor(idle_after_seconds=1, escalation_after_seconds=1)
+    return receipt
+
+
+def _post_process_terminal_transitions(task_id: str) -> None:
+    _maybe_notify_completion(task_id)
+    _maybe_take_over_failed_task(task_id)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Watchdog service for the general autonomy runtime")
     parser.add_argument("--once", action="store_true")
@@ -1148,7 +1216,9 @@ def main() -> int:
                         results.append(_invalid_task_artifact_result(task_id))
                         continue
                     try:
-                        results.append(process_task(task_id, args.stale_after_seconds))
+                        result = process_task(task_id, args.stale_after_seconds)
+                        _post_process_terminal_transitions(task_id)
+                        results.append(result)
                     except Exception as exc:
                         if state_path(task_id).exists():
                             try:

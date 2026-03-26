@@ -10,6 +10,14 @@ def build_route_receipt_text(route: Dict[str, Any]) -> str:
     task_id = str(route.get("task_id", "")).strip()
     prompt_error = route.get("prompt_error", {}) or {}
     prompt_error_message = str(prompt_error.get("error", "")).strip()
+    if mode == "task_completed_notice":
+        snapshot = route.get("authoritative_task_status", {}) or {}
+        summary = str(snapshot.get("authoritative_summary", "")).strip()
+        return f"任务 {task_id or snapshot.get('task_id', 'unknown')} 已完成。{summary or '完成状态已记录。'}"
+    if mode == "failed_task_doctor_takeover":
+        snapshot = route.get("authoritative_task_status", {}) or {}
+        summary = str(snapshot.get("authoritative_summary", "")).strip()
+        return f"任务 {task_id or snapshot.get('task_id', 'unknown')} 刚进入失败态，系统医生已接管。{summary or '我会先分析并尝试修复，再决定是否升级报告。'}"
     if mode == "authoritative_task_status":
         snapshot = route.get("authoritative_task_status", {}) or {}
         canonical = snapshot.get("canonical_task", {}) or {}
