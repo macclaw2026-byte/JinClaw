@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, Set
 
 from intent_analyzer import analyze_intent
+from goal_sanitizer import sanitize_goal_text
 from orchestrator import build_control_center_package
 from paths import BRAIN_ROUTES_ROOT
 from task_status_snapshot import build_task_status_snapshot
@@ -108,7 +109,14 @@ def _topic_diverged(current_intent: Dict[str, object], new_intent: Dict[str, obj
 
 
 def _next_root_task_id(goal: str) -> str:
-    base = slugify(goal)
+    clean_goal = sanitize_goal_text(goal)
+    base = slugify(clean_goal)
+    if base == "autonomy-task":
+        intent = analyze_intent(clean_goal, source="route_guardrails:slug")
+        platforms = [str(item).strip().lower() for item in intent.get("likely_platforms", []) if str(item).strip()]
+        task_types = [str(item).strip().lower() for item in intent.get("task_types", []) if str(item).strip() and str(item).strip().lower() != "general"]
+        semantic_seed = "-".join(platforms[:2] + task_types[:3])
+        base = slugify(semantic_seed) or "autonomy-task"
     candidate = base
     counter = 2
     while contract_path(candidate).exists():
@@ -118,14 +126,15 @@ def _next_root_task_id(goal: str) -> str:
 
 
 def _build_task(task_id: str, goal: str, source: str, metadata_extra: Dict[str, object] | None = None) -> Dict[str, object]:
-    package = build_control_center_package(task_id, goal, source=source)
+    clean_goal = sanitize_goal_text(goal)
+    package = build_control_center_package(task_id, clean_goal, source=source)
     metadata = dict(package["metadata"])
     if metadata_extra:
         metadata.update(metadata_extra)
     create_task(
         build_args(
             task_id=task_id,
-            goal=goal,
+            goal=clean_goal,
             done_definition=package["done_definition"],
             stage=[],
             stage_json=json.dumps(package["stages"], ensure_ascii=False),
@@ -148,6 +157,7 @@ def reroot_route_if_needed(
     goal: str,
     session_key: str,
 ) -> Dict[str, object]:
+    goal = sanitize_goal_text(goal)
     if route.get("task_id") and _looks_like_status_query(goal):
         snapshot = build_task_status_snapshot(str(route.get("task_id")))
         route = dict(route)

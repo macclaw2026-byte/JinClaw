@@ -10,6 +10,7 @@ from typing import Dict
 
 from paths import BRAIN_RECEIPTS_ROOT, OPENCLAW_SESSIONS_ROOT
 from response_policy_engine import build_route_receipt_text
+from response_drift_detector import reconcile_route_with_authoritative_state
 
 
 def _utc_now_iso() -> str:
@@ -126,6 +127,7 @@ def build_receipt_text(route: Dict[str, object]) -> str:
 
 
 def emit_route_receipt(route: Dict[str, object], *, provider: str, conversation_id: str, session_key: str = "") -> Dict[str, object]:
+    route = reconcile_route_with_authoritative_state(route)
     text = build_receipt_text(route)
     receipt = {
         "receipt_id": uuid.uuid4().hex,
