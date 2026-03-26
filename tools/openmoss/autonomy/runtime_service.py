@@ -24,6 +24,7 @@ from browser_channel_recovery import prune_relay_tabs, recover_browser_channel, 
 from browser_task_signals import collect_browser_task_signals
 from mission_supervisor import supervise_task
 from orchestrator import derive_business_verification_requirements
+from progress_evidence import build_progress_evidence
 from system_doctor import run_system_doctor
 
 
@@ -830,6 +831,10 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
         }
 
     if state.status == "waiting_external" or state.next_action.startswith("poll_run:"):
+        restarted = _repair_stale_waiting_external(task_id, stale_after_seconds=stale_after_seconds)
+        if restarted:
+            restarted["mission_cycle"] = mission_cycle
+            return restarted
         poll = poll_active_execution(task_id)
         state = load_state(task_id)
         return {
@@ -959,6 +964,30 @@ def _invalid_task_artifact_result(task_id: str) -> dict:
         "action": "isolated_invalid_task_artifact",
         "contract_exists": contract_path(task_id).exists(),
         "state_exists": state_path(task_id).exists(),
+    }
+
+
+def _repair_stale_waiting_external(task_id: str, *, stale_after_seconds: int) -> dict | None:
+    evidence = build_progress_evidence(task_id, stale_after_seconds=stale_after_seconds)
+    if evidence.get("progress_state") != "stalled_waiting_external":
+        return None
+    state = load_state(task_id)
+    state.status = "planning"
+    state.blockers = []
+    state.metadata.pop("active_execution", None)
+    state.metadata.pop("last_dispatched_marker", None)
+    state.metadata.pop("last_dispatch_at", None)
+    state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    log_event(task_id, "stale_waiting_external_restarted_before_poll", evidence=evidence)
+    return {
+        "task_id": task_id,
+        "status": state.status,
+        "current_stage": state.current_stage,
+        "next_action": state.next_action,
+        "action": "stale_waiting_external_restarted",
+        "evidence": evidence,
     }
 
 

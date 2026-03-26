@@ -32,6 +32,19 @@ def _seconds_since(iso_text: str) -> float:
     return max(0.0, (datetime.now(timezone.utc) - dt).total_seconds())
 
 
+def _progress_age_seconds(*, status: str, next_action: str, last_progress_at: str, last_update_at: str) -> float:
+    progress_age = _seconds_since(last_progress_at)
+    update_age = _seconds_since(last_update_at)
+    # For poll loops, last_update_at mostly reflects bookkeeping churn rather than
+    # real forward motion. We should treat "time since last meaningful progress"
+    # as authoritative so the supervisor/doctor can detect stale poll_run tasks.
+    if status == "waiting_external" and next_action.startswith("poll_run:"):
+        return progress_age
+    # In normal states, any real stage progress or state update can count as
+    # recent movement, so use the fresher of the two timestamps.
+    return min(progress_age, update_age)
+
+
 def _recent_events(task_id: str, limit: int = 12) -> List[Dict[str, Any]]:
     events_path = AUTONOMY_TASKS_ROOT / task_id / "events.jsonl"
     if not events_path.exists():
@@ -56,7 +69,12 @@ def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> 
     has_active_execution = bool(active_execution.get("run_id"))
     last_progress_at = str(state.get("last_progress_at", ""))
     last_update_at = str(state.get("last_update_at", ""))
-    idle_seconds = min(_seconds_since(last_progress_at), _seconds_since(last_update_at))
+    idle_seconds = _progress_age_seconds(
+        status=status,
+        next_action=next_action,
+        last_progress_at=last_progress_at,
+        last_update_at=last_update_at,
+    )
     business_outcome = metadata.get("business_outcome", {}) or {}
     events = _recent_events(task_id)
     event_types = [str(item.get("type", "")) for item in events if str(item.get("type", "")).strip()]
