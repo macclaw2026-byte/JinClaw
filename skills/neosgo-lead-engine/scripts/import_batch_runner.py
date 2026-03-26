@@ -129,7 +129,7 @@ def heal_stale_running(db_path: str, stale_seconds: int):
         last_ts = float(last_ts) if last_ts is not None else None
         stale = (last_ts is None) or ((now - last_ts) > stale_seconds)
         alive = process_alive(pid)
-        if (not alive) or stale:
+        if not alive:
             reason = f"stale_running_recovered pid={pid} alive={alive} stale={stale}"
             con.execute(
                 '''update import_job_files
@@ -188,12 +188,16 @@ def update_child_pid(db_path: str, fid: str, pid: int):
 
 
 def heartbeat(db_path: str, fid: str):
-    con = connect(db_path)
-    con.execute(
-        "update import_job_files set heartbeat_at=current_timestamp where file_id=?",
-        [fid],
-    )
-    con.close()
+    try:
+        con = connect(db_path)
+        con.execute(
+            "update import_job_files set heartbeat_at=current_timestamp where file_id=?",
+            [fid],
+        )
+        con.close()
+        return True
+    except Exception:
+        return False
 
 
 def mark_done(db_path: str, fid: str, rows_imported, exit_code: int):
