@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+from canonical_active_task import resolve_canonical_active_task
 from paths import BROWSER_SIGNALS_ROOT, OPENMOSS_ROOT, TASK_STATUS_ROOT
 
 
@@ -76,12 +77,16 @@ def _build_authoritative_summary(task_id: str, state: Dict[str, Any], browser_si
 
 
 def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
-    state = _load_task_state(task_id)
-    contract = _load_task_contract(task_id)
-    browser_signals = _load_browser_signals(task_id)
+    canonical = resolve_canonical_active_task(task_id)
+    canonical_task_id = str(canonical.get("canonical_task_id", task_id)).strip() or task_id
+    state = _load_task_state(canonical_task_id)
+    contract = _load_task_contract(canonical_task_id)
+    browser_signals = _load_browser_signals(canonical_task_id)
     business = state.get("metadata", {}).get("business_outcome", {}) or {}
     snapshot: Dict[str, Any] = {
-        "task_id": task_id,
+        "requested_task_id": task_id,
+        "task_id": canonical_task_id,
+        "canonical_task": canonical,
         "goal": contract.get("user_goal", ""),
         "status": state.get("status", "unknown"),
         "current_stage": state.get("current_stage", ""),
@@ -95,9 +100,9 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
             "save_request_succeeded": browser_signals.get("save_request_succeeded"),
             "live_last_images": browser_signals.get("live_last_images", []),
         },
-        "recent_events": _recent_events(task_id),
+        "recent_events": _recent_events(canonical_task_id),
     }
-    snapshot["authoritative_summary"] = _build_authoritative_summary(task_id, state, browser_signals)
+    snapshot["authoritative_summary"] = _build_authoritative_summary(canonical_task_id, state, browser_signals)
     snapshot["reply_contract"] = {
         "must_use_authoritative_snapshot": True,
         "must_prefer_task_state_over_chat_memory": True,
@@ -105,7 +110,7 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
             business.get("goal_satisfied") and business.get("user_visible_result_confirmed")
         ),
     }
-    snapshot["snapshot_path"] = _write_json(TASK_STATUS_ROOT / f"{task_id}.json", snapshot)
+    snapshot["snapshot_path"] = _write_json(TASK_STATUS_ROOT / f"{canonical_task_id}.json", snapshot)
     return snapshot
 
 
