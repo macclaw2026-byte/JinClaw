@@ -3,7 +3,6 @@ import argparse, json, os, signal, subprocess, time
 from pathlib import Path
 import duckdb
 
-DB_DEFAULT = '/Users/mac_claw/.openclaw/workspace/data/neosgo_leads.duckdb'
 ROOT_DEFAULT = str(Path('~/Downloads/US Business Data').expanduser())
 RUNNER_DEFAULT = '/Users/mac_claw/.openclaw/workspace/skills/neosgo-lead-engine/scripts/import_batch_runner.py'
 IMPORTER_DEFAULT = '/Users/mac_claw/.openclaw/workspace/skills/neosgo-lead-engine/scripts/import_archives_to_duckdb.py'
@@ -12,20 +11,20 @@ STATUS_FILE_DEFAULT = '/Users/mac_claw/.openclaw/workspace/tmp/lead-import-daemo
 STALE_SECONDS = 180
 
 
-def db():
-    return duckdb.connect(DB_DEFAULT)
+def db_connect(db_path):
+    return duckdb.connect(db_path)
 
 
-def counts():
-    con = duckdb.connect(DB_DEFAULT, read_only=True)
+def counts(db_path):
+    con = duckdb.connect(db_path, read_only=True)
     rows = dict(con.execute("select coalesce(status,'null'), count(*) from import_job_files group by 1").fetchall())
     raw = con.execute("select count(*) from raw_contacts").fetchone()[0]
     con.close()
     return rows, raw
 
 
-def running_rows():
-    con = duckdb.connect(DB_DEFAULT, read_only=True)
+def running_rows(db_path):
+    con = duckdb.connect(db_path, read_only=True)
     rows = con.execute("select file_id,file_name,pid,progress_file,status from import_job_files where status='running'").fetchall()
     con.close()
     return rows
@@ -41,8 +40,8 @@ def process_alive(pid):
         return False
 
 
-def heal_stale_running():
-    con = db()
+def heal_stale_running(db_path):
+    con = db_connect(db_path)
     healed = []
     rows = con.execute("select file_id,file_name,pid,progress_file from import_job_files where status='running'").fetchall()
     now = time.time()
@@ -79,7 +78,7 @@ def write_status(path, payload):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--db', default=DB_DEFAULT)
+    ap.add_argument('--db', default='/Users/mac_claw/.openclaw/workspace/data/neosgo_leads.duckdb')
     ap.add_argument('--root', default=ROOT_DEFAULT)
     ap.add_argument('--runner', default=RUNNER_DEFAULT)
     ap.add_argument('--importer', default=IMPORTER_DEFAULT)
@@ -88,16 +87,13 @@ def main():
     ap.add_argument('--sleep-seconds', type=int, default=5)
     args = ap.parse_args()
 
-    global DB_DEFAULT
-    DB_DEFAULT = args.db
-
     Path(args.progress_dir).mkdir(parents=True, exist_ok=True)
 
     cycle = 0
     while True:
         cycle += 1
-        healed = heal_stale_running()
-        status_counts, raw = counts()
+        healed = heal_stale_running(args.db)
+        status_counts, raw = counts(args.db)
         pending_like = sum(status_counts.get(k, 0) for k in ['pending', 'failed', 'interrupted', 'stalled'])
         running = status_counts.get('running', 0)
         done = status_counts.get('done', 0)
@@ -145,10 +141,11 @@ def main():
             'cmd': cmd,
         })
         proc = subprocess.run(cmd, capture_output=True, text=True)
+        latest_counts, latest_raw = counts(args.db)
         write_status(args.status_file, {
             'cycle': cycle,
-            'status_counts': counts()[0],
-            'raw_contacts': counts()[1],
+            'status_counts': latest_counts,
+            'raw_contacts': latest_raw,
             'phase': 'runner-exited',
             'returncode': proc.returncode,
             'stdout_tail': (proc.stdout or '')[-4000:],
