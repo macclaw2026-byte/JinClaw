@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Dict
 
 from paths import CONTROL_CENTER_RUNTIME_ROOT
+from mission_supervisor import run_mission_supervisor
+from response_policy_engine import build_supervisor_status_text
 from task_receipt_engine import emit_route_receipt
 
 AUTONOMY_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy")
@@ -113,7 +115,7 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
                     "task_id": task_id,
                     "goal": payload.get("goal", ""),
                     "authoritative_task_status": {
-                        "authoritative_summary": f"系统医生检测到任务 {task_id} 处于 {diagnosis.get('status')}，当前原因是 {diagnosis.get('reason')}。已尝试自动修复：{repair.get('reason')}。"
+                        "authoritative_summary": build_supervisor_status_text(task_id, diagnosis, repair),
                     },
                 }
                 receipt = emit_route_receipt(
@@ -126,7 +128,10 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
                 log_event(task_id, "system_doctor_escalated_to_user", diagnosis=diagnosis, repair=repair)
                 break
         reports.append(report)
-    result = {"checked_at": _utc_now_iso(), "reports": reports}
+    supervisor = run_mission_supervisor(
+        stale_after_seconds=max(120, idle_after_seconds),
+        escalation_after_seconds=max(300, escalation_after_seconds),
+    )
+    result = {"checked_at": _utc_now_iso(), "reports": reports, "mission_supervisor": supervisor}
     _write_json(DOCTOR_ROOT / "last_run.json", result)
     return result
-

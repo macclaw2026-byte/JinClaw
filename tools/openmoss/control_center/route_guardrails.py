@@ -11,6 +11,7 @@ from typing import Dict, Set
 from intent_analyzer import analyze_intent
 from orchestrator import build_control_center_package
 from paths import BRAIN_ROUTES_ROOT
+from task_status_snapshot import build_task_status_snapshot
 AUTONOMY_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy")
 if str(AUTONOMY_DIR) not in sys.path:
     sys.path.insert(0, str(AUTONOMY_DIR))
@@ -32,6 +33,26 @@ def _normalize_set(values) -> Set[str]:
 
 def _normalize_goal(text: str) -> str:
     return re.sub(r"\s+", "", str(text or "").strip().lower())
+
+
+def _looks_like_status_query(text: str) -> bool:
+    normalized = _normalize_goal(text)
+    patterns = (
+        "进展",
+        "进度",
+        "状态",
+        "结果",
+        "做的怎么样",
+        "做得怎么样",
+        "到什么阶段",
+        "什么阶段",
+        "搞定了吗",
+        "完成了吗",
+        "解决了吗",
+        "跑通了吗",
+        "情况",
+    )
+    return any(token in normalized for token in patterns)
 
 
 def _safe_contract(task_id: str):
@@ -127,6 +148,15 @@ def reroot_route_if_needed(
     goal: str,
     session_key: str,
 ) -> Dict[str, object]:
+    if route.get("task_id") and _looks_like_status_query(goal):
+        snapshot = build_task_status_snapshot(str(route.get("task_id")))
+        route = dict(route)
+        route["mode"] = "authoritative_task_status"
+        route["authoritative_task_status"] = snapshot
+        route["created_task"] = False
+        route["attached_existing"] = True
+        return route
+
     existing_task_id = str(route.get("task_id", "")).strip()
     predecessor_task_id = str(route.get("predecessor_task_id", "")).strip()
     if not predecessor_task_id or not existing_task_id:
