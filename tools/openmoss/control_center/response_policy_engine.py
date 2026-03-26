@@ -12,7 +12,12 @@ def build_route_receipt_text(route: Dict[str, Any]) -> str:
     prompt_error_message = str(prompt_error.get("error", "")).strip()
     if mode == "authoritative_task_status":
         snapshot = route.get("authoritative_task_status", {}) or {}
+        canonical = snapshot.get("canonical_task", {}) or {}
+        requested_task_id = str(snapshot.get("requested_task_id", "")).strip()
+        canonical_task_id = str(snapshot.get("task_id", "")).strip()
         summary = str(snapshot.get("authoritative_summary", "")).strip() or f"当前任务状态已刷新，任务 ID: {task_id or 'unknown'}。"
+        if requested_task_id and canonical_task_id and requested_task_id != canonical_task_id:
+            summary = f"你询问的原任务 {requested_task_id} 已经切换到当前活跃任务 {canonical_task_id}。{summary}"
         if prompt_error_message:
             return f"主回复链刚刚发生异常（{prompt_error_message}），我已自动降级到权威状态回复。{summary}"
         return summary
