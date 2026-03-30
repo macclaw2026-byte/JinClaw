@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/autonomy/manager.py`
+- 文件作用：自治 runtime 的基础状态库；负责 contract/state/link/event 的读写，以及常见生命周期动作的原子更新。
+- 顶层函数：_plan_bucket、utc_now_iso、build_args、task_dir、read_json、write_json、append_jsonl、ingress_path、link_path、contract_path、state_path、events_path、checkpoints_dir、_refresh_task_summary、load_contract、load_state、save_contract、save_state、log_event、log_ingress、write_link、read_link、infer_link_session_key、find_link_by_task_id、parse_stage_args、parse_stage_payloads、create_task_from_contract、create_task、status_task、list_tasks、run_once、recover_task、apply_recovery、complete_stage、complete_stage_internal、_set_nested_dict_value、advance_execute_subtask、fail_stage、verify_task、checkpoint_task、set_stage_verifier、set_stage_execution_policy、set_task_metadata、write_business_outcome、evolve_task、build_parser、main。
+- 顶层类：无顶层类。
+- 主流程定位：
+  1. orchestrator 产出结构化 package 后，这里把它真正写成 contract/state。
+  2. runtime / executor / doctor 在推进任务时，最终都会落回这里更新 state、event 和 link。
+  3. learning、recovery、plan_history 也都从这里被触发，是任务生命周期的“持久化总线”。
+"""
 from __future__ import annotations
 
 import argparse
@@ -22,9 +33,16 @@ if str(CONTROL_CENTER_DIR) not in sys.path:
     sys.path.insert(0, str(CONTROL_CENTER_DIR))
 
 from plan_history import record_plan_outcome
+from goal_sanitizer import sanitize_goal_text
 
 
 def _plan_bucket(contract: TaskContract) -> tuple[list[str], str]:
+    """
+    中文注解：
+    - 功能：实现 `_plan_bucket` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     intent = contract.metadata.get("control_center", {}).get("intent", {})
     return [str(item) for item in intent.get("task_types", [])], str(intent.get("risk_level", ""))
 
@@ -36,18 +54,42 @@ LINKS_ROOT = RUNTIME_ROOT / "links"
 
 
 def utc_now_iso() -> str:
+    """
+    中文注解：
+    - 功能：实现 `utc_now_iso` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return datetime.now(timezone.utc).isoformat()
 
 
 def build_args(**kwargs):
+    """
+    中文注解：
+    - 功能：实现 `build_args` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return argparse.Namespace(**kwargs)
 
 
 def task_dir(task_id: str) -> Path:
+    """
+    中文注解：
+    - 功能：实现 `task_dir` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return TASKS_ROOT / task_id
 
 
 def read_json(path: Path, default):
+    """
+    中文注解：
+    - 功能：实现 `read_json` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if not path.exists():
         return default
     attempts = 3
@@ -62,6 +104,12 @@ def read_json(path: Path, default):
 
 
 def write_json(path: Path, payload) -> None:
+    """
+    中文注解：
+    - 功能：实现 `write_json` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_suffix(path.suffix + ".tmp")
     with temp_path.open("w", encoding="utf-8") as fh:
@@ -70,38 +118,86 @@ def write_json(path: Path, payload) -> None:
 
 
 def append_jsonl(path: Path, payload: Dict) -> None:
+    """
+    中文注解：
+    - 功能：实现 `append_jsonl` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
 def ingress_path(source: str) -> Path:
+    """
+    中文注解：
+    - 功能：实现 `ingress_path` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return INGRESS_ROOT / f"{source}.jsonl"
 
 
 def link_path(provider: str, conversation_id: str) -> Path:
+    """
+    中文注解：
+    - 功能：实现 `link_path` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     safe_provider = provider.replace("/", "-")
     safe_conversation = conversation_id.replace("/", "-")
     return LINKS_ROOT / f"{safe_provider}__{safe_conversation}.json"
 
 
 def contract_path(task_id: str) -> Path:
+    """
+    中文注解：
+    - 功能：实现 `contract_path` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return task_dir(task_id) / "contract.json"
 
 
 def state_path(task_id: str) -> Path:
+    """
+    中文注解：
+    - 功能：实现 `state_path` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return task_dir(task_id) / "state.json"
 
 
 def events_path(task_id: str) -> Path:
+    """
+    中文注解：
+    - 功能：实现 `events_path` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return task_dir(task_id) / "events.jsonl"
 
 
 def checkpoints_dir(task_id: str) -> Path:
+    """
+    中文注解：
+    - 功能：实现 `checkpoints_dir` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return task_dir(task_id) / "checkpoints"
 
 
 def _refresh_task_summary(task_id: str, *, state: TaskState | None = None, extra: Dict | None = None) -> Dict:
+    """
+    中文注解：
+    - 功能：实现 `_refresh_task_summary` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     current = state or load_state(task_id)
     completed_stages = [name for name in current.stage_order if current.stages.get(name) and current.stages[name].status == "completed"]
     payload = {
@@ -116,7 +212,204 @@ def _refresh_task_summary(task_id: str, *, state: TaskState | None = None, extra
     return update_task_summary(task_id, payload)
 
 
+def _task_milestones(contract: TaskContract) -> List[Dict[str, Any]]:
+    """
+    中文注解：
+    - 功能：读取 contract 中由 control center 推导出的 milestones 定义。
+    - 设计意图：让 manager / verifier / doctor 都能围绕同一份 milestone 结构工作，而不是各自再猜一遍。
+    """
+    control_center = contract.metadata.get("control_center", {}) or {}
+    milestones = control_center.get("task_milestones", []) or []
+    return [dict(item) for item in milestones if isinstance(item, dict)]
+
+
+def _initial_milestone_progress(contract: TaskContract) -> Dict[str, Dict[str, Any]]:
+    """
+    中文注解：
+    - 功能：给新任务生成第一版 milestone 进度表。
+    - 说明：每个 milestone 会带上 stage、title、required 和当前 status，后续 state.metadata.milestone_progress 会持续更新它。
+    """
+    payload: Dict[str, Dict[str, Any]] = {}
+    for item in _task_milestones(contract):
+        milestone_id = str(item.get("id", "")).strip()
+        if not milestone_id:
+            continue
+        payload[milestone_id] = {
+            "id": milestone_id,
+            "title": str(item.get("title", milestone_id)),
+            "stage": str(item.get("stage", "")).strip(),
+            "required": bool(item.get("required", True)),
+            "completion_mode": str(item.get("completion_mode", "stage_completion")).strip(),
+            "status": "pending",
+            "completed_at": "",
+            "summary": "",
+        }
+    return payload
+
+
+def _milestone_stats_from_state(contract: TaskContract, state: TaskState) -> Dict[str, Any]:
+    milestones = _task_milestones(contract)
+    progress = state.metadata.get("milestone_progress", {}) or {}
+    required = [item for item in milestones if bool(item.get("required", True))]
+    completed_required = [
+        item for item in required if (progress.get(str(item.get("id", "")), {}) or {}).get("status") == "completed"
+    ]
+    return {
+        "total": len(milestones),
+        "required_total": len(required),
+        "required_completed": len(completed_required),
+        "all_required_completed": len(required) == len(completed_required) if required else True,
+    }
+
+
+def _sync_milestone_progress(task_id: str, *, contract: TaskContract | None = None, state: TaskState | None = None) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：把 stage 生命周期变化同步到 milestone_progress。
+    - 规则：
+      - 非 execute 的阶段里程碑，随对应 stage completed 自动完成。
+      - execute 的 stepwise milestones 由显式 `advance_execute_milestone` 推进。
+    """
+    current_contract = contract or load_contract(task_id)
+    current_state = state or load_state(task_id)
+    progress = current_state.metadata.get("milestone_progress", {}) or _initial_milestone_progress(current_contract)
+    now = utc_now_iso()
+    for item in _task_milestones(current_contract):
+        milestone_id = str(item.get("id", "")).strip()
+        stage_name = str(item.get("stage", "")).strip()
+        completion_mode = str(item.get("completion_mode", "stage_completion")).strip()
+        entry = progress.setdefault(
+            milestone_id,
+            {
+                "id": milestone_id,
+                "title": str(item.get("title", milestone_id)),
+                "stage": stage_name,
+                "required": bool(item.get("required", True)),
+                "completion_mode": completion_mode,
+                "status": "pending",
+                "completed_at": "",
+                "summary": "",
+            },
+        )
+        stage_state = current_state.stages.get(stage_name)
+        if completion_mode == "stage_completion" and stage_state and stage_state.status == "completed":
+            if entry.get("status") != "completed":
+                entry["status"] = "completed"
+                entry["completed_at"] = now
+                entry["summary"] = stage_state.summary or str(item.get("title", milestone_id))
+    current_state.metadata["milestone_progress"] = progress
+    current_state.metadata["milestone_stats"] = _milestone_stats_from_state(current_contract, current_state)
+    return progress
+
+
+def advance_execute_milestone(task_id: str, *, summary: str = "") -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：在 execute 阶段每取得一次有效外部执行结果后，推进下一个待完成的 execute milestone。
+    - 设计意图：让多步骤任务在“每一轮 execute 成功”后继续自动滚动到下一个 deliverable，而不是一轮成功后就把整段 execute 当成完成。
+    """
+    contract = load_contract(task_id)
+    state = load_state(task_id)
+    _sync_milestone_progress(task_id, contract=contract, state=state)
+    progress = state.metadata.get("milestone_progress", {}) or {}
+    execute_milestones = [
+        item
+        for item in _task_milestones(contract)
+        if str(item.get("stage", "")).strip() == "execute" and str(item.get("completion_mode", "")).strip() == "stepwise_progress"
+    ]
+    if not execute_milestones:
+        stats = _milestone_stats_from_state(contract, state)
+        state.metadata["milestone_stats"] = stats
+        save_state(state)
+        return {"task_id": task_id, "advanced": False, "stage_complete": True, "milestone_stats": stats}
+    target = None
+    for item in execute_milestones:
+        milestone_id = str(item.get("id", "")).strip()
+        entry = progress.get(milestone_id, {})
+        if entry.get("status") != "completed":
+            target = item
+            break
+    if not target:
+        stats = _milestone_stats_from_state(contract, state)
+        state.metadata["milestone_stats"] = stats
+        save_state(state)
+        return {"task_id": task_id, "advanced": False, "stage_complete": True, "milestone_stats": stats}
+    milestone_id = str(target.get("id", "")).strip()
+    progress[milestone_id]["status"] = "completed"
+    progress[milestone_id]["completed_at"] = utc_now_iso()
+    progress[milestone_id]["summary"] = summary or str(target.get("title", milestone_id))
+    stats = _milestone_stats_from_state(contract, state)
+    state.metadata["milestone_progress"] = progress
+    state.metadata["milestone_stats"] = stats
+    state.last_progress_at = utc_now_iso()
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    log_event(task_id, "execute_milestone_advanced", milestone_id=milestone_id, title=str(target.get("title", "")), milestone_stats=stats)
+    remaining = [item for item in execute_milestones if progress.get(str(item.get("id", "")), {}).get("status") != "completed"]
+    return {
+        "task_id": task_id,
+        "advanced": True,
+        "milestone_id": milestone_id,
+        "title": str(target.get("title", "")),
+        "remaining_execute_milestones": len(remaining),
+        "stage_complete": len(remaining) == 0,
+        "milestone_stats": stats,
+    }
+
+
+def complete_execute_milestones(task_id: str, *, summary: str = "") -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：把 execute 阶段的所有 stepwise milestones 一次性收口。
+    - 使用场景：本地执行器已经完整跑完整个 execute 目标，需要在结束前把 milestone 状态与真实结果同步。
+    """
+    contract = load_contract(task_id)
+    state = load_state(task_id)
+    _sync_milestone_progress(task_id, contract=contract, state=state)
+    progress = state.metadata.get("milestone_progress", {}) or {}
+    now = utc_now_iso()
+    completed_ids: List[str] = []
+    for item in _task_milestones(contract):
+        if str(item.get("stage", "")).strip() != "execute":
+            continue
+        if str(item.get("completion_mode", "")).strip() != "stepwise_progress":
+            continue
+        milestone_id = str(item.get("id", "")).strip()
+        if not milestone_id:
+            continue
+        entry = progress.setdefault(milestone_id, {})
+        if entry.get("status") == "completed":
+            continue
+        entry["id"] = milestone_id
+        entry["title"] = str(item.get("title", milestone_id))
+        entry["stage"] = "execute"
+        entry["required"] = bool(item.get("required", True))
+        entry["completion_mode"] = "stepwise_progress"
+        entry["status"] = "completed"
+        entry["completed_at"] = now
+        entry["summary"] = summary or str(item.get("title", milestone_id))
+        completed_ids.append(milestone_id)
+    state.metadata["milestone_progress"] = progress
+    state.metadata["milestone_stats"] = _milestone_stats_from_state(contract, state)
+    state.last_progress_at = now
+    state.last_update_at = now
+    save_state(state)
+    if completed_ids:
+        log_event(task_id, "execute_milestones_completed_in_bulk", milestone_ids=completed_ids, summary=summary)
+    return {
+        "task_id": task_id,
+        "completed_ids": completed_ids,
+        "milestone_stats": state.metadata.get("milestone_stats", {}),
+    }
+
+
 def load_contract(task_id: str) -> TaskContract:
+    """
+    中文注解：
+    - 功能：实现 `load_contract` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     payload = read_json(contract_path(task_id), {})
     if not isinstance(payload, dict):
         raise ValueError(f"invalid contract payload type for task {task_id}: {type(payload).__name__}")
@@ -127,40 +420,88 @@ def load_contract(task_id: str) -> TaskContract:
 
 
 def load_state(task_id: str) -> TaskState:
+    """
+    中文注解：
+    - 功能：实现 `load_state` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return TaskState.from_dict(read_json(state_path(task_id), {}))
 
 
 def save_contract(contract: TaskContract) -> None:
+    """
+    中文注解：
+    - 功能：实现 `save_contract` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     write_json(contract_path(contract.task_id), contract.to_dict())
 
 
 def save_state(state: TaskState) -> None:
+    """
+    中文注解：
+    - 功能：实现 `save_state` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     write_json(state_path(state.task_id), state.to_dict())
 
 
 def log_event(task_id: str, event_type: str, **extra) -> None:
+    """
+    中文注解：
+    - 功能：实现 `log_event` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     payload = {"at": utc_now_iso(), "type": event_type}
     payload.update(extra)
     append_jsonl(events_path(task_id), payload)
 
 
 def log_ingress(source: str, payload: Dict) -> None:
+    """
+    中文注解：
+    - 功能：实现 `log_ingress` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     data = {"at": utc_now_iso(), "source": source}
     data.update(payload)
     append_jsonl(ingress_path(source), data)
 
 
 def write_link(provider: str, conversation_id: str, payload: Dict) -> str:
+    """
+    中文注解：
+    - 功能：实现 `write_link` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     path = link_path(provider, conversation_id)
     write_json(path, payload)
     return str(path)
 
 
 def read_link(provider: str, conversation_id: str) -> Dict:
+    """
+    中文注解：
+    - 功能：实现 `read_link` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return read_json(link_path(provider, conversation_id), {})
 
 
 def infer_link_session_key(payload: Dict) -> str:
+    """
+    中文注解：
+    - 功能：实现 `infer_link_session_key` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     session_key = str(payload.get("session_key", "")).strip()
     if session_key:
         return session_key
@@ -177,6 +518,12 @@ def infer_link_session_key(payload: Dict) -> str:
 
 
 def find_link_by_task_id(task_id: str) -> Dict:
+    """
+    中文注解：
+    - 功能：实现 `find_link_by_task_id` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if not LINKS_ROOT.exists():
         return {}
     for path in sorted(LINKS_ROOT.glob("*.json")):
@@ -192,6 +539,12 @@ def find_link_by_task_id(task_id: str) -> Dict:
 
 
 def parse_stage_args(stage_args: List[str]) -> List[StageContract]:
+    """
+    中文注解：
+    - 功能：实现 `parse_stage_args` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     stages: List[StageContract] = []
     for raw in stage_args:
         name, sep, goal = raw.partition("|")
@@ -202,6 +555,12 @@ def parse_stage_args(stage_args: List[str]) -> List[StageContract]:
 
 
 def parse_stage_payloads(stage_payloads: List[Dict]) -> List[StageContract]:
+    """
+    中文注解：
+    - 功能：实现 `parse_stage_payloads` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     stages: List[StageContract] = []
     for payload in stage_payloads:
         stages.append(StageContract(**payload))
@@ -209,6 +568,18 @@ def parse_stage_payloads(stage_payloads: List[Dict]) -> List[StageContract]:
 
 
 def create_task_from_contract(contract: TaskContract) -> Dict[str, Dict]:
+    """
+    中文注解：
+    - 功能：根据 TaskContract 生成任务的第一版 state，并把 contract/state 一起落盘。
+    - 结果：
+      - 写出 contract.json
+      - 写出 state.json
+      - 初始化 summary 和 task_created 事件
+    - 调用关系：brain_router / task_ingress 最终都会走到这里，所以这是一个任务真正“出生”的地方。
+    """
+    contract.user_goal = sanitize_goal_text(str(contract.user_goal or ""))
+    # state 是从 contract 反推出来的第一张状态卡：
+    # 默认从第一阶段开始，next_action 也会被设置成 start_stage:<first_stage>。
     stages = contract.stages
     state = TaskState(
         task_id=contract.task_id,
@@ -218,8 +589,12 @@ def create_task_from_contract(contract: TaskContract) -> Dict[str, Dict]:
         last_update_at=utc_now_iso(),
         stage_order=[stage.name for stage in stages],
         stages={stage.name: StageState(name=stage.name, updated_at=utc_now_iso()) for stage in stages},
-        metadata={"contract_metadata": contract.metadata},
+        metadata={
+            "contract_metadata": contract.metadata,
+            "milestone_progress": _initial_milestone_progress(contract),
+        },
     )
+    _sync_milestone_progress(contract.task_id, contract=contract, state=state)
     save_contract(contract)
     save_state(state)
     _refresh_task_summary(contract.task_id, state=state, extra={"goal": contract.user_goal, "done_definition": contract.done_definition})
@@ -228,6 +603,13 @@ def create_task_from_contract(contract: TaskContract) -> Dict[str, Dict]:
 
 
 def create_task(args: argparse.Namespace) -> int:
+    """
+    中文注解：
+    - 功能：实现 `create_task` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
+    args.goal = sanitize_goal_text(str(getattr(args, "goal", "") or ""))
     if getattr(args, "stage_json", ""):
         stages = parse_stage_payloads(json.loads(args.stage_json))
     else:
@@ -260,6 +642,12 @@ def create_task(args: argparse.Namespace) -> int:
 
 
 def status_task(args: argparse.Namespace) -> int:
+    """
+    中文注解：
+    - 功能：实现 `status_task` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     contract = load_contract(args.task_id)
     state = load_state(args.task_id)
     payload = {
@@ -272,6 +660,12 @@ def status_task(args: argparse.Namespace) -> int:
 
 
 def list_tasks(args: argparse.Namespace) -> int:
+    """
+    中文注解：
+    - 功能：实现 `list_tasks` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     payload = []
     if not TASKS_ROOT.exists():
         print("[]")
@@ -294,6 +688,15 @@ def list_tasks(args: argparse.Namespace) -> int:
 
 
 def run_once(args: argparse.Namespace) -> int:
+    """
+    中文注解：
+    - 功能：把任务推进到“当前阶段开始运行”的起点。
+    - 这一步不会真正 dispatch 外部 agent，而是先做状态切换：
+      - planning -> running
+      - current_stage -> 某个待执行阶段
+      - next_action -> execute_stage:<stage>
+    - 调用关系：runtime_service 在需要开启一个阶段时会调用这里。
+    """
     contract = load_contract(args.task_id)
     state = load_state(args.task_id)
     if state.status in {"completed", "failed"}:
@@ -339,6 +742,12 @@ def run_once(args: argparse.Namespace) -> int:
 
 
 def recover_task(args: argparse.Namespace) -> int:
+    """
+    中文注解：
+    - 功能：实现 `recover_task` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     state = load_state(args.task_id)
     stage_name = args.stage or state.current_stage
     if not stage_name or stage_name not in state.stages:
@@ -362,6 +771,12 @@ def recover_task(args: argparse.Namespace) -> int:
 
 
 def apply_recovery(args: argparse.Namespace) -> int:
+    """
+    中文注解：
+    - 功能：实现 `apply_recovery` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     state = load_state(args.task_id)
     stage_name = args.stage or state.current_stage
     if not stage_name:
@@ -404,6 +819,12 @@ def apply_recovery(args: argparse.Namespace) -> int:
 
 
 def complete_stage(args: argparse.Namespace) -> int:
+    """
+    中文注解：
+    - 功能：实现 `complete_stage` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     contract = load_contract(args.task_id)
     state = load_state(args.task_id)
     stage_name = args.stage or state.current_stage
@@ -438,6 +859,12 @@ def complete_stage(args: argparse.Namespace) -> int:
 
 
 def complete_stage_internal(task_id: str, stage_name: str, summary: str, evidence_ref: str = "") -> Dict[str, str]:
+    """
+    中文注解：
+    - 功能：实现 `complete_stage_internal` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     state = load_state(task_id)
     if stage_name not in state.stages:
         raise ValueError(f"unknown stage: {stage_name}")
@@ -472,11 +899,19 @@ def complete_stage_internal(task_id: str, stage_name: str, summary: str, evidenc
         if plan_id:
             task_types, risk_level = _plan_bucket(contract)
             record_plan_outcome(plan_id, "success", task_types=task_types, risk_level=risk_level)
+    _sync_milestone_progress(task_id, state=state)
+    save_state(state)
     _refresh_task_summary(task_id, state=state, extra={"last_completed_stage": stage_name})
     return {"status": state.status, "next_action": state.next_action}
 
 
 def _set_nested_dict_value(payload: Dict[str, Any], field: str, value: Any) -> None:
+    """
+    中文注解：
+    - 功能：实现 `_set_nested_dict_value` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     parts = [part for part in field.split(".") if part]
     if not parts:
         raise ValueError("field path is required")
@@ -491,6 +926,12 @@ def _set_nested_dict_value(payload: Dict[str, Any], field: str, value: Any) -> N
 
 
 def advance_execute_subtask(task_id: str, subtask_id: str, summary: str = "") -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `advance_execute_subtask` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     state = load_state(task_id)
     stage = state.stages.get("execute")
     if not stage:
@@ -514,6 +955,12 @@ def advance_execute_subtask(task_id: str, subtask_id: str, summary: str = "") ->
 
 
 def fail_stage(args: argparse.Namespace) -> int:
+    """
+    中文注解：
+    - 功能：实现 `fail_stage` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     state = load_state(args.task_id)
     stage_name = args.stage or state.current_stage
     if not stage_name or stage_name not in state.stages:
@@ -555,12 +1002,22 @@ def fail_stage(args: argparse.Namespace) -> int:
 
 
 def verify_task(args: argparse.Namespace) -> int:
+    """
+    中文注解：
+    - 功能：运行 contract 中定义的结构化 verifier，并把结果折算回 task state。
+    - 典型结果：
+      - 全部通过 -> completed 或推进下一阶段
+      - 任一失败 -> recovering + repair_verification_failure
+    - 调用关系：runtime_service 在 verify 阶段和部分自动完成逻辑里都会调这里。
+    """
     contract = load_contract(args.task_id)
     state = load_state(args.task_id)
     results = []
     all_ok = True
     verified_stages = []
     first_failed_stage = ""
+    # verifier 是“任务真的完成了吗”的结构化证据链；
+    # 它和聊天里的自然语言总结不同，主要供 runtime 和 doctor 做确定性判断。
     for stage_contract in contract.stages:
         if not stage_contract.verifier:
             continue
@@ -581,6 +1038,23 @@ def verify_task(args: argparse.Namespace) -> int:
                 stage_state.status = "completed"
                 stage_state.summary = stage_state.summary or f"Verifier passed for {stage_contract.name}"
                 stage_state.completed_at = utc_now_iso()
+    crawler = contract.metadata.get("control_center", {}).get("crawler", {}) or {}
+    if (
+        all_ok
+        and bool(crawler.get("enabled"))
+        and bool((crawler.get("loop_contract", {}) or {}).get("retro_required"))
+        and state.stages.get("learn")
+        and state.stages["learn"].status == "completed"
+    ):
+        retro_result = run_verifier({"type": "crawler_retro_complete", "task_id": args.task_id})
+        results.append({"stage": "learn", "result": retro_result})
+        if not retro_result.get("ok"):
+            all_ok = False
+            first_failed_stage = first_failed_stage or "learn"
+            learn_stage = state.stages["learn"]
+            learn_stage.status = "failed"
+            learn_stage.blocker = f"verification failed: {retro_result['status']}"
+            learn_stage.updated_at = utc_now_iso()
     state.status = "completed" if all_ok else "recovering"
     state.next_action = "none" if all_ok else "repair_verification_failure"
     state.blockers = [] if all_ok else [f"verification_failure:{first_failed_stage or 'unknown'}"]
@@ -604,6 +1078,8 @@ def verify_task(args: argparse.Namespace) -> int:
     if plan_id:
         task_types, risk_level = _plan_bucket(contract)
         record_plan_outcome(plan_id, "success" if all_ok else "failure", task_types=task_types, risk_level=risk_level)
+    _sync_milestone_progress(args.task_id, contract=contract, state=state)
+    save_state(state)
     _refresh_task_summary(
         args.task_id,
         state=state,
@@ -615,6 +1091,12 @@ def verify_task(args: argparse.Namespace) -> int:
 
 
 def checkpoint_task(args: argparse.Namespace) -> int:
+    """
+    中文注解：
+    - 功能：实现 `checkpoint_task` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     state = load_state(args.task_id)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     path = checkpoints_dir(args.task_id) / f"{stamp}.txt"
@@ -625,6 +1107,12 @@ def checkpoint_task(args: argparse.Namespace) -> int:
 
 
 def set_stage_verifier(args: argparse.Namespace) -> int:
+    """
+    中文注解：
+    - 功能：实现 `set_stage_verifier` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     contract = load_contract(args.task_id)
     stage = next((item for item in contract.stages if item.name == args.stage), None)
     if not stage:
@@ -637,6 +1125,12 @@ def set_stage_verifier(args: argparse.Namespace) -> int:
 
 
 def set_stage_execution_policy(args: argparse.Namespace) -> int:
+    """
+    中文注解：
+    - 功能：实现 `set_stage_execution_policy` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     contract = load_contract(args.task_id)
     stage = next((item for item in contract.stages if item.name == args.stage), None)
     if not stage:
@@ -649,6 +1143,12 @@ def set_stage_execution_policy(args: argparse.Namespace) -> int:
 
 
 def set_task_metadata(args: argparse.Namespace) -> int:
+    """
+    中文注解：
+    - 功能：实现 `set_task_metadata` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     state = load_state(args.task_id)
     value = json.loads(args.value_json)
     _set_nested_dict_value(state.metadata, args.field, value)
@@ -667,6 +1167,16 @@ def write_business_outcome(
     proof_summary: str,
     evidence: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：把“业务层是否真的达成目标”的结论写入 task metadata。
+    - 关键字段：
+      - goal_satisfied
+      - user_visible_result_confirmed
+      - proof_summary
+      - evidence
+    - 调用关系：browser signals、live probe、runtime 自动同步和业务型 verifier 最终都会走到这里。
+    """
     state = load_state(task_id)
     payload: Dict[str, Any] = {
         "goal_satisfied": goal_satisfied,
@@ -678,6 +1188,8 @@ def write_business_outcome(
         payload["evidence"] = evidence
     state.metadata["business_outcome"] = payload
     state.last_update_at = utc_now_iso()
+    contract = load_contract(task_id)
+    _sync_milestone_progress(task_id, contract=contract, state=state)
     save_state(state)
     _refresh_task_summary(task_id, state=state, extra={"business_outcome": payload})
     log_event(task_id, "business_outcome_recorded", business_outcome=payload)
@@ -685,6 +1197,12 @@ def write_business_outcome(
 
 
 def evolve_task(args: argparse.Namespace) -> int:
+    """
+    中文注解：
+    - 功能：实现 `evolve_task` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     state = load_state(args.task_id)
     proposal = {
         "task_id": args.task_id,
@@ -706,6 +1224,12 @@ def evolve_task(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """
+    中文注解：
+    - 功能：实现 `build_parser` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     parser = argparse.ArgumentParser(description="General autonomy runtime for long-running OpenClaw tasks")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -775,6 +1299,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     parser = build_parser()
     args = parser.parse_args()
     if args.cmd == "create":

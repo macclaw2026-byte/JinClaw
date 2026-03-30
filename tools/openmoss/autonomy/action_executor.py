@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/autonomy/action_executor.py`
+- 文件作用：负责把当前 stage 真正派发给外部执行链，并持续轮询 run 状态再写回任务状态。
+- 顶层函数：_resolve_openclaw_bin、_execution_records_dir、_derive_execution_session_key、_write_json、_record_execution、_set_waiting_external_metadata、_batch_execution_should_continue、_summarize_preflight_block、_gateway_call、_dispatch_prompt、_finalize_stage_wait_result、dispatch_stage、poll_active_execution。
+- 顶层类：无顶层类。
+- 主流程定位：
+  1. dispatch_stage：执行前检查、构造执行 prompt、调用 gateway 派发。
+  2. poll_active_execution：轮询 run 是否结束、是否 timeout、是否要继续等待。
+  3. finalize：在 wait 返回成功后自动推进 stage、运行 verifier，或重新拉回执行。
+"""
 from __future__ import annotations
 
 import json
@@ -11,7 +22,7 @@ import uuid
 from pathlib import Path
 from typing import Dict
 
-from manager import build_args, complete_stage_internal, find_link_by_task_id, infer_link_session_key, load_contract, load_state, log_event, save_state, task_dir, utc_now_iso, verify_task
+from manager import advance_execute_milestone, build_args, complete_execute_milestones, complete_stage_internal, find_link_by_task_id, infer_link_session_key, load_contract, load_state, log_event, save_state, task_dir, utc_now_iso, verify_task, write_business_outcome
 from preflight_engine import run_stage_preflight
 from verifier_registry import run_verifier
 
@@ -21,9 +32,18 @@ if str(CONTROL_CENTER_DIR) not in sys.path:
 
 from context_builder import build_stage_context
 from browser_task_signals import collect_browser_task_signals
+from crawler_probe_runner import run_crawler_probe, run_crawler_retro
+from task_receipt_engine import emit_route_receipt
+from task_status_snapshot import build_task_status_snapshot
 
 
 def _resolve_openclaw_bin() -> str:
+    """
+    中文注解：
+    - 功能：实现 `_resolve_openclaw_bin` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     candidates = []
     env_value = (os.environ.get("OPENCLAW_BIN") or "").strip()
     if env_value:
@@ -48,10 +68,22 @@ def _resolve_openclaw_bin() -> str:
 
 
 def _execution_records_dir(task_id: str) -> Path:
+    """
+    中文注解：
+    - 功能：实现 `_execution_records_dir` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return task_dir(task_id) / "executions"
 
 
 def _derive_execution_session_key(session_key: str, task_id: str) -> str:
+    """
+    中文注解：
+    - 功能：实现 `_derive_execution_session_key` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     normalized = str(session_key or "").strip()
     if not normalized:
         return normalized
@@ -59,17 +91,35 @@ def _derive_execution_session_key(session_key: str, task_id: str) -> str:
 
 
 def _write_json(path: Path, payload: Dict) -> None:
+    """
+    中文注解：
+    - 功能：实现 `_write_json` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _record_execution(task_id: str, payload: Dict) -> str:
+    """
+    中文注解：
+    - 功能：实现 `_record_execution` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     record_path = _execution_records_dir(task_id) / f"{uuid.uuid4().hex}.json"
     _write_json(record_path, payload)
     return str(record_path)
 
 
 def _set_waiting_external_metadata(state, *, run_id: str, stage_name: str, reason: str, wait_status: str = "", wait_error: str = "") -> None:
+    """
+    中文注解：
+    - 功能：实现 `_set_waiting_external_metadata` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     state.metadata["waiting_external"] = {
         "run_id": str(run_id or "").strip(),
         "stage_name": str(stage_name or "").strip(),
@@ -81,6 +131,12 @@ def _set_waiting_external_metadata(state, *, run_id: str, stage_name: str, reaso
 
 
 def _batch_execution_should_continue(task_id: str) -> Dict | None:
+    """
+    中文注解：
+    - 功能：实现 `_batch_execution_should_continue` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     contract = load_contract(task_id)
     requirements = contract.metadata.get("control_center", {}).get("business_verification_requirements", {}) or {}
     if requirements.get("batch_listings_mode") is not True:
@@ -96,6 +152,12 @@ def _batch_execution_should_continue(task_id: str) -> Dict | None:
 
 
 def _summarize_preflight_block(preflight: Dict) -> list[str]:
+    """
+    中文注解：
+    - 功能：实现 `_summarize_preflight_block` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     result = preflight.get("result", {}) or {}
     entries = list(result.get("results", []) or [])
     blockers: list[str] = []
@@ -121,6 +183,12 @@ def _summarize_preflight_block(preflight: Dict) -> list[str]:
 
 
 def _gateway_call(method: str, params: Dict, timeout_seconds: int = 15) -> Dict:
+    """
+    中文注解：
+    - 功能：实现 `_gateway_call` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     openclaw_bin = _resolve_openclaw_bin()
     try:
         proc = subprocess.run(
@@ -163,6 +231,13 @@ def _gateway_call(method: str, params: Dict, timeout_seconds: int = 15) -> Dict:
 
 
 def _dispatch_prompt(task_id: str, stage_name: str) -> str:
+    """
+    中文注解：
+    - 功能：把 contract/state/context_builder 的结构化信息拼成真正发给 AI agent 的执行请求。
+    - 输入：task_id、stage_name。
+    - 输出：一段完整 prompt 文本。
+    - 调用关系：dispatch_stage 在真正发消息给 gateway.chat.send 之前必经这里；这一步决定 AI agent 看到的是“结构化执行工单”，而不是原始聊天消息。
+    """
     contract = load_contract(task_id)
     state = load_state(task_id)
     stage_context = build_stage_context(task_id, stage_name, contract.to_dict(), state.to_dict())
@@ -182,6 +257,7 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
         f"subtask_progress: {json.dumps(stage_context.get('subtask_progress', {}), ensure_ascii=False)}",
         f"batch_focus: {json.dumps(stage_context.get('batch_focus', {}), ensure_ascii=False)}",
         f"browser_target_hint: {json.dumps(stage_context.get('browser_target_hint', {}), ensure_ascii=False)}",
+        f"crawler: {json.dumps(stage_context.get('crawler', {}), ensure_ascii=False)}",
         f"execution_summary: {json.dumps(stage_context.get('summary', {}), ensure_ascii=False)}",
         f"allowed_tools: {json.dumps(stage_context.get('allowed_tools', []), ensure_ascii=False)}",
         f"business_verification_requirements: {json.dumps(verifier_requirements, ensure_ascii=False)}",
@@ -190,6 +266,8 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
     ]
     batch_focus = stage_context.get("batch_focus", {}) or {}
     normalized_goal = str(stage_context.get("goal", contract.user_goal) or "").lower()
+    # 下面这些附加规则不是通用提示词噪音，而是 runtime 在已知高风险业务域上
+    # 给 agent 增加的“硬约束补丁”，用于压住会重复出现的错误行为。
     if "seller.neosgo" in normalized_goal or "neosgo" in normalized_goal or "seller" in normalized_goal:
         prompt_lines.extend(
             [
@@ -259,6 +337,12 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
 
 
 def _finalize_stage_wait_result(task_id: str, stage_name: str, result: Dict, record_path: str) -> Dict:
+    """
+    中文注解：
+    - 功能：实现 `_finalize_stage_wait_result` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     state = load_state(task_id)
     stage = state.stages.get(stage_name)
     if stage:
@@ -273,6 +357,37 @@ def _finalize_stage_wait_result(task_id: str, stage_name: str, result: Dict, rec
         and result.get("status") == "completed"
         and stage_contract
     ):
+        strict_continuation = bool(contract.metadata.get("control_center", {}).get("strict_continuation_required"))
+        if stage_name == "execute" and strict_continuation:
+            milestone_progress = advance_execute_milestone(
+                task_id,
+                summary=f"execute cycle completed for stage {stage_name}",
+            )
+            result["milestone_progress"] = milestone_progress
+            if _should_emit_milestone_progress_notice(task_id, milestone_progress):
+                _emit_milestone_progress_notice(task_id, milestone_progress)
+            if not milestone_progress.get("stage_complete"):
+                state = load_state(task_id)
+                stage = state.stages.get(stage_name)
+                stage.status = "running"
+                stage.blocker = ""
+                stage.updated_at = utc_now_iso()
+                state.status = "planning"
+                state.current_stage = stage_name
+                state.next_action = f"start_stage:{stage_name}"
+                state.blockers = []
+                state.last_update_at = utc_now_iso()
+                save_state(state)
+                log_event(task_id, "stage_continues_via_milestone_progress", stage=stage_name, milestone_progress=milestone_progress, record_path=record_path)
+                return result
+            completion = complete_stage_internal(
+                task_id=task_id,
+                stage_name=stage_name,
+                summary=f"All execute milestones completed for stage {stage_name}",
+                evidence_ref=record_path,
+            )
+            result["auto_completed"] = completion
+            return result
         if bool(stage_contract.execution_policy.get("require_verifier_before_complete", False)) and stage_contract.verifier:
             verification = run_verifier(stage_contract.verifier)
             result["completion_verifier"] = verification
@@ -337,11 +452,226 @@ def _finalize_stage_wait_result(task_id: str, stage_name: str, result: Dict, rec
     return result
 
 
+def _should_emit_milestone_progress_notice(task_id: str, milestone_progress: Dict) -> bool:
+    """
+    中文注解：
+    - 功能：判断当前 milestone 推进是否属于“关键节点”，只有关键节点才主动播报。
+    - 设计意图：降低长任务的通知密度，避免每个小步都刷消息。
+    - 当前规则：
+      - 第一个 execute milestone 完成时播报；
+      - 最后一个 execute milestone 完成时播报；
+      - required 里程碑跨过 25% / 50% / 75% / 100% 档位时播报。
+    """
+    if not milestone_progress.get("advanced"):
+        return False
+    state = load_state(task_id)
+    stats = state.metadata.get("milestone_stats", {}) or milestone_progress.get("milestone_stats", {}) or {}
+    required_total = int(stats.get("required_total", 0) or 0)
+    required_completed = int(stats.get("required_completed", 0) or 0)
+    remaining_execute = int(milestone_progress.get("remaining_execute_milestones", 0) or 0)
+    if required_total <= 0:
+        return True
+    if required_completed <= 1:
+        return True
+    if remaining_execute == 0 or bool(milestone_progress.get("stage_complete")):
+        return True
+    current_bucket = min(4, (required_completed * 4) // max(required_total, 1))
+    last_bucket = int(state.metadata.get("last_notified_milestone_bucket", -1) or -1)
+    return current_bucket > last_bucket and current_bucket >= 1
+
+
+def _emit_milestone_progress_notice(task_id: str, milestone_progress: Dict) -> Dict:
+    """
+    中文注解：
+    - 功能：在 execute 里程碑真实前进时，向当前绑定聊天渠道发一条主动进展通知。
+    - 设计意图：只在 milestone 真正完成时播报一次，避免 poll/wait 周期反复刷屏。
+    """
+    milestone_id = str(milestone_progress.get("milestone_id", "")).strip()
+    if not milestone_id:
+        return {"delivered": False, "reason": "missing_milestone_id"}
+    state = load_state(task_id)
+    if str(state.metadata.get("last_notified_milestone_id", "")).strip() == milestone_id:
+        return {"delivered": False, "reason": "already_notified", "milestone_id": milestone_id}
+    stats = state.metadata.get("milestone_stats", {}) or milestone_progress.get("milestone_stats", {}) or {}
+    required_total = int(stats.get("required_total", 0) or 0)
+    required_completed = int(stats.get("required_completed", 0) or 0)
+    current_bucket = min(4, (required_completed * 4) // max(required_total, 1)) if required_total > 0 else -1
+    link = find_link_by_task_id(task_id)
+    if not link:
+        return {"delivered": False, "reason": "link_not_found", "milestone_id": milestone_id}
+    provider = str(link.get("provider", "")).strip() or "openclaw-main"
+    conversation_id = str(link.get("conversation_id", "")).strip()
+    if not conversation_id:
+        return {"delivered": False, "reason": "conversation_id_missing", "milestone_id": milestone_id}
+    snapshot = build_task_status_snapshot(task_id)
+    route = {
+        "mode": "milestone_progress_notice",
+        "task_id": task_id,
+        "goal": str(link.get("goal", "")).strip(),
+        "authoritative_task_status": snapshot,
+        "milestone_notice": {
+            "milestone_id": milestone_id,
+            "title": str(milestone_progress.get("title", "")).strip(),
+            "remaining_execute_milestones": milestone_progress.get("remaining_execute_milestones"),
+        },
+    }
+    receipt = emit_route_receipt(
+        route,
+        provider=provider,
+        conversation_id=conversation_id,
+        session_key=str(link.get("session_key", "") or infer_link_session_key(link)).strip(),
+    )
+    state = load_state(task_id)
+    state.metadata["last_notified_milestone_id"] = milestone_id
+    state.metadata["last_notified_milestone_at"] = utc_now_iso()
+    state.metadata["last_notified_milestone_bucket"] = current_bucket
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    log_event(task_id, "milestone_progress_notice_sent", milestone_id=milestone_id, delivered=bool(receipt.get("delivery", {}).get("delivered")))
+    return receipt
+
+
+def _build_crawler_business_outcome(task_id: str, artifacts: Dict[str, Dict], summary: str) -> Dict:
+    """
+    中文注解：
+    - 功能：把 crawler 执行结果同步成业务层证据和可交付附件。
+    """
+    coverage = artifacts.get("coverage", {}) or {}
+    goal_satisfied = bool(coverage.get("all_sites_attempted"))
+    evidence = {
+        "crawler_report_path": artifacts.get("report_json_path", ""),
+        "crawler_report_markdown_path": artifacts.get("report_md_path", ""),
+        "crawler_required_sites": artifacts.get("required_sites", []),
+        "crawler_required_tools": artifacts.get("required_tools", []),
+        "crawler_coverage": coverage,
+        "attachments": [artifacts.get("report_md_path", ""), artifacts.get("report_json_path", "")],
+    }
+    return write_business_outcome(
+        task_id,
+        goal_satisfied=goal_satisfied,
+        user_visible_result_confirmed=goal_satisfied,
+        proof_summary=summary,
+        evidence=evidence,
+    )
+
+
+def _persist_crawler_execution_metadata(task_id: str, payload: Dict) -> None:
+    state = load_state(task_id)
+    execution = state.metadata.get("crawler_execution", {}) or {}
+    execution.update(payload)
+    state.metadata["crawler_execution"] = execution
+    artifacts = [
+        str(item)
+        for item in [
+            execution.get("report_md_path", ""),
+            execution.get("report_json_path", ""),
+            execution.get("retro_md_path", ""),
+            execution.get("retro_json_path", ""),
+            execution.get("evolution_json_path", ""),
+        ]
+        if str(item).strip()
+    ]
+    if artifacts:
+        state.metadata["output_artifacts"] = sorted(dict.fromkeys(artifacts))
+        state.metadata["delivery_artifacts"] = sorted(dict.fromkeys(artifacts))
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+
+
+def _run_local_crawler_stage(task_id: str, stage_name: str) -> Dict | None:
+    """
+    中文注解：
+    - 功能：对特定 crawler 任务直接在本地执行，而不是仅仅把请求发给外部 agent。
+    - 当前覆盖：多站点多工具矩阵测试型抓取任务。
+    """
+    contract = load_contract(task_id)
+    crawler = contract.metadata.get("control_center", {}).get("crawler", {}) or {}
+    if not bool(crawler.get("enabled")):
+        return None
+    if str(crawler.get("execution_mode", "")).strip() != "site_tool_matrix_probe":
+        return None
+
+    if stage_name == "execute":
+        artifacts = run_crawler_probe(task_id, contract.user_goal, crawler)
+        _persist_crawler_execution_metadata(task_id, artifacts)
+        complete_execute_milestones(task_id, summary="crawler matrix probe completed")
+        business_outcome = _build_crawler_business_outcome(
+            task_id,
+            artifacts,
+            summary=(
+                f"Completed crawler matrix probe for sites {', '.join(artifacts.get('required_sites', []))} "
+                f"with tools {', '.join(artifacts.get('required_tools', []))}."
+            ),
+        )
+        completion = complete_stage_internal(
+            task_id=task_id,
+            stage_name=stage_name,
+            summary="Crawler matrix probe completed with structured report artifacts.",
+            evidence_ref=str(artifacts.get("report_json_path", "")),
+        )
+        result = {
+            "ok": True,
+            "status": "completed",
+            "stage": stage_name,
+            "local_crawler": True,
+            "artifacts": artifacts,
+            "business_outcome": business_outcome,
+            "auto_completed": completion,
+        }
+        log_event(task_id, "local_crawler_execute_completed", stage=stage_name, artifacts=artifacts, business_outcome=business_outcome)
+        next_stage_name = str(completion.get("next_action", "")).replace("start_stage:", "")
+        refreshed_contract = load_contract(task_id)
+        next_stage = next((stage for stage in refreshed_contract.stages if stage.name == next_stage_name), None)
+        if next_stage and next_stage.name == "verify" and next_stage.verifier:
+            result["post_completion_verify"] = {"exit_code": verify_task(build_args(task_id=task_id))}
+        return result
+
+    if stage_name == "learn":
+        state = load_state(task_id)
+        execution = state.metadata.get("crawler_execution", {}) or {}
+        retro = run_crawler_retro(task_id, contract.user_goal, crawler, execution)
+        _persist_crawler_execution_metadata(task_id, retro)
+        completion = complete_stage_internal(
+            task_id=task_id,
+            stage_name=stage_name,
+            summary="Crawler retro, site preference learning, and evolution artifacts were persisted.",
+            evidence_ref=str(retro.get("retro_json_path", "")),
+        )
+        result = {
+            "ok": True,
+            "status": "completed",
+            "stage": stage_name,
+            "local_crawler": True,
+            "retro": retro,
+            "auto_completed": completion,
+            "post_completion_verify": {"exit_code": verify_task(build_args(task_id=task_id))},
+        }
+        log_event(task_id, "local_crawler_learn_completed", stage=stage_name, retro=retro)
+        return result
+
+    return None
+
+
 def dispatch_stage(task_id: str) -> Dict:
+    """
+    中文注解：
+    - 功能：真正执行“派发当前 stage”这件事。
+    - 子步骤：
+      1. 找到 task 当前 stage 和绑定会话；
+      2. 运行 preflight；
+      3. 构造 prompt 并通过 gateway.chat.send 发给 AI agent；
+      4. 写入 active_execution / waiting_external；
+      5. 先做一次短 wait，尽量快速拿到结果。
+    - 调用关系：runtime_service 在 `execute_stage:*` 状态下会调用这里。
+    """
     state = load_state(task_id)
     stage_name = state.current_stage
     if not stage_name:
         return {"ok": False, "status": "no_current_stage"}
+
+    local_crawler_result = _run_local_crawler_stage(task_id, stage_name)
+    if local_crawler_result is not None:
+        return local_crawler_result
 
     link = find_link_by_task_id(task_id)
     linked_session_key = str(link.get("session_key", "")).strip() or infer_link_session_key(link)
@@ -357,6 +687,8 @@ def dispatch_stage(task_id: str) -> Dict:
     if state.metadata.get("last_dispatched_marker") == dispatch_marker and not active:
         return {"ok": True, "status": "already_dispatched", "session_key": session_key}
 
+    # preflight 是执行前的总闸门：
+    # 这里会综合审批、命令、路径、promoted rule 等信息，判断“现在这一步能不能安全开工”。
     preflight = run_stage_preflight(task_id, stage_name)
     if preflight.get("status") != "no_preflight_needed" and preflight.get("status") != "no_promoted_rule":
         state.metadata["last_preflight"] = {
@@ -393,6 +725,8 @@ def dispatch_stage(task_id: str) -> Dict:
         log_event(task_id, "stage_dispatch_blocked_by_preflight", stage=stage_name, result=result, link_path=link.get("_path"))
         return result
 
+    # 真正把执行请求送给外部 AI agent 的时刻在这里。
+    # 从这一行开始，任务会进入 active_execution / waiting_external 生命周期。
     send_result = _gateway_call(
         "chat.send",
         {
@@ -471,6 +805,14 @@ def dispatch_stage(task_id: str) -> Dict:
 
 
 def poll_active_execution(task_id: str) -> Dict:
+    """
+    中文注解：
+    - 功能：轮询一个已经派发出去的 run，并把“还在等 / 已完成 / 需要切换 verifier”这些结果写回 state。
+    - 关键点：
+      - `waiting_external` 不是空闲，而是这里持续维护的等待态。
+      - 只有 run 真正结束或被判定为 stale，runtime 才会离开这条轮询链。
+    - 调用关系：runtime_service 在看到 `waiting_external` 或 `poll_run:*` 时会调用这里。
+    """
     state = load_state(task_id)
     active = state.metadata.get("active_execution", {})
     run_id = active.get("run_id", "")
@@ -520,6 +862,8 @@ def poll_active_execution(task_id: str) -> Dict:
         log_event(task_id, "stale_execution_cleared", stage=stage_name, result=result)
         return result
 
+    # agent.wait 是 runtime 判定“外部执行还活着还是已经结束”的唯一事实来源之一。
+    # 如果这里一直 timeout，但又没有新的真实进展，doctor / progress_evidence 就会把它识别成假等待。
     wait_result = _gateway_call("agent.wait", {"runId": run_id, "timeoutMs": 1000}, timeout_seconds=8)
     if not wait_result.get("ok"):
         result = {

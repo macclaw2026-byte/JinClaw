@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/mission_loop.py`
+- 文件作用：负责控制中心的“每轮巡航决策”，把静态 contract 和动态 state 重新拼成下一步行动建议。
+- 顶层函数：_load_json、_write_json、_load_live_approval、_ensure_cognitive_maps、_force_browser_batch_plan、run_mission_cycle、main。
+- 顶层类：无顶层类。
+- 主流程定位：
+  1. 读取当前 mission 快照与实时审批信息。
+  2. 补齐拓扑、分形循环、HTN、风险、授权会话、browser signals 等认知图谱。
+  3. 综合当前 stage、challenge、approval、business signals 生成 `next_decision`。
+  4. runtime_service 再把这个决策翻译成真正的状态迁移或执行动作。
+"""
 from __future__ import annotations
 
 import json
@@ -15,6 +27,7 @@ from bdi_state import build_bdi_state
 from browser_task_signals import collect_browser_task_signals
 from challenge_classifier import classify_challenge
 from context_builder import build_stage_context
+from crawler_layer import build_crawler_plan
 from domain_profile_store import build_domain_profile
 from event_bus import publish_event
 from external_tool_scorer import score_external_options
@@ -34,26 +47,56 @@ from human_checkpoint import build_human_checkpoint
 
 
 def _load_json(path: Path) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_load_json` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _write_json(path: Path, payload: Dict[str, object]) -> None:
+    """
+    中文注解：
+    - 功能：实现 `_write_json` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _load_live_approval(task_id: str, mission: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_load_live_approval` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     live = _load_json(APPROVALS_ROOT / f"{task_id}.json")
     return live or mission.get("approval", {})
 
 
 def _ensure_cognitive_maps(mission: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：确保 mission 拥有后续决策所需的认知地图。
+    - 这里会补齐或刷新：
+      - tool_scores / reselection
+      - topology / fractal_loops / htn
+      - stpa / arbitration / adoption_flow
+      - capability_clone / domain_profile
+    - 调用关系：run_mission_cycle 进入主判断前一定先过这里，否则后面的 `next_decision` 只能基于残缺数据做判断。
+    """
     intent = mission.get("intent", {})
     selected_plan = mission.get("selected_plan", {})
     candidate_plans = mission.get("candidate_plans", [])
     capabilities = mission.get("capabilities", {})
+    # 如果 mission 是从旧快照恢复出来的，这些图谱可能并不完整；
+    # 这里的职责就是把“可推导但尚未落盘”的认知结构补全。
     if candidate_plans and not mission.get("tool_scores"):
         mission["tool_scores"] = score_external_options(str(mission.get("task_id", "mission")), intent, candidate_plans, capabilities)
     if candidate_plans and not mission.get("reselection") and mission.get("proposal_judgment"):
@@ -98,6 +141,12 @@ def _ensure_cognitive_maps(mission: Dict[str, object]) -> Dict[str, object]:
 
 
 def _force_browser_batch_plan(mission: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_force_browser_batch_plan` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     intent = mission.get("intent", {}) or {}
     normalized_goal = str(intent.get("goal", "") or "").replace(" ", "")
     is_batch_marketplace_browser = (
@@ -137,15 +186,25 @@ def _force_browser_batch_plan(mission: Dict[str, object]) -> Dict[str, object]:
 
 
 def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：执行一轮 control center 决策循环，产出当前任务“下一步该怎么做”的判断结果。
+    - 输入：task_id、contract、state。
+    - 输出：包含 summary、challenge、browser_signals、next_decision 等信息的 mission_cycle 结果。
+    - 调用关系：runtime_service.process_task 每轮都会调这里；可以把它看成 runtime 在正式改 state 之前的“参谋部”。
+    """
     mission = _load_json(MISSIONS_ROOT / f"{task_id}.json")
     if not mission:
         return {"task_id": task_id, "status": "no_mission_package"}
     mission["approval"] = _load_live_approval(task_id, mission)
     mission = _ensure_cognitive_maps(mission)
     mission = _force_browser_batch_plan(mission)
+    # 先把 mission 和 state 压成一份短摘要，后面 AI 执行包、状态回复、医生回执都会复用这份摘要。
     summary = compress_mission(task_id, mission, state)
     current_stage = state.get("current_stage", "") or (state.get("stage_order", [""])[0] if state.get("stage_order") else "")
     context_packet = build_stage_context(task_id, current_stage, contract, state) if current_stage else {}
+    # challenge 是运行态问题分类器的结果：
+    # 它决定当前更像是业务推进、浏览器问题、审批阻塞还是需要更深的请求链调试。
     challenge = classify_challenge(task_id, state.get("blockers", []), state)
     if challenge.get("challenge_type") not in {"", "none"}:
         publish_event("challenge.detected", {"task_id": task_id, "mission": mission, "challenge": challenge})
@@ -153,6 +212,14 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
     mission["authorized_session"] = build_authorized_session_plan(task_id, mission.get("intent", {}), challenge)
     mission["human_checkpoint"] = build_human_checkpoint(task_id, challenge)
     mission["fetch_route"] = build_fetch_route(task_id, mission.get("intent", {}), mission.get("selected_plan", {}), mission.get("domain_profile", {}), challenge)
+    mission["crawler"] = build_crawler_plan(
+        task_id,
+        mission.get("intent", {}),
+        mission.get("selected_plan", {}),
+        mission.get("domain_profile", {}),
+        mission.get("fetch_route", {}),
+        challenge,
+    )
     mission["resource_scout"] = prepare_research_package(task_id, build_resource_scout_brief(mission.get("intent", {}), mission.get("selected_plan", {}), mission.get("domain_profile", {}), mission.get("fetch_route", {})), mission.get("intent", {}))
     browser_signals = collect_browser_task_signals(task_id)
     _write_json(MISSIONS_ROOT / f"{task_id}.json", mission)
@@ -167,6 +234,9 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
     forensic = reconstruct_trace(task_id, state)
     pending_approvals = mission.get("approval", {}).get("pending", [])
     necessity_proof = mission.get("arbitration", {}).get("necessity_proof", {})
+    # 下面这段分支就是 mission loop 最关键的输出：`next_decision`。
+    # 它并不直接改 state，而是先表达“控制中心建议接下来怎么做”，
+    # 然后 runtime_service 再依据这个建议去改变状态或触发执行。
     if state.get("status") == "blocked" and state.get("next_action") == "bind_session_link":
         next_decision = {
             "action": "bind_session_link",
@@ -283,6 +353,7 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
         "authorized_session": mission.get("authorized_session", {}),
         "human_checkpoint": mission.get("human_checkpoint", {}),
         "fetch_route": mission.get("fetch_route", {}),
+        "crawler": mission.get("crawler", {}),
         "browser_signals": browser_signals,
         "problem_solver": problem,
         "advisory": advisory,
@@ -292,6 +363,12 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     import argparse
 
     parser = argparse.ArgumentParser(description="Run one control-center mission cycle")

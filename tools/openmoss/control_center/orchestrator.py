@@ -1,8 +1,20 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/orchestrator.py`
+- 文件作用：负责把“用户的一句话目标”编排成 runtime 能理解和执行的任务合同。
+- 顶层函数：_utc_now_iso、_write_json、_derive_allowed_tools、_merge_inherited_intent、_requires_explicit_business_proof、_business_outcome_verifier、derive_business_verification_requirements、_derive_stage_contracts、build_control_center_package、main。
+- 顶层类：无顶层类。
+- 主流程定位：
+  1. 收到 task_id + goal 后，先做 intent / mission profile 识别。
+  2. 再组装 candidate plans、selected plan、approval、domain profile、拓扑图等控制中心产物。
+  3. 最后把这些结构压成 metadata、stage contracts 和 done definition，交给 manager 写成 contract.json。
+"""
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
@@ -14,6 +26,7 @@ from bdi_state import build_bdi_state
 from capability_registry import build_capability_registry
 from challenge_classifier import classify_challenge
 from authorized_session_manager import build_authorized_session_plan
+from crawler_layer import build_crawler_plan
 from domain_profile_store import build_domain_profile
 from event_bus import publish_event
 from external_tool_scorer import score_external_options
@@ -32,16 +45,50 @@ from workflow_planner import build_workflow_blueprint
 from mission_profiles import detect_root_mission_profile
 
 
+GOAL_SEQUENCE_TOKENS = (
+    "然后",
+    "接着",
+    "最后",
+    "逐个",
+    "每个",
+    "全部",
+    "全量",
+    "直到",
+    "持续",
+    "闭环",
+    "并且",
+    "以及",
+)
+
+
 def _utc_now_iso() -> str:
+    """
+    中文注解：
+    - 功能：实现 `_utc_now_iso` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return datetime.now(timezone.utc).isoformat()
 
 
 def _write_json(path: Path, payload) -> None:
+    """
+    中文注解：
+    - 功能：实现 `_write_json` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _derive_allowed_tools(blueprint: Dict[str, object]) -> List[str]:
+    """
+    中文注解：
+    - 功能：实现 `_derive_allowed_tools` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     tools = ["rg"]
     intent = blueprint.get("intent", {})
     if intent.get("needs_browser"):
@@ -49,11 +96,19 @@ def _derive_allowed_tools(blueprint: Dict[str, object]) -> List[str]:
     if intent.get("requires_external_information"):
         tools.extend(["web", "search", "crawl4ai"])
     if "web" in intent.get("task_types", []) or "data" in intent.get("task_types", []):
-        tools.append("crawl4ai")
+        tools.extend(["crawl4ai", "httpx", "curl_cffi", "selectolax", "scrapy", "crawlee"])
+    if intent.get("needs_browser") or str(blueprint.get("selected_plan", {}).get("plan_id", "")) == "browser_evidence":
+        tools.extend(["playwright", "playwright_stealth"])
     return sorted(dict.fromkeys(tools))
 
 
 def _merge_inherited_intent(intent: Dict[str, object], inherited_intent: Dict[str, object] | None) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_merge_inherited_intent` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if not inherited_intent:
         return intent
     merged = dict(intent)
@@ -91,7 +146,95 @@ def _merge_inherited_intent(intent: Dict[str, object], inherited_intent: Dict[st
     return merged
 
 
+def _derive_execute_deliverables(goal: str) -> List[Dict[str, object]]:
+    """
+    中文注解：
+    - 功能：从用户目标里提炼一组“执行阶段需要逐项交付的 deliverables”。
+    - 设计意图：把原来过粗的 execute 阶段再拆细一层，避免系统做完一步就误以为整段 execute 已经足够完成。
+    """
+    normalized = str(goal or "").replace("\n", " ")
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    if not normalized:
+        return []
+    raw_parts = re.split(r"[；;。.!?\n]|(?:以及)|(?:并且)|(?:然后)|(?:接着)|(?:最后)|(?:同时)|、", normalized)
+    candidates: List[str] = []
+    for part in raw_parts:
+        text = re.sub(r"^\s*(?:\d+[\.\)、:：]\s*)?", "", part).strip(" ，,、；;。.")
+        if len(text) < 4:
+            continue
+        if text in candidates:
+            continue
+        candidates.append(text)
+    deliverables: List[Dict[str, object]] = []
+    for idx, text in enumerate(candidates[:8], start=1):
+        deliverables.append(
+            {
+                "id": f"execute-{idx}",
+                "title": text,
+                "stage": "execute",
+                "required": True,
+                "completion_mode": "stepwise_progress",
+            }
+        )
+    return deliverables
+
+
+def _goal_requires_strict_continuation(goal: str, intent: Dict[str, object], mission_profile: Dict[str, object]) -> bool:
+    """
+    中文注解：
+    - 功能：判断某个 goal 是否属于“多步骤且不能宽松自动收口”的任务。
+    - 作用：命中后会强制 execute 阶段进入 milestone 驱动模式，不再只因为一次 wait 成功就自动当成整段 execute 完成。
+    """
+    normalized_goal = str(goal or "").lower()
+    task_types = {str(item).strip().lower() for item in intent.get("task_types", []) if str(item).strip()}
+    if mission_profile.get("matched"):
+        return True
+    if any(token in goal for token in GOAL_SEQUENCE_TOKENS):
+        return True
+    if re.search(r"(1[\.\)、:：]|2[\.\)、:：]|3[\.\)、:：])", goal):
+        return True
+    if len(_derive_execute_deliverables(goal)) >= 2:
+        return True
+    if task_types & {"data", "marketplace", "web", "code"} and any(token in normalized_goal for token in ["pipeline", "engine", "workflow", "daily", "report"]):
+        return True
+    return False
+
+
+def _derive_task_milestones(task_id: str, goal: str, intent: Dict[str, object], mission_profile: Dict[str, object]) -> List[Dict[str, object]]:
+    """
+    中文注解：
+    - 功能：生成任务级 milestones。
+    - 结构：默认包含阶段里程碑；如果是多步骤目标，还会额外生成 execute deliverables。
+    """
+    milestones: List[Dict[str, object]] = [
+        {"id": "understand", "title": "完成理解与盘点", "stage": "understand", "required": True, "completion_mode": "stage_completion"},
+        {"id": "plan", "title": "完成计划与方案选择", "stage": "plan", "required": True, "completion_mode": "stage_completion"},
+        {"id": "verify", "title": "完成验证", "stage": "verify", "required": True, "completion_mode": "stage_completion"},
+        {"id": "learn", "title": "完成学习收口", "stage": "learn", "required": True, "completion_mode": "stage_completion"},
+    ]
+    deliverables = _derive_execute_deliverables(goal) if _goal_requires_strict_continuation(goal, intent, mission_profile) else []
+    if deliverables:
+        milestones.extend(deliverables)
+    else:
+        milestones.append(
+            {
+                "id": "execute",
+                "title": "完成执行主阶段",
+                "stage": "execute",
+                "required": True,
+                "completion_mode": "stage_completion",
+            }
+        )
+    return milestones
+
+
 def _requires_explicit_business_proof(intent: Dict[str, object], selected_plan: Dict[str, object]) -> bool:
+    """
+    中文注解：
+    - 功能：实现 `_requires_explicit_business_proof` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     task_types = {str(item).strip().lower() for item in intent.get("task_types", []) if str(item).strip()}
     goal = str(intent.get("goal", "")).lower()
     return bool(
@@ -106,6 +249,12 @@ def _requires_explicit_business_proof(intent: Dict[str, object], selected_plan: 
 
 
 def _business_outcome_verifier(task_id: str) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_business_outcome_verifier` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return {
         "type": "all",
         "checks": [
@@ -117,6 +266,12 @@ def _business_outcome_verifier(task_id: str) -> Dict[str, object]:
 
 
 def derive_business_verification_requirements(intent: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `derive_business_verification_requirements` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     goal = str(intent.get("goal", "") or "")
     goal_lower = goal.lower()
     requirements: Dict[str, object] = {}
@@ -147,10 +302,22 @@ def derive_business_verification_requirements(intent: Dict[str, object]) -> Dict
 
 
 def _derive_stage_contracts(task_id: str, blueprint: Dict[str, object]) -> List[Dict[str, object]]:
+    """
+    中文注解：
+    - 功能：把高层 blueprint 落成 runtime 真正使用的阶段合同列表。
+    - 关键职责：
+      - 给每个阶段定义 goal / expected_output / acceptance_check
+      - 决定 execute / verify 阶段是否需要强 verifier
+      - 针对 mission profile（例如 neosgo lead engine）覆盖默认阶段模板
+    - 调用关系：build_control_center_package 会在最后调用这里；manager 创建 task 时写入的 `contract.stages` 就来自这里。
+    """
     intent = blueprint["intent"]
     selected_plan = blueprint["selected_plan"]
     approval = blueprint["approval"]
+    crawler = blueprint.get("crawler", {}) or {}
+    crawler_enabled = bool(crawler.get("enabled"))
     mission_profile = blueprint.get("mission_profile", {}) or {}
+    strict_continuation_required = bool(blueprint.get("strict_continuation_required"))
     pending_approvals = approval.get("pending", [])
     require_business_proof = _requires_explicit_business_proof(intent, selected_plan)
     execute_policy = {
@@ -158,6 +325,9 @@ def _derive_stage_contracts(task_id: str, blueprint: Dict[str, object]) -> List[
         "approval_pending_ids": pending_approvals,
         "auto_complete_on_wait_ok": True,
     }
+    if strict_continuation_required:
+        execute_policy["auto_complete_on_wait_ok"] = False
+        execute_policy["completion_mode"] = "milestone_driven"
     verify_verifier = {
         "type": "all",
         "checks": [
@@ -169,8 +339,24 @@ def _derive_stage_contracts(task_id: str, blueprint: Dict[str, object]) -> List[
         execute_policy["require_verifier_before_complete"] = True
         execute_verifier = _business_outcome_verifier(task_id)
         verify_verifier = _business_outcome_verifier(task_id)
+    if crawler_enabled:
+        crawler_checks = [
+            {"type": "crawler_report_complete", "task_id": task_id},
+            *_business_outcome_verifier(task_id).get("checks", []),
+        ]
+        existing_checks = list(verify_verifier.get("checks", []))
+        verify_verifier = {"type": "all", "checks": existing_checks + crawler_checks}
+    # 命中 mission profile 时，优先使用为该 root mission 量身定制的阶段合同，
+    # 而不是走通用五阶段模板。这样 runtime / doctor / verifier 在后面才能读到更贴近业务的目标。
     if mission_profile.get("profile_id") == "neosgo_lead_engine":
         execute_policy["auto_complete_on_wait_ok"] = False
+        verify_checks = [
+            {"type": "file_exists", "path": str(Path("/Users/mac_claw/.openclaw/workspace/data/neosgo_leads.duckdb"))},
+            {"type": "task_state_metadata_nonempty", "task_id": task_id, "field": "contract_metadata.control_center.mission_profile_id"},
+            {"type": "task_milestones_complete", "task_id": task_id},
+            {"type": "task_liveness_ok", "task_id": task_id},
+            {"type": "task_conformance_ok", "task_id": task_id},
+        ]
         return [
             {
                 "name": "understand",
@@ -210,10 +396,7 @@ def _derive_stage_contracts(task_id: str, blueprint: Dict[str, object]) -> List[
                 "acceptance_check": "verification records the truthful task status and either confirms progress or escalates a concrete blocker",
                 "verifier": {
                     "type": "all",
-                    "checks": [
-                        {"type": "file_exists", "path": str(Path("/Users/mac_claw/.openclaw/workspace/data/neosgo_leads.duckdb"))},
-                        {"type": "task_state_metadata_nonempty", "task_id": task_id, "field": "contract_metadata.control_center.mission_profile_id"},
-                    ],
+                    "checks": verify_checks,
                 },
                 "execution_policy": {"auto_complete_on_wait_ok": False},
             },
@@ -225,6 +408,16 @@ def _derive_stage_contracts(task_id: str, blueprint: Dict[str, object]) -> List[
                 "execution_policy": {"auto_complete_on_wait_ok": True},
             },
         ]
+    verify_checks = list(verify_verifier.get("checks", []))
+    if strict_continuation_required:
+        verify_checks.extend(
+            [
+                {"type": "task_milestones_complete", "task_id": task_id},
+                {"type": "task_liveness_ok", "task_id": task_id},
+                {"type": "task_conformance_ok", "task_id": task_id},
+            ]
+        )
+        verify_verifier = {"type": "all", "checks": verify_checks}
     return [
         {
             "name": "understand",
@@ -243,8 +436,8 @@ def _derive_stage_contracts(task_id: str, blueprint: Dict[str, object]) -> List[
         {
             "name": "execute",
             "goal": f"Execute the selected plan safely: {selected_plan.get('summary', '')}",
-            "expected_output": "real progress toward the user goal with evidence",
-            "acceptance_check": "execution evidence recorded without violating security boundaries and business completion proof captured when required",
+            "expected_output": "real progress toward the user goal with evidence and crawler artifacts when external data is required",
+            "acceptance_check": "execution evidence recorded without violating security boundaries; crawler tasks must produce structured reports and explicit business proof before they can pass verification",
             "verifier": execute_verifier,
             "execution_policy": execute_policy,
         },
@@ -267,11 +460,26 @@ def _derive_stage_contracts(task_id: str, blueprint: Dict[str, object]) -> List[
 
 
 def build_control_center_package(task_id: str, goal: str, *, source: str = "manual", inherited_intent: Dict[str, object] | None = None) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：构建一个完整的 control center package，供后续创建 TaskContract 使用。
+    - 输出内容包括：
+      - intent / inherited_intent
+      - candidate_plans / selected_plan
+      - approval / topology / htn / fractal / stpa
+      - business_verification_requirements
+      - metadata 和最终 stage contracts
+    - 调用关系：brain_router._build_task 和 task_ingress 都会走到这里；这里是“自然语言目标 -> 结构化 contract 原材料”的核心汇编点。
+    """
     raw_intent = analyze_intent(goal, source=source)
     intent = _merge_inherited_intent(raw_intent, inherited_intent)
     mission_profile = detect_root_mission_profile(goal, task_id=task_id, intent=intent)
+    strict_continuation_required = _goal_requires_strict_continuation(goal, intent, mission_profile)
+    task_milestones = _derive_task_milestones(task_id, goal, intent, mission_profile)
     if mission_profile.get("matched"):
         intent["done_definition"] = str(mission_profile.get("done_definition", intent.get("done_definition", "")))
+    # 下面这一串 builder / judge / scorer 就是 control center 的“大脑装配线”：
+    # 它们分别负责能力盘点、候选方案生成、方案评分、审批、风险审计和研究路径规划。
     capabilities = build_capability_registry()
     blueprint = build_workflow_blueprint(intent, capabilities)
     judgment = judge_proposals(intent, capabilities, blueprint["candidate_plans"])
@@ -289,6 +497,7 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
     authorized_session = build_authorized_session_plan(task_id, intent, challenge)
     human_checkpoint = build_human_checkpoint(task_id, challenge)
     fetch_route = build_fetch_route(task_id, intent, selected_plan, domain_profile, challenge)
+    crawler = build_crawler_plan(task_id, intent, selected_plan, domain_profile, fetch_route, challenge)
     business_verification_requirements = derive_business_verification_requirements(intent)
     topology = build_topology(intent, selected_plan)
     fractal = build_fractal_loops(intent, selected_plan, topology)
@@ -298,6 +507,8 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
     scout = build_resource_scout_brief(intent, selected_plan, domain_profile, fetch_route)
     arbitration = arbitrate_solution_path(intent, selected_plan, approval, capabilities)
     initial_bdi = build_bdi_state(intent, selected_plan, approval, {"current_stage": "understand", "status": "planning", "blockers": []}, initial_htn_focus, arbitration)
+    # `mission` 是控制中心的完整中间态快照：
+    # 一方面会单独落到 missions/<task_id>.json，另一方面其中最关键的部分会被压回 contract metadata。
     mission = {
         "task_id": task_id,
         "created_at": _utc_now_iso(),
@@ -319,11 +530,14 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
         "authorized_session": authorized_session,
         "human_checkpoint": human_checkpoint,
         "fetch_route": fetch_route,
+        "crawler": crawler,
         "business_verification_requirements": business_verification_requirements,
         "resource_scout": scout,
         "arbitration": arbitration,
         "adoption_flow": adoption_flow,
         "mission_profile": mission_profile,
+        "strict_continuation_required": strict_continuation_required,
+        "task_milestones": task_milestones,
     }
     should_clone_capability = selected_plan.get("plan_id") == "in_house_capability_rebuild"
     if should_clone_capability:
@@ -333,6 +547,8 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
     publish_event("mission.built", {"task_id": task_id, "mission": mission})
     if reselection.get("switched"):
         publish_event("plan.reselected", {"task_id": task_id, "mission": mission, "reselection": reselection})
+    # metadata.control_center 是 runtime 后续所有阶段最常用的“结构化任务上下文”；
+    # context_builder、mission_loop、doctor、snapshot 都会从这里继续取数。
     metadata = {
         "control_center": {
             "mission_path": str(MISSIONS_ROOT / f"{task_id}.json"),
@@ -355,7 +571,10 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
             "authorized_session": authorized_session,
             "human_checkpoint": human_checkpoint,
             "fetch_route": fetch_route,
+            "crawler": crawler,
             "business_verification_requirements": business_verification_requirements,
+            "strict_continuation_required": strict_continuation_required,
+            "task_milestones": task_milestones,
             "resource_scout": scout,
             "arbitration": arbitration,
             "adoption_flow": adoption_flow,
@@ -376,13 +595,19 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
         "done_definition": intent["done_definition"],
         "hard_constraints": intent["hard_constraints"],
         "allowed_tools": _derive_allowed_tools({**blueprint, "intent": intent, "selected_plan": selected_plan}),
-        "stages": _derive_stage_contracts(task_id, {**blueprint, "approval": approval, "intent": intent, "selected_plan": selected_plan, "mission_profile": mission_profile}),
+        "stages": _derive_stage_contracts(task_id, {**blueprint, "approval": approval, "intent": intent, "selected_plan": selected_plan, "mission_profile": mission_profile, "strict_continuation_required": strict_continuation_required, "crawler": crawler}),
         "metadata": metadata,
         "mission_path": str(MISSIONS_ROOT / f"{task_id}.json"),
     }
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     import argparse
 
     parser = argparse.ArgumentParser(description="Build a single control-center task package from a goal")
