@@ -345,12 +345,19 @@ def verify_crawler_report_complete(spec: Dict[str, Any]) -> Dict[str, Any]:
     state = json.loads(state_path.read_text(encoding="utf-8"))
     crawler = (contract.get("metadata", {}) or {}).get("control_center", {}).get("crawler", {}) or {}
     execution = (state.get("metadata", {}) or {}).get("crawler_execution", {}) or {}
-    report_path = Path(str(execution.get("report_json_path", ""))).expanduser()
-    if not report_path.exists():
+    report_raw = str(execution.get("report_json_path", "")).strip()
+    if not report_raw:
+        return {"ok": False, "status": "crawler_report_missing", "task_id": task_id, "path": ""}
+    report_path = Path(report_raw).expanduser()
+    if not report_path.exists() or not report_path.is_file():
         return {"ok": False, "status": "crawler_report_missing", "task_id": task_id, "path": str(report_path)}
     payload = json.loads(report_path.read_text(encoding="utf-8"))
     required_sites = [str(item).strip() for item in crawler.get("requested_sites", []) if str(item).strip()]
     required_tools = [str(item).strip() for item in crawler.get("requested_tools", []) if str(item).strip()]
+    if not required_sites:
+        required_sites = [str(item).strip() for item in payload.get("required_sites", []) if str(item).strip()]
+    if not required_tools:
+        required_tools = [str(item).strip() for item in payload.get("required_tools", []) if str(item).strip()]
     site_rows = payload.get("sites", []) or []
     seen_sites = {str(item.get("site", "")).strip() for item in site_rows if str(item.get("site", "")).strip()}
     missing_sites = [site for site in required_sites if site not in seen_sites]
@@ -397,12 +404,23 @@ def verify_crawler_retro_complete(spec: Dict[str, Any]) -> Dict[str, Any]:
         return {"ok": False, "status": "task_state_missing", "task_id": task_id}
     state = json.loads(state_path.read_text(encoding="utf-8"))
     execution = (state.get("metadata", {}) or {}).get("crawler_execution", {}) or {}
-    retro_path = Path(str(execution.get("retro_json_path", ""))).expanduser()
-    evolution_path = Path(str(execution.get("evolution_json_path", ""))).expanduser()
-    learning_path = Path(str(execution.get("learning_store_path", ""))).expanduser()
-    missing = [str(path) for path in [retro_path, evolution_path, learning_path] if not path.exists()]
+    retro_raw = str(execution.get("retro_json_path", "")).strip()
+    evolution_raw = str(execution.get("evolution_json_path", "")).strip()
+    learning_raw = str(execution.get("learning_store_path", "")).strip()
+    missing = []
+    resolved = []
+    for raw in [retro_raw, evolution_raw, learning_raw]:
+        if not raw:
+            missing.append(raw)
+            continue
+        path = Path(raw).expanduser()
+        if not path.exists() or not path.is_file():
+            missing.append(str(path))
+            continue
+        resolved.append(path)
     if missing:
         return {"ok": False, "status": "crawler_retro_missing", "task_id": task_id, "missing_paths": missing}
+    retro_path, evolution_path, learning_path = resolved
     retro = json.loads(retro_path.read_text(encoding="utf-8"))
     learning = json.loads(learning_path.read_text(encoding="utf-8"))
     best_tool_by_site = retro.get("best_tool_by_site", {}) or {}

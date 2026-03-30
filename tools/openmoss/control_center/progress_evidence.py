@@ -1,20 +1,95 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/progress_evidence.py`
+- 文件作用：负责判断任务是否存在真实进展证据。
+- 顶层函数：_read_json、_seconds_since、_progress_age_seconds、_recent_events、build_progress_evidence。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
+from goal_sanitizer import sanitize_goal_text
+from intent_analyzer import analyze_intent
 from paths import OPENMOSS_ROOT
 from run_liveness_verifier import build_run_liveness
 
 
 AUTONOMY_TASKS_ROOT = OPENMOSS_ROOT / "runtime/autonomy/tasks"
+LINKS_ROOT = OPENMOSS_ROOT / "runtime/autonomy/links"
+SESSIONS_ROOT = Path("/Users/mac_claw/.openclaw/agents/main/sessions")
+SESSIONS_INDEX_PATH = SESSIONS_ROOT / "sessions.json"
+STATUS_QUERY_PATTERNS = (
+    "进展",
+    "进度",
+    "状态",
+    "结果",
+    "做得怎么样",
+    "做的怎么样",
+    "怎么样了",
+    "如何了",
+    "搞定没",
+    "搞定了吗",
+    "完成了吗",
+    "完成没有",
+    "有没有解决",
+    "解决了吗",
+    "现在怎么样",
+    "现在如何",
+    "现在呢",
+    "跑通了吗",
+    "闭环",
+    "情况",
+    "progress",
+    "status",
+    "result",
+    "solved",
+    "working",
+    "complete",
+    "completed",
+)
+ACTION_PATTERNS = (
+    "请",
+    "帮我",
+    "需要",
+    "生成",
+    "制作",
+    "上传",
+    "分析",
+    "抓取",
+    "研究",
+    "登录",
+    "打开",
+    "继续",
+    "自动",
+    "修复",
+    "搭建",
+    "install",
+    "build",
+    "generate",
+    "upload",
+    "analyze",
+    "scrape",
+    "research",
+    "continue",
+    "fix",
+)
 
 
 def _read_json(path: Path, default: Any) -> Any:
+    """
+    中文注解：
+    - 功能：实现 `_read_json` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if not path.exists():
         return default
     try:
@@ -24,6 +99,12 @@ def _read_json(path: Path, default: Any) -> Any:
 
 
 def _seconds_since(iso_text: str) -> float:
+    """
+    中文注解：
+    - 功能：实现 `_seconds_since` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if not iso_text:
         return 10**9
     try:
@@ -34,6 +115,12 @@ def _seconds_since(iso_text: str) -> float:
 
 
 def _progress_age_seconds(*, status: str, next_action: str, last_progress_at: str, last_update_at: str) -> float:
+    """
+    中文注解：
+    - 功能：实现 `_progress_age_seconds` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     progress_age = _seconds_since(last_progress_at)
     update_age = _seconds_since(last_update_at)
     # For poll loops, last_update_at mostly reflects bookkeeping churn rather than
@@ -47,6 +134,12 @@ def _progress_age_seconds(*, status: str, next_action: str, last_progress_at: st
 
 
 def _recent_events(task_id: str, limit: int = 12) -> List[Dict[str, Any]]:
+    """
+    中文注解：
+    - 功能：实现 `_recent_events` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     events_path = AUTONOMY_TASKS_ROOT / task_id / "events.jsonl"
     if not events_path.exists():
         return []
@@ -59,7 +152,347 @@ def _recent_events(task_id: str, limit: int = 12) -> List[Dict[str, Any]]:
     return rows
 
 
+def _normalize_set(values: Any) -> set[str]:
+    """
+    中文注解：
+    - 功能：把意图分析里的 keywords/task_types/domains 统一规整成小写集合，方便后续做“是否明显变题”的判断。
+    """
+    return {str(item).strip().lower() for item in (values or []) if str(item).strip()}
+
+
+def _normalize_goal(text: str) -> str:
+    """
+    中文注解：
+    - 功能：把 goal 压平做轻量文本比对；这里只用于辅助判断，不直接替代真正的意图分析。
+    """
+    return re.sub(r"\s+", "", str(text or "").strip().lower())
+
+
+def _goal_word_tokens(text: str) -> set[str]:
+    """
+    中文注解：
+    - 功能：从原始 goal 中提取更“语义性”的英文/平台词，用来弥补中文长句在轻量意图分析里容易丢平台特征的问题。
+    """
+    return {token.lower() for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{1,}", str(text or ""))}
+
+
+def _looks_like_status_query(text: str) -> bool:
+    """
+    中文注解：
+    - 功能：识别“这更像一句状态追问”而不是新任务目标，避免医生把普通追问误判成目标漂移。
+    """
+    lowered = _normalize_goal(text)
+    if not lowered or len(lowered) > 80:
+        return False
+    return any(token in lowered for token in STATUS_QUERY_PATTERNS)
+
+
+def _looks_actionable(text: str, intent: Dict[str, object]) -> bool:
+    """
+    中文注解：
+    - 功能：判断一段最新用户文本是不是足以构成新的动作型目标。
+    - 设计意图：只有当“确实像一个可执行新目标”时，才把它和当前 task 做 conformance 检查。
+    """
+    normalized = str(text or "").strip()
+    lowered = normalized.lower()
+    if not normalized:
+        return False
+    if len(normalized) >= 24:
+        return True
+    if any(token in lowered for token in ACTION_PATTERNS):
+        return True
+    if any(intent.get(key) for key in ("requires_external_information", "needs_browser", "may_download_artifacts", "may_execute_external_code")):
+        return True
+    return intent.get("task_types", ["general"]) != ["general"]
+
+
+def _topic_diverged(current_intent: Dict[str, object], new_intent: Dict[str, object], current_goal: str, new_goal: str) -> bool:
+    """
+    中文注解：
+    - 功能：判断“最新用户目标”和“当前 task 目标”是否已经明显分叉。
+    - 设计意图：这里只复用了 route guardrail 的同类思路，让医生判断和路由判断尽量一致，而不是各说各话。
+    """
+    current_types = _normalize_set(current_intent.get("task_types", []))
+    new_types = _normalize_set(new_intent.get("task_types", []))
+    current_domains = _normalize_set(current_intent.get("domains", [])) | _normalize_set(current_intent.get("likely_platforms", []))
+    new_domains = _normalize_set(new_intent.get("domains", [])) | _normalize_set(new_intent.get("likely_platforms", []))
+    current_keywords = _normalize_set(current_intent.get("keywords", []))
+    new_keywords = _normalize_set(new_intent.get("keywords", []))
+
+    type_disjoint = bool(current_types and new_types and current_types.isdisjoint(new_types))
+    domain_disjoint = bool(current_domains and new_domains and current_domains.isdisjoint(new_domains))
+    keyword_disjoint = bool(current_keywords and new_keywords and current_keywords.isdisjoint(new_keywords))
+    browser_shift = bool(current_intent.get("needs_browser")) != bool(new_intent.get("needs_browser"))
+    external_shift = bool(current_intent.get("requires_external_information")) != bool(new_intent.get("requires_external_information"))
+    risk_shift = str(current_intent.get("risk_level", "")).strip() != str(new_intent.get("risk_level", "")).strip()
+
+    current_norm = _normalize_goal(current_goal)
+    new_norm = _normalize_goal(new_goal)
+    textual_overlap = bool(current_norm and new_norm and (current_norm in new_norm or new_norm in current_norm))
+    current_goal_tokens = _goal_word_tokens(current_goal)
+    new_goal_tokens = _goal_word_tokens(new_goal)
+    goal_token_disjoint = bool(new_goal_tokens and current_goal_tokens.isdisjoint(new_goal_tokens))
+
+    if textual_overlap:
+        return False
+    if goal_token_disjoint:
+        return True
+    if new_goal_tokens and not current_goal_tokens:
+        return True
+    if type_disjoint and (domain_disjoint or browser_shift or external_shift):
+        return True
+    if type_disjoint and keyword_disjoint and risk_shift:
+        return True
+    if browser_shift and domain_disjoint and keyword_disjoint:
+        return True
+    return False
+
+
+def _extract_text_from_content(content: Any) -> str:
+    """
+    中文注解：
+    - 功能：从 transcript 里的 OpenClaw content 结构提取用户可读文本。
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: List[str] = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "text":
+                parts.append(str(item.get("text", "")))
+        return "\n".join(part for part in parts if part)
+    return ""
+
+
+def _extract_reply_context_goal(text: str) -> Dict[str, str]:
+    """
+    中文注解：
+    - 功能：从 OpenClaw 包装消息里的 `Replied message` 上下文提取被引用的原始目标文本。
+    - 设计意图：有些“为什么停了/怎么还没出结果”类追问，本体只是状态追问；
+      真正的业务目标却只存在于 reply context 里。这里把那段目标重新抽出来，
+      让医生对比的是“真正被追问的目标”，而不是追问句本身。
+    """
+    raw = str(text or "")
+    match = re.search(
+        r"Replied message \(untrusted, for context\):\s*```json\s*(\{[\s\S]*?\})\s*```",
+        raw,
+        flags=re.DOTALL,
+    )
+    if not match:
+        return {}
+    try:
+        payload = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return {}
+    body = sanitize_goal_text(str(payload.get("body", "") or ""))
+    if not body:
+        return {}
+    return {
+        "text": body,
+        "sender_label": str(payload.get("sender_label", "")).strip(),
+    }
+
+
+def _session_file_for_key(session_key: str) -> Path | None:
+    """
+    中文注解：
+    - 功能：根据 session_key 找到 transcript 文件，供医生读取“这条会话最近到底来了什么用户消息”。
+    """
+    registry = _read_json(SESSIONS_INDEX_PATH, {})
+    session_info = registry.get(session_key, {}) if isinstance(registry, dict) else {}
+    session_file = str(session_info.get("sessionFile") or "").strip()
+    if not session_file:
+        session_id = str(session_info.get("sessionId") or "").strip()
+        if session_id:
+            session_file = str(SESSIONS_ROOT / f"{session_id}.jsonl")
+    if not session_file:
+        return None
+    path = Path(session_file)
+    return path if path.exists() else None
+
+
+def _is_internal_runtime_request(text: str) -> bool:
+    """
+    中文注解：
+    - 功能：过滤掉 runtime 自己写回 transcript 的内部执行请求，避免把系统内部 prompt 当成用户真实目标。
+    """
+    normalized = str(text or "").strip()
+    return (
+        "[Autonomy runtime execution request]" in normalized
+        and "task_id:" in normalized
+        and "stage:" in normalized
+        and "user_goal:" in normalized
+    )
+
+
+def _is_internal_heartbeat_prompt(text: str) -> bool:
+    """
+    中文注解：
+    - 功能：过滤掉 brain/selfheal 注入的 heartbeat 提示，避免它们被医生误当成最新用户目标。
+    """
+    normalized = str(text or "").strip()
+    lowered = normalized.lower()
+    return (
+        "read heartbeat.md if it exists" in lowered
+        and "reply heartbeat_ok" in lowered
+    ) or ("current time:" in lowered and "heartbeat.md" in lowered)
+
+
+def _latest_external_user_message(session_key: str, *, limit: int = 80) -> Dict[str, str]:
+    """
+    中文注解：
+    - 功能：读取某条会话最新的外部用户消息，并做 goal 清洗。
+    """
+    session_file = _session_file_for_key(session_key)
+    if not session_file:
+        return {}
+    try:
+        lines = session_file.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]
+    except OSError:
+        return {}
+    for raw in reversed(lines):
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") != "message":
+            continue
+        message = obj.get("message") or {}
+        if message.get("role") != "user":
+            continue
+        text = _extract_text_from_content(message.get("content"))
+        cleaned = sanitize_goal_text(text)
+        if cleaned and not _is_internal_runtime_request(cleaned) and not _is_internal_heartbeat_prompt(cleaned):
+            reply_context = _extract_reply_context_goal(text)
+            result = {
+                "message_id": str(obj.get("id", "")).strip(),
+                "timestamp": str(obj.get("timestamp", "")).strip(),
+                "text": cleaned,
+            }
+            if reply_context:
+                result["reply_context_goal"] = str(reply_context.get("text", "")).strip()
+                result["reply_context_sender_label"] = str(reply_context.get("sender_label", "")).strip()
+            return result
+    return {}
+
+
+def _conversation_links_for_task(task_id: str) -> List[Dict[str, Any]]:
+    """
+    中文注解：
+    - 功能：找到当前 task 绑定过的会话 link。
+    - 设计意图：医生需要知道“哪条会话把这个 task 当成当前任务”，才能把最新用户目标和当前执行对象做一致性比对。
+    """
+    rows: List[Dict[str, Any]] = []
+    contract = _read_json(AUTONOMY_TASKS_ROOT / task_id / "contract.json", {})
+    metadata = contract.get("metadata", {}) or {}
+    related_ids = {
+        task_id,
+        str(metadata.get("lineage_root_task_id", "")).strip(),
+        str(metadata.get("predecessor_task_id", "")).strip(),
+    }
+    related_ids = {item for item in related_ids if item}
+    if not LINKS_ROOT.exists():
+        return rows
+    for path in sorted(LINKS_ROOT.glob("*.json")):
+        payload = _read_json(path, {})
+        if not payload:
+            continue
+        payload_ids = {
+            str(payload.get("task_id", "")).strip(),
+            str(payload.get("lineage_root_task_id", "")).strip(),
+            str(payload.get("predecessor_task_id", "")).strip(),
+        }
+        payload_ids = {item for item in payload_ids if item}
+        if not (related_ids & payload_ids):
+            continue
+        rows.append(dict(payload))
+    return rows
+
+
+def _goal_conformance_signal(task_id: str, contract: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：检查“最新用户目标”是否仍然和当前 task 对得上。
+    - 判定来源：
+      - link.last_goal / last_message_id
+      - 绑定 session 的最新外部用户消息
+      - 当前 contract.user_goal
+    """
+    contract_goal = sanitize_goal_text(str(contract.get("user_goal", "") or ""))
+    if not contract_goal:
+        return {"ok": True, "reason": "contract_goal_missing"}
+    current_intent = analyze_intent(contract_goal, source="progress_evidence:contract_goal")
+    links = _conversation_links_for_task(task_id)
+    best_mismatch: Dict[str, Any] = {}
+    for link in links:
+        session_key = str(link.get("session_key", "")).strip()
+        latest_from_session = _latest_external_user_message(session_key) if session_key else {}
+        candidates: List[Dict[str, Any]] = []
+        last_goal = sanitize_goal_text(str(link.get("last_goal", "") or ""))
+        if last_goal:
+            candidates.append(
+                {
+                    "source": "link_last_goal",
+                    "text": last_goal,
+                    "message_id": str(link.get("last_message_id", "")).strip(),
+                    "timestamp": str(link.get("updated_at", "")).strip(),
+                }
+            )
+        if latest_from_session:
+            reply_context_goal = sanitize_goal_text(str(latest_from_session.get("reply_context_goal", "") or ""))
+            if reply_context_goal:
+                candidates.append(
+                    {
+                        "source": "session_reply_context",
+                        "text": reply_context_goal,
+                        "message_id": str(latest_from_session.get("message_id", "")).strip(),
+                        "timestamp": str(latest_from_session.get("timestamp", "")).strip(),
+                    }
+                )
+            candidates.append(
+                {
+                    "source": "session_latest_user",
+                    "text": sanitize_goal_text(str(latest_from_session.get("text", "") or "")),
+                    "message_id": str(latest_from_session.get("message_id", "")).strip(),
+                    "timestamp": str(latest_from_session.get("timestamp", "")).strip(),
+                }
+            )
+        for candidate in candidates:
+            text = str(candidate.get("text", "")).strip()
+            if not text:
+                continue
+            intent = analyze_intent(text, source=f"progress_evidence:{candidate.get('source', 'candidate')}")
+            if not _looks_actionable(text, intent):
+                continue
+            if not _topic_diverged(current_intent, intent, contract_goal, text):
+                continue
+            mismatch = {
+                "ok": False,
+                "reason": "latest_user_goal_mismatch_with_bound_task",
+                "task_goal": contract_goal,
+                "latest_user_goal": text,
+                "latest_user_message_id": str(candidate.get("message_id", "")).strip(),
+                "latest_user_at": str(candidate.get("timestamp", "")).strip(),
+                "provider": str(link.get("provider", "")).strip(),
+                "conversation_id": str(link.get("conversation_id", "")).strip(),
+                "conversation_type": str(link.get("conversation_type", "")).strip() or "direct",
+                "session_key": session_key,
+                "source": str(candidate.get("source", "")).strip(),
+            }
+            if not best_mismatch or mismatch.get("latest_user_at", "") >= best_mismatch.get("latest_user_at", ""):
+                best_mismatch = mismatch
+    return best_mismatch or {"ok": True, "reason": "aligned_with_latest_user_goal"}
+
+
 def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：实现 `build_progress_evidence` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     state = _read_json(AUTONOMY_TASKS_ROOT / task_id / "state.json", {})
     contract = _read_json(AUTONOMY_TASKS_ROOT / task_id / "contract.json", {})
     status = str(state.get("status", "unknown"))
@@ -77,9 +510,11 @@ def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> 
         last_update_at=last_update_at,
     )
     business_outcome = metadata.get("business_outcome", {}) or {}
+    milestone_stats = metadata.get("milestone_stats", {}) or {}
     events = _recent_events(task_id)
     event_types = [str(item.get("type", "")) for item in events if str(item.get("type", "")).strip()]
     run_liveness = build_run_liveness(task_id)
+    goal_conformance = _goal_conformance_signal(task_id, contract)
 
     evidence = {
         "task_id": task_id,
@@ -94,7 +529,9 @@ def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> 
         "recent_event_types": event_types,
         "business_goal_satisfied": business_outcome.get("goal_satisfied") is True,
         "user_visible_result_confirmed": business_outcome.get("user_visible_result_confirmed") is True,
+        "milestone_stats": milestone_stats,
         "run_liveness": run_liveness,
+        "goal_conformance": goal_conformance,
         "progress_state": "healthy",
         "needs_intervention": False,
         "reason": "healthy",
@@ -103,6 +540,12 @@ def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> 
     if status in {"completed", "failed"}:
         evidence["progress_state"] = "terminal"
         evidence["reason"] = status
+        return evidence
+
+    if goal_conformance.get("ok") is False:
+        evidence["progress_state"] = "goal_execution_mismatch"
+        evidence["needs_intervention"] = True
+        evidence["reason"] = str(goal_conformance.get("reason", "latest_user_goal_mismatch_with_bound_task"))
         return evidence
 
     if status == "waiting_external" and not has_active_execution:

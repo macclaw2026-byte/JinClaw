@@ -582,13 +582,13 @@ def _run_local_crawler_stage(task_id: str, stage_name: str) -> Dict | None:
     """
     中文注解：
     - 功能：对特定 crawler 任务直接在本地执行，而不是仅仅把请求发给外部 agent。
-    - 当前覆盖：多站点多工具矩阵测试型抓取任务。
+    - 当前覆盖：多站点矩阵测试和单站点自适应抓取验证；统一产出 crawler 报告、retro 与学习工件。
     """
     contract = load_contract(task_id)
     crawler = contract.metadata.get("control_center", {}).get("crawler", {}) or {}
     if not bool(crawler.get("enabled")):
         return None
-    if str(crawler.get("execution_mode", "")).strip() != "site_tool_matrix_probe":
+    if str(crawler.get("execution_mode", "")).strip() not in {"site_tool_matrix_probe", "adaptive_fetch", "adaptive_research_crawl"}:
         return None
 
     if stage_name == "execute":
