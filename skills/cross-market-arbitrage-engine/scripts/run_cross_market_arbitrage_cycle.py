@@ -64,7 +64,7 @@ SELL_PLATFORM_SEARCH = {
 
 SOURCE_PLATFORM_SEARCH = {
     "1688": lambda q: f"https://s.1688.com/selloffer/offer_search.htm?keywords={quote_plus(q)}",
-    "yiwugo": lambda q: f"https://en.yiwugo.com/search/s.htm?q={quote_plus(q)}",
+    "yiwugo": lambda q: f"https://en.yiwugo.com/search/s.html?queryKey={quote_plus(q)}",
     "made_in_china": lambda q: (
         "https://www.made-in-china.com/productdirectory.do?"
         f"subaction=hunt&style=b&mode=and&code=0&comProvince=nolimit&order=0&isOpenCorrection=1&org=top&keyword=&file=&searchType=0&word={quote_plus(q)}"
@@ -549,6 +549,32 @@ def _best_price_cny(text: str, platform: str) -> float | None:
     return round(inferred, 2)
 
 
+def _extract_platform_price_cny(text: str, platform: str) -> float | None:
+    if platform == "yiwugo":
+        prices: list[float] = []
+        for raw in re.findall(r'sellprice="(\d+(?:\.\d+)?)"', text, flags=re.I):
+            try:
+                value = float(raw)
+            except Exception:
+                continue
+            if value > 0:
+                prices.append(value)
+        if prices:
+            return round(min(prices), 2)
+    if platform == "made_in_china":
+        usd_hits: list[float] = []
+        for raw in re.findall(r"US\$\s*(\d+(?:\.\d+)?)", text, flags=re.I):
+            try:
+                value = float(raw)
+            except Exception:
+                continue
+            if value > 0:
+                usd_hits.append(value)
+        if usd_hits:
+            return round(min(usd_hits) * USD_TO_CNY, 2)
+    return _best_price_cny(text, platform)
+
+
 def _extract_rating_value(text: str) -> float | None:
     for pattern in RATING_PATTERNS:
         found = re.search(pattern, text, flags=re.I)
@@ -636,17 +662,38 @@ def _price_stability_from_history(history: list[float]) -> float:
     return max(0.0, min(100.0, 100.0 - cv * 200.0))
 
 
-def _extract_weight(text: str) -> tuple[float | None, str]:
+def _unit_to_kg(value: float, unit: str) -> float:
+    unit = unit.lower()
+    if unit in {"g", "克"}:
+        return value / 1000.0
+    return value
+
+
+def _extract_weight(text: str, platform: str = "") -> tuple[float | None, str]:
     lowered = text.lower()
+    if platform == "made_in_china":
+        contextual = re.search(
+            r"(?:package gross weight|gross weight|net weight)[^0-9]{0,80}(\d+(?:\.\d+)?)\s*(kg|g|公斤|克)",
+            lowered,
+            flags=re.I,
+        )
+        if contextual:
+            return _unit_to_kg(float(contextual.group(1)), contextual.group(2)), "A"
+    if platform == "yiwugo":
+        gross = re.search(r"g\.w\./ctn[^0-9]{0,40}(\d+(?:\.\d+)?)\s*(kg|g|公斤|克)", lowered, flags=re.I)
+        qty = re.search(r"qty/ctn[^0-9]{0,40}(\d+(?:\.\d+)?)\s*piece", lowered, flags=re.I)
+        if gross and qty:
+            gross_kg = _unit_to_kg(float(gross.group(1)), gross.group(2))
+            qty_value = float(qty.group(1))
+            if qty_value > 0:
+                return round(gross_kg / qty_value, 4), "B"
     for pattern in WEIGHT_PATTERNS:
         match = re.search(pattern, lowered, flags=re.I)
         if not match:
             continue
-        value = float(match.group(1))
-        unit = match.group(2).lower()
-        if unit in {"g", "克"}:
-            value = value / 1000.0
-        return value, "A"
+        value = _unit_to_kg(float(match.group(1)), match.group(2))
+        if 0.01 <= value <= 30:
+            return value, "C"
     return None, "D"
 
 
@@ -716,19 +763,26 @@ def url_for_sell(platform: str, query: str) -> str:
 
 
 def _extract_source_candidate(platform: str, text: str, query: str, fetch_tool: str) -> SourceCandidate:
-    price_cny = _best_price_cny(text, platform)
-    weight, grade = _extract_weight(text[:60000])
-    link_patterns = {
-        "1688": r"(https?://[^\s\"']+offer[^\s\"']+|/offer/[^\s\"']+)",
-        "yiwugo": r"(https?://en\.yiwugo\.com/[^\s\"']+|/product/detail/[^\s\"']+)",
-        "made_in_china": r"(https?://[^\s\"']+made-in-china\.com[^\s\"']+|https?://[^\s\"']+productdirectory\.do[^\s\"']+)",
-    }
+    price_cny = _extract_platform_price_cny(text, platform)
+    weight, grade = _extract_weight(text[:120000], platform)
     raw_link = ""
-    pattern = link_patterns.get(platform, "")
-    if pattern:
-        found = re.search(pattern, text, flags=re.I)
-        if found:
-            raw_link = found.group(1)
+    if platform == "1688":
+        for candidate_link in re.findall(r"(https?://[^\s\"']+offer[^\s\"']+|/offer/[^\s\"']+)", text, flags=re.I):
+            raw_link = candidate_link
+            break
+    elif platform == "yiwugo":
+        for candidate_link in re.findall(r"(https?://en\.yiwugo\.com/product/detail/[^\s\"']+|/product/detail/[^\s\"']+)", text, flags=re.I):
+            raw_link = candidate_link
+            break
+    elif platform == "made_in_china":
+        candidates = re.findall(r"https?://[^\s\"']+made-in-china\.com/product/[^\s\"']+", text, flags=re.I)
+        if not candidates:
+            candidates = re.findall(r"/product/[^\s\"']+", text, flags=re.I)
+        for candidate_link in candidates:
+            if any(skip in candidate_link for skip in ("productdirectory.do", "/products-search/", "/search/product", "/suggest/")):
+                continue
+            raw_link = candidate_link
+            break
     if raw_link and not raw_link.startswith("http"):
         raw_link = {
             "1688": "https://detail.1688.com",
@@ -762,13 +816,13 @@ def _extract_source_candidate(platform: str, text: str, query: str, fetch_tool: 
 
 
 def _enrich_source_candidate(platform: str, candidate: SourceCandidate) -> SourceCandidate:
-    if not candidate.link or candidate.weight_kg is not None:
+    if not candidate.link or (candidate.weight_kg is not None and candidate.price_cny is not None):
         return candidate
     if platform not in {"made_in_china", "yiwugo", "1688"}:
         return candidate
     detail = fetch_best(platform, candidate.link, max_tools=2)
-    detail_weight, detail_grade = _extract_weight(detail.text[:120000])
-    detail_price = _best_price_cny(detail.text, platform)
+    detail_weight, detail_grade = _extract_weight(detail.text[:120000], platform)
+    detail_price = _extract_platform_price_cny(detail.text, platform)
     notes = candidate.notes
     if detail.status == "blocked":
         notes = (notes + " | detail_blocked").strip(" |")
@@ -1232,7 +1286,7 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
     run_id = _utc_now().strftime("%Y%m%dT%H%M%SZ")
     queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
     sell_platforms = ["temu", "amazon"] if test else ["temu", "amazon", "walmart"]
-    source_platforms = ["made_in_china", "1688"] if test else ["1688", "yiwugo", "made_in_china"]
+    source_platforms = ["1688", "yiwugo", "made_in_china"] if test else ["1688", "yiwugo", "made_in_china"]
     max_tools = 2 if test else None
 
     fetch_log: list[dict[str, Any]] = []
@@ -1347,7 +1401,7 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
 
 
 def _match_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[str, Any], list[ArbitrageDecision], list[dict[str, Any]]]:
-    source_platforms = ["made_in_china", "1688"] if test else ["1688", "yiwugo", "made_in_china"]
+    source_platforms = ["1688", "yiwugo", "made_in_china"] if test else ["1688", "yiwugo", "made_in_china"]
     max_tools = 2 if test else None
     fetch_log: list[dict[str, Any]] = []
     decisions: list[ArbitrageDecision] = []
