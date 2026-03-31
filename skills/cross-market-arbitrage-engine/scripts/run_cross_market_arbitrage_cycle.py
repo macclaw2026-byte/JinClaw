@@ -323,6 +323,35 @@ def _normalize_title(text: str) -> str:
     return " ".join(token for token in tokens if token not in TITLE_STOPWORDS)
 
 
+def _title_from_link(link: str, fallback: str) -> str:
+    text = str(link or "")
+    if "temu.com" in text:
+        match = re.search(r"/([a-z0-9-]+)-s\.html", text, flags=re.I)
+        if match:
+            return match.group(1).replace("-", " ").strip().title()
+    if "amazon.com" in text:
+        return fallback
+    if "walmart.com" in text:
+        match = re.search(r"/ip/([^/?]+)", text, flags=re.I)
+        if match:
+            return match.group(1).replace("-", " ").strip().title()
+    return fallback
+
+
+def _extract_page_title(text: str) -> str | None:
+    match = re.search(r"<title>([^<]+)</title>", text, flags=re.I)
+    if match:
+        title = _clean_text(match.group(1))
+        if title:
+            return re.sub(r"\s*[|\-]\s*(Amazon|Temu|Walmart).*$", "", title, flags=re.I).strip()
+    snapshot_title = re.search(r"^([^\n]{10,160})$", text.strip(), flags=re.M)
+    if snapshot_title:
+        title = _clean_text(snapshot_title.group(1))
+        if title and "http" not in title.lower():
+            return title
+    return None
+
+
 def _source_query_variants(candidate: DemandCandidate) -> list[str]:
     base = _normalize_title(candidate.title) or _normalize_title(candidate.query) or candidate.query.strip().lower()
     tokens = [token for token in base.split() if token not in SOURCE_QUERY_STOPWORDS]
@@ -622,6 +651,17 @@ def _extract_monthly_orders(text: str) -> float | None:
     return None
 
 
+def _extract_temu_sold_count(text: str) -> float | None:
+    matches = re.findall(r"(\d+(?:\.\d+)?)\s*sold", text, flags=re.I)
+    values: list[float] = []
+    for raw in matches:
+        try:
+            values.append(float(raw))
+        except Exception:
+            continue
+    return max(values) if values else None
+
+
 def _extract_listing_age_days(text: str) -> int | None:
     for pattern in LISTING_AGE_PATTERNS:
         found = re.search(pattern, text, flags=re.I)
@@ -701,9 +741,9 @@ def _extract_sell_candidates(platform: str, text: str, query: str) -> list[Deman
     rows: list[DemandCandidate] = []
     seen: set[str] = set()
     patterns = {
-        "temu": r"(https://www\.temu\.com[^\"'\s<>]+|/goods\.html[^\"'\s<>]+)",
+        "temu": r"(https://www\.temu\.com/[^\s\"'<>]+-s\.html(?:\?[^\s\"'<>]+)?|/[^\s\"'<>]+-s\.html(?:\?[^\s\"'<>]+)?)",
         "amazon": r"(https://www\.amazon\.com/dp/[A-Z0-9]{10}|/dp/[A-Z0-9]{10})",
-        "walmart": r"(https://www\.walmart\.com/ip/[^\"'\s<>]+|/ip/[^\"'\s<>]+)",
+        "walmart": r"(https://www\.walmart\.com/ip/[^\s\"'<>]+|/ip/[^\s\"'<>]+)",
     }
     for raw_link in re.findall(patterns.get(platform, r"$^"), text, flags=re.I):
         link = raw_link if raw_link.startswith("http") else {
@@ -711,10 +751,14 @@ def _extract_sell_candidates(platform: str, text: str, query: str) -> list[Deman
             "amazon": "https://www.amazon.com",
             "walmart": "https://www.walmart.com",
         }[platform] + raw_link
+        if platform == "temu" and link.rstrip("/") == "https://www.temu.com":
+            continue
+        if platform == "walmart" and "/search?" in link:
+            continue
         if link in seen:
             continue
         seen.add(link)
-        title = query.title()
+        title = _title_from_link(link, query.title())
         price = _best_price_cny(text, platform)
         monthly_orders = _extract_monthly_orders(text)
         rating_value = _extract_rating_value(text)
@@ -859,28 +903,75 @@ def _best_source_for_platform(platform: str, candidate: DemandCandidate, *, max_
 
 
 def _enrich_sell_candidate(candidate: DemandCandidate, *, max_tools: int | None = None) -> tuple[DemandCandidate, dict[str, Any]]:
-    detail = fetch_best(candidate.sell_platform, candidate.sell_link, max_tools=max_tools)
-    price = _best_price_cny(detail.text, candidate.sell_platform)
-    monthly_orders = _extract_monthly_orders(detail.text)
-    listing_age_days = _extract_listing_age_days(detail.text)
-    rating_value = _extract_rating_value(detail.text)
-    review_count = _extract_review_count(detail.text)
+    tool_plan = {
+        "temu": ["agent_browser", "curl_cffi", "crawl4ai"],
+        "amazon": ["curl_cffi", "agent_browser", "crawl4ai"],
+        "walmart": ["agent_browser", "curl_cffi", "crawl4ai"],
+    }.get(candidate.sell_platform, [fetch_best(candidate.sell_platform, candidate.sell_link, max_tools=max_tools).tool])
+    if max_tools is not None:
+        tool_plan = tool_plan[:max_tools]
+    best_price = candidate.sell_price_cny
+    best_monthly_orders = candidate.estimated_daily_orders * 30.0 if candidate.estimated_daily_orders else None
+    best_listing_age = candidate.listing_age_days
+    best_rating = candidate.rating_value
+    best_reviews = candidate.review_count
+    best_title = candidate.title
+    best_confidence = candidate.demand_confidence
+    best_status = "unknown"
+    best_tool = "none"
+    for tool in tool_plan:
+        fetcher = TOOL_FETCHERS.get(tool)
+        if not fetcher:
+            continue
+        try:
+            text, err = fetcher(candidate.sell_link)
+        except Exception:
+            continue
+        detail = _score_fetch(candidate.sell_platform, tool, text, err)
+        best_status = detail.status
+        best_tool = detail.tool
+        price = _best_price_cny(detail.text, candidate.sell_platform)
+        if price is not None:
+            best_price = price
+        monthly_orders = _extract_monthly_orders(detail.text)
+        if monthly_orders is None and candidate.sell_platform == "temu":
+            sold_proxy = _extract_temu_sold_count(detail.text)
+            if sold_proxy:
+                monthly_orders = sold_proxy
+        if monthly_orders is not None:
+            best_monthly_orders = max(best_monthly_orders or 0.0, monthly_orders)
+            best_confidence = max(best_confidence, 70.0 if candidate.sell_platform == "temu" else 65.0)
+        listing_age_days = _extract_listing_age_days(detail.text)
+        if listing_age_days is not None:
+            best_listing_age = listing_age_days
+            best_confidence = max(best_confidence, 70.0)
+        rating_value = _extract_rating_value(detail.text)
+        if rating_value is not None:
+            best_rating = rating_value
+        review_count = _extract_review_count(detail.text)
+        if review_count is not None:
+            best_reviews = review_count
+        title = _extract_page_title(detail.text)
+        if title:
+            best_title = title
+        if best_monthly_orders is not None and best_listing_age is not None:
+            break
     updated = DemandCandidate(
         candidate_id=candidate.candidate_id,
-        title=candidate.title,
+        title=best_title,
         sell_platform=candidate.sell_platform,
         sell_link=candidate.sell_link,
-        sell_price_cny=price if price is not None else candidate.sell_price_cny,
+        sell_price_cny=best_price,
         query=candidate.query,
         extracted_at=candidate.extracted_at,
-        estimated_daily_orders=(monthly_orders / 30.0) if monthly_orders else candidate.estimated_daily_orders,
-        listing_age_days=listing_age_days if listing_age_days is not None else candidate.listing_age_days,
-        rating_value=rating_value if rating_value is not None else candidate.rating_value,
-        review_count=review_count if review_count is not None else candidate.review_count,
-        demand_confidence=max(candidate.demand_confidence, 75.0 if monthly_orders else 35.0),
-        raw_signals={**candidate.raw_signals, "detail_tool": detail.tool, "detail_status": detail.status, "detail_monthly_orders": monthly_orders},
+        estimated_daily_orders=(best_monthly_orders / 30.0) if best_monthly_orders else candidate.estimated_daily_orders,
+        listing_age_days=best_listing_age,
+        rating_value=best_rating,
+        review_count=best_reviews,
+        demand_confidence=max(candidate.demand_confidence, best_confidence),
+        raw_signals={**candidate.raw_signals, "detail_tool": best_tool, "detail_status": best_status, "detail_monthly_orders": best_monthly_orders},
     )
-    return updated, {"stage": "sell_detail", "platform": candidate.sell_platform, "query": candidate.query, "tool": detail.tool, "status": detail.status, "score": detail.score}
+    return updated, {"stage": "sell_detail", "platform": candidate.sell_platform, "query": candidate.query, "tool": best_tool, "status": best_status, "score": 0}
 
 
 def _is_restricted(text: str) -> tuple[bool, list[str]]:
