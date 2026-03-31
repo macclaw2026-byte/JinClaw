@@ -5,17 +5,20 @@ description: Build and run a continuous cross-market arbitrage skill that discov
 
 # Cross-Market Arbitrage Engine
 
-Use this skill when the task is to continuously discover, compare, and report arbitrage candidates across buy-side and sell-side marketplaces.
+Use this skill when the task is to continuously discover, compare, score, and report cross-border ecommerce products that can both sustain orders and preserve margin.
 
 ## Core operating rules
 
 - Build conclusions from repeatable evidence, not one-off screenshots or vibes.
 - Prefer stable public extraction first; only escalate to browser / authorized session when needed.
 - Treat restricted-product filtering and confidence scoring as hard gates, not advisory hints.
+- Treat this as a quantitative product-selection system, not just a crawler.
 - Do not mark the cycle complete until:
   - discovery ran
   - source matching ran
+  - demand gates ran
   - margin calculation ran
+  - competition and differentiation scoring ran
   - report files were generated
   - retro / evolution artifacts were written
 
@@ -33,11 +36,24 @@ Use this skill when the task is to continuously discover, compare, and report ar
 
 ## Current profitability rule
 
-- `gross_profit_amount = sell_price - purchase_cost - 59*weight_kg - 35*weight_kg - 1.4`
+- `gross_profit_amount = sell_price - purchase_cost - 59*weight_kg - 35*weight_kg - platform_fee - 1.4`
 - `gross_margin_rate = gross_profit_amount / sell_price`
 - qualify only when both:
   - `base_margin_rate >= 0.45`
   - `conservative_margin_rate >= 0.45`
+
+## Quantitative decision gates
+
+Only qualify a product when all of the following hold:
+
+- estimated daily orders >= 30
+- listing age <= 2 years
+- gross margin and conservative margin > 45%
+- source match is usable
+- trusted weight evidence is available
+- market head is not overly concentrated
+- there is enough differentiation room
+- price stability is not collapsing
 
 ## Restricted-product gates
 

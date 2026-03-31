@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
+import os
 import re
 import subprocess
 import time
@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote_plus
+from zoneinfo import ZoneInfo
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
@@ -30,11 +31,22 @@ CRAWL4AI = TOOLS_ROOT / "bin" / "crawl4ai"
 AGENT_BROWSER = TOOLS_ROOT / "agent-browser-local" / "node_modules" / "agent-browser" / "bin" / "agent-browser-darwin-arm64"
 VENV_PY = TOOLS_ROOT / "matrix-venv" / "bin" / "python"
 SITE_PREFS_PATH = ROOT / "tools/openmoss/runtime/autonomy/learning/crawler_site_preferences.json"
+OPENCLAW_BIN = "/opt/homebrew/bin/openclaw"
 
 DISCOVERY_INTERVAL_SECONDS = 30 * 60
 MATCH_INTERVAL_SECONDS = 60 * 60
-REPORT_TZ_OFFSET = -4  # New York summer target for this local rollout; can be upgraded to zoneinfo later.
+REPORT_WINDOW_HOURS = 24
+REPORT_TIMEZONE = ZoneInfo("America/New_York")
 REPORT_HOUR = 18
+DEFAULT_TELEGRAM_TARGET = "8528973600"
+USD_TO_CNY = 7.2
+DEFAULT_PLATFORM_FEE = 0.15
+
+PLATFORM_FEE_TABLE = {
+    "amazon": 0.15,
+    "walmart": 0.15,
+    "temu": 0.15,
+}
 
 DEFAULT_DISCOVERY_QUERIES = [
     "drawer organizer",
@@ -93,6 +105,53 @@ RESTRICTED_PATTERNS = [
     r"液体",
 ]
 
+PAIN_POINT_PATTERNS = [
+    r"broke",
+    r"broken",
+    r"cheap",
+    r"flimsy",
+    r"too small",
+    r"too thin",
+    r"doesn't fit",
+    r"poor quality",
+    r"fell apart",
+    r"leak",
+    r"damaged",
+    r"not sturdy",
+    r"坏了",
+    r"太小",
+    r"太薄",
+    r"质量差",
+    r"不结实",
+    r"容易坏",
+]
+
+MONTHLY_ORDER_PATTERNS = [
+    r"(\d[\d,]*)\+?\s+bought in past month",
+    r"(\d[\d,]*)\+?\s+purchased in the last month",
+    r"(\d[\d,]*)\+?\s+sold in past month",
+]
+
+SOLD_PATTERNS = [
+    r"(\d+(?:\.\d+)?)k\+?\s+sold",
+    r"(\d[\d,]*)\+?\s+sold",
+]
+
+RATING_PATTERNS = [
+    r"(\d(?:\.\d)?)\s+out of 5 stars",
+    r"(\d(?:\.\d)?)\s*\/\s*5",
+]
+
+REVIEW_COUNT_PATTERNS = [
+    r"(\d[\d,]*)\s+ratings",
+    r"(\d[\d,]*)\s+reviews",
+]
+
+LISTING_AGE_PATTERNS = [
+    r"Date First Available[^A-Za-z0-9]{0,20}([A-Za-z]+ \d{1,2}, \d{4})",
+    r"First available[^A-Za-z0-9]{0,20}([A-Za-z]+ \d{1,2}, \d{4})",
+]
+
 WEIGHT_PATTERNS = [
     r"(\d+(?:\.\d+)?)\s*(kg|公斤)",
     r"(\d+(?:\.\d+)?)\s*(g|克)",
@@ -102,9 +161,10 @@ WEIGHT_PATTERNS = [
 ]
 
 PRICE_PATTERNS = [
-    r"\$(\d+(?:\.\d{2})?)",
-    r"¥\s*(\d+(?:\.\d+)?)",
-    r"US\\$ ?(\d+(?:\.\d+)?)",
+    r"(?:US\$|USD\s*)(\d+(?:\.\d+)?)",
+    r"\$(\d+(?:\.\d+)?)",
+    r"(?:¥|RMB\s*|￥)(\d+(?:\.\d+)?)",
+    r"(\d+(?:\.\d+)?)\s*元",
 ]
 
 TITLE_STOPWORDS = {
@@ -123,6 +183,19 @@ TITLE_STOPWORDS = {
     "portable",
     "wireless",
     "home",
+}
+
+SOURCE_QUERY_STOPWORDS = {
+    "organizer",
+    "storage",
+    "household",
+    "home",
+    "kitchen",
+    "portable",
+    "adjustable",
+    "multifunction",
+    "multi",
+    "tool",
 }
 
 
@@ -145,6 +218,11 @@ class DemandCandidate:
     sell_price_cny: float | None
     query: str
     extracted_at: str
+    estimated_daily_orders: float | None = None
+    listing_age_days: int | None = None
+    rating_value: float | None = None
+    review_count: int | None = None
+    demand_confidence: float = 0.0
     raw_signals: dict[str, Any] = field(default_factory=dict)
 
 
@@ -175,10 +253,34 @@ class ArbitrageDecision:
     gross_profit_amount: float | None
     gross_margin_rate: float | None
     conservative_margin_rate: float | None
+    platform_fee_rate: float | None
+    estimated_daily_orders: float | None
+    listing_age_days: int | None
+    demand_score: float
+    competition_score: float
+    differentiation_score: float
+    price_stability_score: float
+    launchability_score: float
     confidence_score: float
     weight_grade: str
     qualified: bool
     reasons: list[str] = field(default_factory=list)
+
+
+DECISION_DEFAULTS: dict[str, Any] = {
+    "platform_fee_rate": None,
+    "estimated_daily_orders": None,
+    "listing_age_days": None,
+    "demand_score": 0.0,
+    "competition_score": 0.0,
+    "differentiation_score": 0.0,
+    "price_stability_score": 0.0,
+    "launchability_score": 0.0,
+    "confidence_score": 0.0,
+    "weight_grade": "D",
+    "qualified": False,
+    "reasons": [],
+}
 
 
 def _utc_now() -> datetime:
@@ -190,7 +292,7 @@ def _utc_now_iso() -> str:
 
 
 def _ny_now() -> datetime:
-    return _utc_now() + timedelta(hours=REPORT_TZ_OFFSET)
+    return _utc_now().astimezone(REPORT_TIMEZONE)
 
 
 def _slug(text: str) -> str:
@@ -198,6 +300,9 @@ def _slug(text: str) -> str:
 
 
 def _run(cmd: list[str], *, timeout: int = 45) -> subprocess.CompletedProcess:
+    timeout_cap = os.environ.get("CROSS_MARKET_TIMEOUT_CAP", "").strip()
+    if timeout_cap.isdigit():
+        timeout = min(timeout, max(3, int(timeout_cap)))
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
@@ -216,6 +321,22 @@ def _clean_text(text: str) -> str:
 def _normalize_title(text: str) -> str:
     tokens = re.findall(r"[a-z0-9]+", str(text or "").lower())
     return " ".join(token for token in tokens if token not in TITLE_STOPWORDS)
+
+
+def _source_query_variants(candidate: DemandCandidate) -> list[str]:
+    base = _normalize_title(candidate.title) or _normalize_title(candidate.query) or candidate.query.strip().lower()
+    tokens = [token for token in base.split() if token not in SOURCE_QUERY_STOPWORDS]
+    variants: list[str] = []
+    for text in [
+        " ".join(tokens[:6]).strip(),
+        " ".join(tokens[:4]).strip(),
+        candidate.query.strip().lower(),
+        candidate.title.strip().lower(),
+    ]:
+        text = re.sub(r"\s+", " ", text).strip()
+        if text and text not in variants:
+            variants.append(text)
+    return variants[:4]
 
 
 def _load_site_preferences() -> dict[str, Any]:
@@ -378,6 +499,143 @@ def _extract_prices(text: str) -> list[float]:
     return prices
 
 
+def _extract_prices_detailed(text: str) -> list[tuple[float, str]]:
+    rows: list[tuple[float, str]] = []
+    for raw in re.findall(r"(?:US\$|USD\s*)(\d+(?:\.\d+)?)", text, flags=re.I):
+        try:
+            rows.append((float(raw), "USD"))
+        except Exception:
+            pass
+    for raw in re.findall(r"\$(\d+(?:\.\d+)?)", text, flags=re.I):
+        try:
+            rows.append((float(raw), "USD"))
+        except Exception:
+            pass
+    for raw in re.findall(r"(?:¥|RMB\s*|￥)(\d+(?:\.\d+)?)", text, flags=re.I):
+        try:
+            rows.append((float(raw), "CNY"))
+        except Exception:
+            pass
+    for raw in re.findall(r"(\d+(?:\.\d+)?)\s*元", text, flags=re.I):
+        try:
+            rows.append((float(raw), "CNY"))
+        except Exception:
+            pass
+    return rows
+
+
+def _price_to_cny(value: float, currency: str, platform: str) -> float:
+    if currency == "USD":
+        return value * USD_TO_CNY
+    if platform in {"amazon", "walmart", "temu"}:
+        return value * USD_TO_CNY
+    if platform == "made_in_china" and currency != "CNY":
+        return value * USD_TO_CNY
+    return value
+
+
+def _best_price_cny(text: str, platform: str) -> float | None:
+    detailed = _extract_prices_detailed(text[:120000])
+    if detailed:
+        converted = [_price_to_cny(value, currency, platform) for value, currency in detailed if value > 0]
+        if converted:
+            return round(min(converted), 2)
+    simple = _extract_prices(text[:120000])
+    if not simple:
+        return None
+    inferred = min(simple)
+    if platform in {"amazon", "walmart", "temu", "made_in_china"}:
+        inferred *= USD_TO_CNY
+    return round(inferred, 2)
+
+
+def _extract_rating_value(text: str) -> float | None:
+    for pattern in RATING_PATTERNS:
+        found = re.search(pattern, text, flags=re.I)
+        if found:
+            try:
+                value = float(found.group(1))
+            except Exception:
+                continue
+            if 0.0 < value <= 5.0:
+                return value
+    return None
+
+
+def _extract_review_count(text: str) -> int | None:
+    for pattern in REVIEW_COUNT_PATTERNS:
+        found = re.search(pattern, text, flags=re.I)
+        if found:
+            try:
+                return int(found.group(1).replace(",", ""))
+            except Exception:
+                continue
+    return None
+
+
+def _extract_monthly_orders(text: str) -> float | None:
+    lowered = text.lower()
+    for pattern in MONTHLY_ORDER_PATTERNS:
+        found = re.search(pattern, lowered, flags=re.I)
+        if found:
+            try:
+                return float(found.group(1).replace(",", ""))
+            except Exception:
+                continue
+    for pattern in SOLD_PATTERNS:
+        found = re.search(pattern, lowered, flags=re.I)
+        if not found:
+            continue
+        raw = found.group(1).replace(",", "").lower()
+        try:
+            value = float(raw[:-1]) * 1000 if raw.endswith("k") else float(raw)
+        except Exception:
+            continue
+        # Treat "sold" as lower-confidence rolling demand proxy over roughly 90 days.
+        return value / 3.0
+    return None
+
+
+def _extract_listing_age_days(text: str) -> int | None:
+    for pattern in LISTING_AGE_PATTERNS:
+        found = re.search(pattern, text, flags=re.I)
+        if not found:
+            continue
+        try:
+            dt = datetime.strptime(found.group(1), "%B %d, %Y").replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+        return max(0, int((_utc_now() - dt).total_seconds() // 86400))
+    return None
+
+
+def _pain_point_score(text: str) -> float:
+    lowered = text.lower()
+    hits = sum(1 for pattern in PAIN_POINT_PATTERNS if re.search(pattern, lowered, flags=re.I))
+    return min(100.0, hits * 12.5)
+
+
+def _competition_score(text: str) -> float:
+    lowered = text.lower()
+    ad_hits = len(re.findall(r"sponsored", lowered))
+    top_brand_hits = len(re.findall(r"brand", lowered))
+    duplicate_hits = len(re.findall(r"best seller", lowered))
+    penalty = min(60, ad_hits * 8 + top_brand_hits * 4 + duplicate_hits * 6)
+    return max(20.0, 100.0 - penalty)
+
+
+def _price_stability_from_history(history: list[float]) -> float:
+    cleaned = [float(x) for x in history if x is not None]
+    if len(cleaned) < 3:
+        return 50.0
+    avg = sum(cleaned) / len(cleaned)
+    if avg <= 0:
+        return 0.0
+    variance = sum((x - avg) ** 2 for x in cleaned) / len(cleaned)
+    cv = (variance ** 0.5) / avg
+    return max(0.0, min(100.0, 100.0 - cv * 200.0))
+
+
 def _extract_weight(text: str) -> tuple[float | None, str]:
     lowered = text.lower()
     for pattern in WEIGHT_PATTERNS:
@@ -410,33 +668,43 @@ def _extract_sell_candidates(platform: str, text: str, query: str) -> list[Deman
             continue
         seen.add(link)
         title = query.title()
-        prices = _extract_prices(text[:12000])
-        price = prices[0] if prices else None
+        price = _best_price_cny(text, platform)
+        monthly_orders = _extract_monthly_orders(text)
+        rating_value = _extract_rating_value(text)
+        review_count = _extract_review_count(text)
         rows.append(
             DemandCandidate(
                 candidate_id=f"{platform}-{_slug(link)}",
                 title=title,
                 sell_platform=platform,
                 sell_link=link,
-                sell_price_cny=(price or 0.0) * 7.2 if price is not None and platform in {"amazon", "walmart"} else price,
+                sell_price_cny=price,
                 query=query,
                 extracted_at=_utc_now_iso(),
-                raw_signals={"fetch_price_count": len(prices)},
+                estimated_daily_orders=(monthly_orders / 30.0) if monthly_orders else None,
+                rating_value=rating_value,
+                review_count=review_count,
+                demand_confidence=55.0 if monthly_orders else 20.0,
+                raw_signals={"price_extracted": price is not None, "monthly_orders": monthly_orders},
             )
         )
         if len(rows) >= 5:
             break
     if not rows:
-        fallback_price = (_extract_prices(text[:12000]) or [None])[0]
+        fallback_price = _best_price_cny(text, platform)
         rows.append(
             DemandCandidate(
                 candidate_id=f"{platform}-{_slug(query)}",
                 title=query.title(),
                 sell_platform=platform,
                 sell_link=url_for_sell(platform, query),
-                sell_price_cny=(fallback_price or 0.0) * 7.2 if fallback_price is not None and platform in {"amazon", "walmart"} else fallback_price,
+                sell_price_cny=fallback_price,
                 query=query,
                 extracted_at=_utc_now_iso(),
+                estimated_daily_orders=None,
+                rating_value=_extract_rating_value(text),
+                review_count=_extract_review_count(text),
+                demand_confidence=10.0,
                 raw_signals={"fallback_from_search_page": True},
             )
         )
@@ -448,7 +716,7 @@ def url_for_sell(platform: str, query: str) -> str:
 
 
 def _extract_source_candidate(platform: str, text: str, query: str, fetch_tool: str) -> SourceCandidate:
-    prices = _extract_prices(text[:60000])
+    price_cny = _best_price_cny(text, platform)
     weight, grade = _extract_weight(text[:60000])
     link_patterns = {
         "1688": r"(https?://[^\s\"']+offer[^\s\"']+|/offer/[^\s\"']+)",
@@ -469,7 +737,7 @@ def _extract_source_candidate(platform: str, text: str, query: str, fetch_tool: 
         }[platform] + raw_link
     blocked = any(re.search(p, text, flags=re.I) for p in BLOCK_PATTERNS.get(platform, []))
     match_score = 35.0
-    if prices:
+    if price_cny is not None:
         match_score += 20
     if weight is not None:
         match_score += 25
@@ -483,7 +751,7 @@ def _extract_source_candidate(platform: str, text: str, query: str, fetch_tool: 
         platform=platform,
         link=raw_link or SOURCE_PLATFORM_SEARCH[platform](query),
         title=query.title(),
-        price_cny=prices[0] if prices else None,
+        price_cny=price_cny,
         weight_kg=weight,
         weight_grade=grade,
         fetch_tool=fetch_tool,
@@ -491,6 +759,74 @@ def _extract_source_candidate(platform: str, text: str, query: str, fetch_tool: 
         blocked=blocked,
         notes="blocked" if blocked else "",
     )
+
+
+def _enrich_source_candidate(platform: str, candidate: SourceCandidate) -> SourceCandidate:
+    if not candidate.link or candidate.weight_kg is not None:
+        return candidate
+    if platform not in {"made_in_china", "yiwugo", "1688"}:
+        return candidate
+    detail = fetch_best(platform, candidate.link, max_tools=2)
+    detail_weight, detail_grade = _extract_weight(detail.text[:120000])
+    detail_price = _best_price_cny(detail.text, platform)
+    notes = candidate.notes
+    if detail.status == "blocked":
+        notes = (notes + " | detail_blocked").strip(" |")
+    return SourceCandidate(
+        platform=candidate.platform,
+        link=candidate.link,
+        title=candidate.title,
+        price_cny=detail_price if detail_price is not None else candidate.price_cny,
+        weight_kg=detail_weight if detail_weight is not None else candidate.weight_kg,
+        weight_grade=detail_grade if detail_weight is not None else candidate.weight_grade,
+        fetch_tool=f"{candidate.fetch_tool}+detail:{detail.tool}",
+        match_score=min(100.0, candidate.match_score + (12.0 if detail_weight is not None else 0.0)),
+        blocked=candidate.blocked and detail.status == "blocked",
+        notes=notes,
+    )
+
+
+def _best_source_for_platform(platform: str, candidate: DemandCandidate, *, max_tools: int | None = None) -> tuple[SourceCandidate, list[dict[str, Any]]]:
+    fetch_log: list[dict[str, Any]] = []
+    best: SourceCandidate | None = None
+    for query_variant in _source_query_variants(candidate):
+        url = SOURCE_PLATFORM_SEARCH[platform](query_variant)
+        result = fetch_best(platform, url, max_tools=max_tools)
+        fetch_log.append(
+            {"stage": "match", "platform": platform, "query": query_variant, "tool": result.tool, "status": result.status, "score": result.score}
+        )
+        row = _extract_source_candidate(platform, result.text, query_variant, result.tool)
+        row = _enrich_source_candidate(platform, row)
+        if best is None or row.match_score > best.match_score:
+            best = row
+        if row.match_score >= 75 and row.weight_grade in {"A", "B"} and not row.blocked:
+            break
+    return best or SourceCandidate(platform=platform, link=SOURCE_PLATFORM_SEARCH[platform](candidate.query), title=candidate.title, price_cny=None, weight_kg=None, weight_grade="D", fetch_tool="none", match_score=0.0, blocked=True, notes="no_source_probe"), fetch_log
+
+
+def _enrich_sell_candidate(candidate: DemandCandidate, *, max_tools: int | None = None) -> tuple[DemandCandidate, dict[str, Any]]:
+    detail = fetch_best(candidate.sell_platform, candidate.sell_link, max_tools=max_tools)
+    price = _best_price_cny(detail.text, candidate.sell_platform)
+    monthly_orders = _extract_monthly_orders(detail.text)
+    listing_age_days = _extract_listing_age_days(detail.text)
+    rating_value = _extract_rating_value(detail.text)
+    review_count = _extract_review_count(detail.text)
+    updated = DemandCandidate(
+        candidate_id=candidate.candidate_id,
+        title=candidate.title,
+        sell_platform=candidate.sell_platform,
+        sell_link=candidate.sell_link,
+        sell_price_cny=price if price is not None else candidate.sell_price_cny,
+        query=candidate.query,
+        extracted_at=candidate.extracted_at,
+        estimated_daily_orders=(monthly_orders / 30.0) if monthly_orders else candidate.estimated_daily_orders,
+        listing_age_days=listing_age_days if listing_age_days is not None else candidate.listing_age_days,
+        rating_value=rating_value if rating_value is not None else candidate.rating_value,
+        review_count=review_count if review_count is not None else candidate.review_count,
+        demand_confidence=max(candidate.demand_confidence, 75.0 if monthly_orders else 35.0),
+        raw_signals={**candidate.raw_signals, "detail_tool": detail.tool, "detail_status": detail.status, "detail_monthly_orders": monthly_orders},
+    )
+    return updated, {"stage": "sell_detail", "platform": candidate.sell_platform, "query": candidate.query, "tool": detail.tool, "status": detail.status, "score": detail.score}
 
 
 def _is_restricted(text: str) -> tuple[bool, list[str]]:
@@ -525,6 +861,14 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
             gross_profit_amount=None,
             gross_margin_rate=None,
             conservative_margin_rate=None,
+            platform_fee_rate=None,
+            estimated_daily_orders=candidate.estimated_daily_orders,
+            listing_age_days=candidate.listing_age_days,
+            demand_score=0.0,
+            competition_score=0.0,
+            differentiation_score=0.0,
+            price_stability_score=0.0,
+            launchability_score=0.0,
             confidence_score=0.0,
             weight_grade="D",
             qualified=False,
@@ -543,6 +887,14 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
             gross_profit_amount=None,
             gross_margin_rate=None,
             conservative_margin_rate=None,
+            platform_fee_rate=PLATFORM_FEE_TABLE.get(candidate.sell_platform, DEFAULT_PLATFORM_FEE),
+            estimated_daily_orders=candidate.estimated_daily_orders,
+            listing_age_days=candidate.listing_age_days,
+            demand_score=0.0,
+            competition_score=0.0,
+            differentiation_score=0.0,
+            price_stability_score=0.0,
+            launchability_score=0.0,
             confidence_score=min(79.0, best_source.match_score),
             weight_grade=best_source.weight_grade,
             qualified=False,
@@ -561,19 +913,53 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
             gross_profit_amount=None,
             gross_margin_rate=None,
             conservative_margin_rate=None,
+            platform_fee_rate=PLATFORM_FEE_TABLE.get(candidate.sell_platform, DEFAULT_PLATFORM_FEE),
+            estimated_daily_orders=candidate.estimated_daily_orders,
+            listing_age_days=candidate.listing_age_days,
+            demand_score=0.0,
+            competition_score=0.0,
+            differentiation_score=0.0,
+            price_stability_score=0.0,
+            launchability_score=0.0,
             confidence_score=min(79.0, best_source.match_score),
             weight_grade=best_source.weight_grade,
             qualified=False,
             reasons=["missing_sell_price", *reasons],
         )
+    platform_fee_rate = PLATFORM_FEE_TABLE.get(candidate.sell_platform, DEFAULT_PLATFORM_FEE)
+    platform_fee_amount = candidate.sell_price_cny * platform_fee_rate
     logistics = 59 * best_source.weight_kg + 35 * best_source.weight_kg + 1.4
-    gross_profit = candidate.sell_price_cny - best_source.price_cny - logistics
+    gross_profit = candidate.sell_price_cny - best_source.price_cny - logistics - platform_fee_amount
     margin = gross_profit / candidate.sell_price_cny if candidate.sell_price_cny else None
     conservative_sell = candidate.sell_price_cny * 0.95
     conservative_purchase = best_source.price_cny * 1.05
     conservative_weight = best_source.weight_kg * 1.10
-    conservative_profit = conservative_sell - conservative_purchase - (59 * conservative_weight) - (35 * conservative_weight) - 1.4
+    conservative_fee = conservative_sell * platform_fee_rate
+    conservative_profit = conservative_sell - conservative_purchase - (59 * conservative_weight) - (35 * conservative_weight) - conservative_fee - 1.4
     conservative_margin = conservative_profit / conservative_sell if conservative_sell else None
+    estimated_daily_orders = candidate.estimated_daily_orders or 0.0
+    listing_age_days = candidate.listing_age_days
+    demand_score = min(100.0, estimated_daily_orders * 2.0) if estimated_daily_orders else min(60.0, candidate.demand_confidence)
+    if estimated_daily_orders < 30:
+        reasons.append("estimated_daily_orders_below_threshold")
+    if listing_age_days is None:
+        reasons.append("listing_age_unknown")
+    elif listing_age_days > 730:
+        reasons.append("listing_age_above_two_years")
+    competition_score = _competition_score(candidate.title)
+    differentiation_score = _pain_point_score(candidate.title)
+    price_history = (candidate.raw_signals or {}).get("observed_sell_prices", []) or []
+    if candidate.sell_price_cny is not None:
+        price_history = [*price_history, candidate.sell_price_cny]
+    price_stability_score = _price_stability_from_history(price_history)
+    launchability_score = round(
+        demand_score * 0.25
+        + (min(100.0, max(0.0, (margin or 0.0) * 100.0 * 1.5)) if margin is not None else 0.0) * 0.25
+        + competition_score * 0.20
+        + differentiation_score * 0.15
+        + price_stability_score * 0.15,
+        2,
+    )
     confidence = min(
         100.0,
         25.0
@@ -585,11 +971,15 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
     )
     qualified = (
         not restricted
+        and estimated_daily_orders >= 30
+        and listing_age_days is not None
+        and listing_age_days <= 730
         and margin is not None
         and conservative_margin is not None
         and margin >= 0.45
         and conservative_margin >= 0.45
         and best_source.weight_grade in {"A", "B"}
+        and launchability_score >= 70.0
         and confidence >= 80.0
     )
     if not qualified and not reasons:
@@ -606,6 +996,14 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         gross_profit_amount=round(gross_profit, 2),
         gross_margin_rate=round(margin, 4) if margin is not None else None,
         conservative_margin_rate=round(conservative_margin, 4) if conservative_margin is not None else None,
+        platform_fee_rate=platform_fee_rate,
+        estimated_daily_orders=round(estimated_daily_orders, 2) if estimated_daily_orders else None,
+        listing_age_days=listing_age_days,
+        demand_score=round(demand_score, 2),
+        competition_score=round(competition_score, 2),
+        differentiation_score=round(differentiation_score, 2),
+        price_stability_score=round(price_stability_score, 2),
+        launchability_score=launchability_score,
         confidence_score=round(confidence, 2),
         weight_grade=best_source.weight_grade,
         qualified=qualified,
@@ -614,16 +1012,46 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
 
 
 def _load_state() -> dict[str, Any]:
+    default = {"runs": [], "candidates": {}, "last_discovery_at": "", "last_match_at": "", "last_report_date": ""}
     if not STATE_PATH.exists():
-        return {"runs": [], "recent_candidates": []}
+        return default
     try:
-        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        payload = json.loads(STATE_PATH.read_text(encoding="utf-8"))
     except Exception:
-        return {"runs": [], "recent_candidates": []}
+        return default
+    if not isinstance(payload, dict):
+        return default
+    if "candidates" not in payload:
+        payload["candidates"] = {}
+    payload.setdefault("runs", [])
+    payload.setdefault("last_discovery_at", "")
+    payload.setdefault("last_match_at", "")
+    payload.setdefault("last_report_date", "")
+    payload.pop("recent_candidates", None)
+    for row in (payload.get("candidates") or {}).values():
+        if not isinstance(row, dict):
+            continue
+        row.setdefault("raw_signals", {})
+        decision = row.get("decision")
+        if isinstance(decision, dict):
+            row["decision"] = _decision_payload(decision)
+    return payload
 
 
 def _save_state(payload: dict[str, Any]) -> None:
     STATE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _decision_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(payload)
+    for key, value in DECISION_DEFAULTS.items():
+        merged.setdefault(key, value)
+    merged.setdefault("reasons", [])
+    return {key: merged.get(key) for key in ArbitrageDecision.__dataclass_fields__.keys()}
+
+
+def _decision_from_payload(payload: dict[str, Any]) -> ArbitrageDecision:
+    return ArbitrageDecision(**_decision_payload(payload))
 
 
 def autosize(ws) -> None:
@@ -659,7 +1087,8 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
     audit = wb.create_sheet("Audit")
     headers = [
         "产品名称", "采购平台", "采购链接", "售卖平台", "售卖链接", "售价(RMB)", "采购成本(RMB)", "重量(kg)",
-        "毛利额", "毛利率", "保守毛利率", "置信度", "重量等级", "是否入选", "原因"
+        "毛利额", "毛利率", "保守毛利率", "平台佣金率", "估算日单量", "上架天数", "需求分", "竞争分",
+        "差异化分", "价格稳定分", "综合可做分", "置信度", "重量等级", "是否入选", "原因"
     ]
     audit.append(headers)
     style_header(audit)
@@ -676,6 +1105,14 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             item.gross_profit_amount,
             item.gross_margin_rate,
             item.conservative_margin_rate,
+            item.platform_fee_rate,
+            item.estimated_daily_orders,
+            item.listing_age_days,
+            item.demand_score,
+            item.competition_score,
+            item.differentiation_score,
+            item.price_stability_score,
+            item.launchability_score,
             item.confidence_score,
             item.weight_grade,
             "yes" if item.qualified else "no",
@@ -715,8 +1152,11 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
             f"### {item.product_name}",
             f"- Buy: `{item.buy_platform}` -> {item.buy_link}",
             f"- Sell: `{item.sell_platform}` -> {item.sell_link}",
+            f"- Estimated daily orders: `{item.estimated_daily_orders}`",
+            f"- Listing age days: `{item.listing_age_days}`",
             f"- Margin: `{item.gross_margin_rate}`",
             f"- Conservative margin: `{item.conservative_margin_rate}`",
+            f"- Launchability: `{item.launchability_score}`",
             f"- Confidence: `{item.confidence_score}`",
             "",
         ])
@@ -735,6 +1175,57 @@ def _write_json(run_id: str, payload: dict[str, Any]) -> Path:
     path = OUT_DIR / f"cross-market-arbitrage-{run_id}.json"
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
+
+
+def _state_candidate_window(state: dict[str, Any], *, hours: int = REPORT_WINDOW_HOURS) -> list[dict[str, Any]]:
+    cutoff = _utc_now() - timedelta(hours=hours)
+    rows: list[dict[str, Any]] = []
+    for payload in (state.get("candidates") or {}).values():
+        discovered_at = payload.get("discovered_at") or payload.get("updated_at") or ""
+        dt = parse_dt(discovered_at)
+        if dt and dt >= cutoff:
+            rows.append(payload)
+    return rows
+
+
+def parse_dt(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _send_to_telegram(*, chat_id: str, text: str, media_paths: list[Path]) -> list[dict[str, Any]]:
+    deliveries: list[dict[str, Any]] = []
+    text_cmd = [OPENCLAW_BIN, "message", "send", "--channel", "telegram", "--target", chat_id, "--message", text, "--json"]
+    text_proc = _run(text_cmd, timeout=60)
+    deliveries.append({"kind": "text", "returncode": text_proc.returncode, "stdout": text_proc.stdout.strip(), "stderr": text_proc.stderr.strip()})
+    for media_path in media_paths:
+        cmd = [OPENCLAW_BIN, "message", "send", "--channel", "telegram", "--target", chat_id, "--media", str(media_path), "--force-document", "--json"]
+        proc = _run(cmd, timeout=120)
+        deliveries.append({"kind": "media", "path": str(media_path), "returncode": proc.returncode, "stdout": proc.stdout.strip(), "stderr": proc.stderr.strip()})
+    return deliveries
+
+
+def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -> str:
+    qualified = [item for item in decisions if item.qualified]
+    lines = [
+        f"Cross-market arbitrage run completed.",
+        f"Run ID: {summary['run_id']}",
+        f"过去24小时候选数: {summary['discovery_candidate_count']}",
+        f"通过强规则候选数: {summary['qualified_count']}",
+    ]
+    if qualified:
+        top = qualified[:3]
+        for item in top:
+            lines.append(
+                f"- {item.product_name}: 买 {item.buy_platform} / 卖 {item.sell_platform} / 毛利率 {item.gross_margin_rate:.2%}"
+            )
+    else:
+        lines.append("- 本轮没有候选通过强阈值；请看附件里的审计和证据。")
+    return "\n".join(lines)
 
 
 def run_once(*, test: bool = False) -> dict[str, Any]:
@@ -821,6 +1312,124 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
     }
 
 
+def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[str, Any], list[DemandCandidate], list[dict[str, Any]]]:
+    queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
+    sell_platforms = ["temu", "amazon"] if test else ["temu", "amazon", "walmart"]
+    max_tools = 2 if test else None
+    fetch_log: list[dict[str, Any]] = []
+    candidates: list[DemandCandidate] = []
+    for query in queries:
+        for platform in sell_platforms:
+            result = fetch_best(platform, url_for_sell(platform, query), max_tools=max_tools)
+            fetch_log.append({"stage": "discover", "platform": platform, "query": query, "tool": result.tool, "status": result.status, "score": result.score})
+            candidates.extend(_extract_sell_candidates(platform, result.text, query))
+    enriched: list[DemandCandidate] = []
+    for item in candidates:
+        updated, detail_log = _enrich_sell_candidate(item, max_tools=max_tools)
+        fetch_log.append(detail_log)
+        enriched.append(updated)
+    candidates = enriched
+    bucket = state.setdefault("candidates", {})
+    for item in candidates:
+        row = bucket.get(item.candidate_id, {})
+        price_history = list(row.get("observed_sell_prices", []) or [])
+        if item.sell_price_cny is not None:
+            price_history.append(item.sell_price_cny)
+            price_history = price_history[-20:]
+        row.update(asdict(item))
+        row["updated_at"] = _utc_now_iso()
+        row["discovered_at"] = row.get("discovered_at") or item.extracted_at
+        row["observed_sell_prices"] = price_history
+        row.setdefault("source_matches", [])
+        bucket[item.candidate_id] = row
+    state["last_discovery_at"] = _utc_now_iso()
+    return state, candidates, fetch_log
+
+
+def _match_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[str, Any], list[ArbitrageDecision], list[dict[str, Any]]]:
+    source_platforms = ["made_in_china", "1688"] if test else ["1688", "yiwugo", "made_in_china"]
+    max_tools = 2 if test else None
+    fetch_log: list[dict[str, Any]] = []
+    decisions: list[ArbitrageDecision] = []
+    for candidate_id, payload in (state.get("candidates") or {}).items():
+        if payload.get("last_matched_at"):
+            continue
+        candidate = DemandCandidate(**{k: payload[k] for k in DemandCandidate.__dataclass_fields__.keys() if k in payload})
+        rows: list[SourceCandidate] = []
+        for platform in source_platforms:
+            best_row, best_log = _best_source_for_platform(platform, candidate, max_tools=max_tools)
+            fetch_log.extend(best_log)
+            rows.append(best_row)
+        payload["source_matches"] = [asdict(row) for row in rows]
+        payload["last_matched_at"] = _utc_now_iso()
+        decision = _compute_decision(candidate, rows)
+        payload["decision"] = asdict(decision)
+        decisions.append(decision)
+    state["last_match_at"] = _utc_now_iso()
+    return state, decisions, fetch_log
+
+
+def _report_cycle(state: dict[str, Any], *, chat_id: str | None, force_send: bool = False) -> dict[str, Any]:
+    run_id = _utc_now().strftime("%Y%m%dT%H%M%SZ")
+    rows = _state_candidate_window(state, hours=REPORT_WINDOW_HOURS)
+    decisions: list[ArbitrageDecision] = []
+    fetch_log: list[dict[str, Any]] = []
+    for payload in rows:
+        decision = payload.get("decision")
+        if decision:
+            decisions.append(_decision_from_payload(decision))
+    summary = {
+        "run_id": run_id,
+        "generated_at": _utc_now_iso(),
+        "mode": "scheduled",
+        "discovery_candidate_count": len(rows),
+        "qualified_count": sum(1 for item in decisions if item.qualified),
+        "timing": {
+            "discovery_interval_seconds": DISCOVERY_INTERVAL_SECONDS,
+            "matching_interval_seconds": MATCH_INTERVAL_SECONDS,
+            "report_hour_new_york": REPORT_HOUR,
+        },
+    }
+    excel_path = _write_excel(run_id, decisions, summary)
+    md_path = _write_markdown(run_id, decisions, summary)
+    json_path = _write_json(run_id, {"summary": summary, "decisions": [asdict(item) for item in decisions], "fetch_log": fetch_log})
+    state.setdefault("runs", []).append(
+        {
+            "run_id": run_id,
+            "generated_at": summary["generated_at"],
+            "qualified_count": summary["qualified_count"],
+            "excel_path": str(excel_path),
+            "markdown_path": str(md_path),
+            "json_path": str(json_path),
+        }
+    )
+    state["runs"] = state["runs"][-40:]
+    state["last_report_date"] = _ny_now().date().isoformat()
+    deliveries = []
+    if chat_id and force_send:
+        deliveries = _send_to_telegram(chat_id=chat_id, text=_summary_text(summary, decisions), media_paths=[md_path, json_path, excel_path])
+    _save_state(state)
+    return {"run_id": run_id, "summary": summary, "excel_path": str(excel_path), "markdown_path": str(md_path), "json_path": str(json_path), "deliveries": deliveries}
+
+
+def _discovery_due(state: dict[str, Any]) -> bool:
+    last = parse_dt(state.get("last_discovery_at", ""))
+    return last is None or (_utc_now() - last).total_seconds() >= DISCOVERY_INTERVAL_SECONDS
+
+
+def _match_due(state: dict[str, Any]) -> bool:
+    last = parse_dt(state.get("last_match_at", ""))
+    has_unmatched = any(not row.get("last_matched_at") for row in (state.get("candidates") or {}).values())
+    return has_unmatched and (last is None or (_utc_now() - last).total_seconds() >= MATCH_INTERVAL_SECONDS)
+
+
+def _report_due(state: dict[str, Any]) -> bool:
+    ny_now = _ny_now()
+    if ny_now.hour < REPORT_HOUR:
+        return False
+    return state.get("last_report_date") != ny_now.date().isoformat()
+
+
 def _seconds_until_next_discovery() -> int:
     state = _load_state()
     runs = state.get("runs", []) or []
@@ -836,18 +1445,37 @@ def _seconds_until_next_discovery() -> int:
 
 def run_daemon() -> int:
     while True:
-        run_once(test=False)
-        time.sleep(max(60, _seconds_until_next_discovery()))
+        state = _load_state()
+        changed = False
+        if _discovery_due(state):
+            state, _, _ = _discover_cycle(state, test=False)
+            changed = True
+        if _match_due(state):
+            state, _, _ = _match_cycle(state, test=False)
+            changed = True
+        if changed:
+            _save_state(state)
+        if _report_due(state):
+            _report_cycle(state, chat_id=os.environ.get("CROSS_MARKET_TELEGRAM_CHAT", DEFAULT_TELEGRAM_TARGET), force_send=True)
+        time.sleep(300)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["once", "daemon"], default="once")
     parser.add_argument("--test", action="store_true")
+    parser.add_argument("--send-telegram", action="store_true")
+    parser.add_argument("--telegram-chat", default=DEFAULT_TELEGRAM_TARGET)
     args = parser.parse_args()
     if args.mode == "daemon":
         return run_daemon()
-    payload = run_once(test=args.test)
+    state = _load_state()
+    state, _, discover_log = _discover_cycle(state, test=args.test)
+    state, decisions, match_log = _match_cycle(state, test=args.test)
+    _save_state(state)
+    payload = _report_cycle(state, chat_id=args.telegram_chat if args.send_telegram else None, force_send=args.send_telegram)
+    payload["fetch_log_count"] = len(discover_log) + len(match_log)
+    payload["qualified_preview"] = [asdict(item) for item in decisions if item.qualified][:3]
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
