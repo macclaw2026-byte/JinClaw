@@ -740,6 +740,45 @@ def _extract_weight(text: str, platform: str = "") -> tuple[float | None, str]:
 def _extract_sell_candidates(platform: str, text: str, query: str) -> list[DemandCandidate]:
     rows: list[DemandCandidate] = []
     seen: set[str] = set()
+    if platform == "amazon":
+        matches = list(re.finditer(r'data-asin="([A-Z0-9]{10})"', text, flags=re.I))
+        for idx_match, match in enumerate(matches):
+            asin = match.group(1)
+            link = f"https://www.amazon.com/dp/{asin}"
+            if link in seen:
+                continue
+            seen.add(link)
+            start = match.start()
+            end = matches[idx_match + 1].start() if idx_match + 1 < len(matches) else min(len(text), start + 25000)
+            snippet = text[start:end]
+            title_match = re.search(r'<span[^>]*>([^<]{20,240})</span>', snippet, flags=re.I)
+            title = _clean_text(title_match.group(1)) if title_match else query.title()
+            if title.lower() in {"amazon", "prime", "limited time deal"}:
+                title = query.title()
+            price = _best_price_cny(snippet, platform)
+            monthly_orders = _extract_monthly_orders(snippet)
+            rating_value = _extract_rating_value(snippet)
+            review_count = _extract_review_count(snippet)
+            rows.append(
+                DemandCandidate(
+                    candidate_id=f"{platform}-{asin.lower()}",
+                    title=title,
+                    sell_platform=platform,
+                    sell_link=link,
+                    sell_price_cny=price,
+                    query=query,
+                    extracted_at=_utc_now_iso(),
+                    estimated_daily_orders=(monthly_orders / 30.0) if monthly_orders else None,
+                    rating_value=rating_value,
+                    review_count=review_count,
+                    demand_confidence=65.0 if monthly_orders else 35.0,
+                    raw_signals={"price_extracted": price is not None, "monthly_orders": monthly_orders, "source": "amazon_search"},
+                )
+            )
+            if len(rows) >= 8:
+                break
+        if rows:
+            return rows
     patterns = {
         "temu": r"(https://www\.temu\.com/[^\s\"'<>]+-s\.html(?:\?[^\s\"'<>]+)?|/[^\s\"'<>]+-s\.html(?:\?[^\s\"'<>]+)?)",
         "amazon": r"(https://www\.amazon\.com/dp/[A-Z0-9]{10}|/dp/[A-Z0-9]{10})",
