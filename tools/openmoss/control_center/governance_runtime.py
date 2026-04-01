@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from copy import deepcopy
 from typing import Any, Dict, List
 
 from approval_gate import review_plan
@@ -36,6 +37,16 @@ def _read_json(path: Path, default: Any) -> Any:
 def _write_json(path: Path, payload: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _deep_merge(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:
+    merged = deepcopy(base)
+    for key, value in (patch or {}).items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged.get(key, {}), value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _normalize_action_type(tool_name: str) -> str:
@@ -172,6 +183,10 @@ def build_hook_bundle(task_id: str, stage_name: str, state: Dict[str, Any]) -> D
         "task_id": task_id,
         "stage_name": stage_name,
         "registered": hooks,
+        "last_effects": (state.get("metadata", {}) or {}).get("last_hook_effects", {}) or {},
+        "warnings": (state.get("metadata", {}) or {}).get("hook_warnings", []) or [],
+        "errors": (state.get("metadata", {}) or {}).get("hook_errors", []) or [],
+        "next_actions": (state.get("metadata", {}) or {}).get("hook_next_actions", []) or [],
     }
 
 
@@ -225,7 +240,7 @@ def build_memory_bundle(task_id: str, contract: Dict[str, Any], state: Dict[str,
 
 
 def build_governance_bundle(task_id: str, stage_name: str, contract: Dict[str, Any], state: Dict[str, Any], mission: Dict[str, Any]) -> Dict[str, Any]:
-    return {
+    bundle = {
         "security": build_security_bundle(task_id, contract, mission),
         "policy": build_policy_bundle(task_id, contract, state, mission),
         "approval": build_approval_bundle(task_id, mission),
@@ -234,6 +249,11 @@ def build_governance_bundle(task_id: str, stage_name: str, contract: Dict[str, A
         "hooks": build_hook_bundle(task_id, stage_name, state),
         "memory": build_memory_bundle(task_id, contract, state, mission),
     }
+    runtime_patch = ((state.get("metadata", {}) or {}).get("governance_runtime", {}) or {})
+    if runtime_patch:
+        bundle = _deep_merge(bundle, runtime_patch)
+    bundle["runtime_patch"] = runtime_patch
+    return bundle
 
 
 if __name__ == "__main__":
