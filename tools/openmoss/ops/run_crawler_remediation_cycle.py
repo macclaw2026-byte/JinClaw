@@ -23,6 +23,7 @@ if str(CONTROL_CENTER_ROOT) not in sys.path:
 
 from control_plane_builder import build_control_plane
 from crawler_remediation_executor import execute_crawler_remediation_plan
+from memory_writeback_runtime import record_memory_writeback
 from system_doctor import run_system_doctor
 
 
@@ -164,6 +165,28 @@ def run_cycle(*, start_tasks: bool = True, run_doctor: bool = True) -> dict:
         "after_summary": _extract_summary(control_plane_after),
         "doctor_summary": doctor.get("crawler_health", {}),
     }
+    payload["memory_writeback"] = record_memory_writeback(
+        "project-crawler-remediation-cycle",
+        source="crawler_remediation_cycle",
+        summary={
+            "attention_required": bool((payload.get("doctor_summary", {}) or {}).get("attention_sites")),
+            "state_patch": {},
+            "governance_patch": {},
+            "next_actions": [
+                str(item.get("action", "")).strip()
+                for item in (payload.get("doctor_summary", {}) or {}).get("priority_actions", [])[:5]
+                if str(item.get("action", "")).strip()
+            ],
+            "warnings": [
+                f"attention:{item.get('site', 'project')}"
+                for item in (payload.get("doctor_summary", {}) or {}).get("attention_sites", [])[:5]
+            ],
+            "errors": [],
+            "decisions": ["crawler_remediation_cycle_completed"],
+            "memory_targets": ["project", "runtime"],
+            "memory_reasons": ["crawler_remediation_cycle", "project_crawler_feedback"],
+        },
+    )
     _write_json(LATEST_REPORT_PATH, payload)
     return payload
 

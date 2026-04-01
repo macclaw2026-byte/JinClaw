@@ -125,3 +125,46 @@ def load_memory_writeback(task_id: str) -> Dict[str, Any]:
         "last_entry": last_entry,
         "entries_total": len(entries),
     }
+
+
+def summarize_project_memory_writebacks(*, limit: int = 20) -> Dict[str, Any]:
+    items: List[Dict[str, Any]] = []
+    target_counts: Dict[str, int] = {}
+    reason_counts: Dict[str, int] = {}
+    source_counts: Dict[str, int] = {}
+    if MEMORY_WRITEBACK_ROOT.exists():
+        for path in sorted(MEMORY_WRITEBACK_ROOT.glob("*.json")):
+            payload = _read_json(path, {"entries": []}) or {"entries": []}
+            entries = list(payload.get("entries", []) or [])
+            if not entries:
+                continue
+            last_entry = entries[-1] if entries else {}
+            task_id = path.stem
+            items.append(
+                {
+                    "task_id": task_id,
+                    "path": str(path),
+                    "entries_total": len(entries),
+                    "last_entry": last_entry,
+                }
+            )
+            for target in last_entry.get("targets", []) or []:
+                key = str(target).strip()
+                if key:
+                    target_counts[key] = target_counts.get(key, 0) + 1
+            for reason in last_entry.get("memory_reasons", []) or []:
+                key = str(reason).strip()
+                if key:
+                    reason_counts[key] = reason_counts.get(key, 0) + 1
+            source = str(last_entry.get("source", "")).strip()
+            if source:
+                source_counts[source] = source_counts.get(source, 0) + 1
+    items.sort(key=lambda item: str((item.get("last_entry", {}) or {}).get("at", "")), reverse=True)
+    return {
+        "generated_at": _utc_now_iso(),
+        "tasks_total": len(items),
+        "recent_items": items[:limit],
+        "target_counts": target_counts,
+        "reason_counts": reason_counts,
+        "source_counts": source_counts,
+    }

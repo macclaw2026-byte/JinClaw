@@ -21,6 +21,7 @@ from typing import Any, Dict, List
 from canonical_active_task import resolve_canonical_active_task
 from crawler_capability_profile import build_crawler_capability_profile
 from crawler_remediation_planner import build_crawler_remediation_plan
+from memory_writeback_runtime import summarize_project_memory_writebacks
 from paths import (
     ALERTS_PATH,
     CRAWLER_CAPABILITY_PROFILE_PATH,
@@ -333,6 +334,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
     """
     process_registry = build_process_registry()
     crawler_capability_profile = build_crawler_capability_profile()
+    memory_writeback_overview = summarize_project_memory_writebacks()
     crawler_remediation_queue = build_crawler_remediation_queue(crawler_capability_profile)
     crawler_remediation_plan = build_crawler_remediation_plan()
     crawler_remediation_execution = _load_crawler_remediation_execution()
@@ -364,6 +366,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
             "crawler_remediation_total": len(crawler_remediation_queue.get("items", [])),
             "crawler_remediation_plan_total": len(crawler_remediation_plan.get("items", [])),
             "crawler_remediation_execution_total": len(crawler_remediation_execution.get("items", [])),
+            "memory_writeback_tasks_total": memory_writeback_overview.get("tasks_total", 0),
             "tasks_total": len(task_views["task_registry"].get("items", [])),
             "waiting_total": len(task_views["waiting_registry"].get("items", [])),
             "doctor_queue_total": len(task_views["doctor_queue"].get("items", [])),
@@ -374,6 +377,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
     return {
         "process_registry": process_registry,
         "crawler_capability_profile": crawler_capability_profile,
+        "memory_writeback_overview": memory_writeback_overview,
         "crawler_remediation_queue": crawler_remediation_queue,
         "crawler_remediation_plan": crawler_remediation_plan,
         "crawler_remediation_execution": crawler_remediation_execution,

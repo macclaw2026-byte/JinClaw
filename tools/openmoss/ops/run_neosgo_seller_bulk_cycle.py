@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 
 WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
+CONTROL_CENTER_ROOT = WORKSPACE_ROOT / "tools/openmoss/control_center"
 RUNNER_PATH = WORKSPACE_ROOT / "tools/bin/neosgo-seller-bulk-runner.py"
 STATE_PATH = WORKSPACE_ROOT / "data/neosgo-seller-bulk-state.json"
 OUTPUT_ROOT = WORKSPACE_ROOT / "output/neosgo-seller-bulk"
@@ -20,10 +21,18 @@ OPENCLAW_BIN = "/opt/homebrew/bin/openclaw"
 DEFAULT_CHAT = "8528973600"
 NY_TZ = ZoneInfo("America/New_York")
 
+import sys
+
+if str(CONTROL_CENTER_ROOT) not in sys.path:
+    sys.path.insert(0, str(CONTROL_CENTER_ROOT))
+
+from memory_writeback_runtime import record_memory_writeback
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run Neosgo seller bulk submission and emit a report.")
     parser.add_argument("--force", action="store_true", help="Run regardless of schedule gate.")
+    parser.add_argument("--no-telegram", action="store_true", help="Generate report but skip Telegram delivery.")
     parser.add_argument("--limit", type=int, default=9999, help="Maximum number of importable candidates to process.")
     parser.add_argument("--page-size", type=int, default=50, help="Candidates page size.")
     parser.add_argument("--max-pages", type=int, default=10, help="Maximum candidate pages to scan.")
@@ -391,8 +400,23 @@ def main():
     summary["runner_returncode"] = proc.returncode
     summary["runner_stdout_tail"] = proc.stdout[-4000:]
     summary["runner_stderr_tail"] = proc.stderr[-4000:]
+    summary["memory_writeback"] = record_memory_writeback(
+        "project-neosgo-seller-bulk",
+        source="seller_bulk_cycle",
+        summary={
+            "attention_required": bool(summary.get("failure_count", 0)),
+            "state_patch": {},
+            "governance_patch": {},
+            "next_actions": [str(item).strip() for item in (summary.get("governance", {}) or {}).get("next_actions", []) if str(item).strip()],
+            "warnings": [str((summary.get("governance", {}) or {}).get("primary_blocker", "")).strip()] if str((summary.get("governance", {}) or {}).get("primary_blocker", "")).strip() else [],
+            "errors": [],
+            "decisions": ["seller_bulk_cycle_completed"],
+            "memory_targets": ["project", "runtime"],
+            "memory_reasons": ["seller_bulk_cycle", "project_seller_feedback"],
+        },
+    )
     md_path, json_path = write_report(summary)
-    deliveries = send_to_telegram(args.chat_id, summary, [md_path, json_path])
+    deliveries = [] if args.no_telegram else send_to_telegram(args.chat_id, summary, [md_path, json_path])
     summary["telegram_deliveries"] = deliveries
     json_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     mark_schedule_run()
