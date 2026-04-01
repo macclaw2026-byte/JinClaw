@@ -111,10 +111,27 @@ def pick_submission_price(listing):
     return round(base + PRICE_MARKUP_USD, 2)
 
 
+def html_to_plain_text(value):
+    if not isinstance(value, str):
+        return ''
+    text = value
+    text = text.replace('<br>', '\n').replace('<br/>', '\n').replace('<br />', '\n')
+    text = text.replace('</p>', '\n').replace('</div>', '\n').replace('</li>', '\n')
+    import re
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = text.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'")
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n\s*\n+', '\n', text)
+    return text.strip()
+
+
 def pick_description(listing, candidate):
+    # Hard rule: descriptions must always be persisted and submitted as plain text only.
     description = listing.get('description')
     if isinstance(description, str) and description.strip():
-        return description
+        cleaned = html_to_plain_text(description)
+        if cleaned:
+            return cleaned
     title = (
         listing.get('title')
         or listing.get('name')
@@ -122,7 +139,7 @@ def pick_description(listing, candidate):
         or candidate.get('sku')
         or 'Neosgo imported listing'
     )
-    return f'<p>{title}</p>'
+    return html_to_plain_text(str(title))
 
 
 def extract_product_ids(imported):
@@ -147,6 +164,26 @@ def extract_product_ids(imported):
     return product_ids
 
 
+def extract_import_failure_message(imported):
+    if not isinstance(imported, dict):
+        return None
+    data = imported.get('data')
+    if not isinstance(data, dict):
+        return None
+    results = data.get('results')
+    if not isinstance(results, list):
+        return None
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        if str(result.get('status') or '').strip().upper() != 'FAILED':
+            continue
+        message = str(result.get('message') or '').strip()
+        if message:
+            return message
+    return None
+
+
 def fetch_candidates(base, token, page_size, max_pages):
     candidates = []
     page = 1
@@ -161,6 +198,42 @@ def fetch_candidates(base, token, page_size, max_pages):
             break
         page += 1
     return candidates
+
+
+def normalize_text(value):
+    if value is None:
+        return ''
+    return str(value).strip().lower()
+
+
+def is_new_import_candidate(candidate):
+    status_fields = [
+        candidate.get('uploadStatus'),
+        candidate.get('importStatus'),
+        candidate.get('candidateStatus'),
+        candidate.get('status'),
+    ]
+    normalized = {normalize_text(value) for value in status_fields if value is not None}
+    return 'new import' in normalized or 'new_import' in normalized
+
+
+def fetch_draft_listing_skus(base, token, page_size=100, max_pages=20):
+    skus = set()
+    page = 1
+    while page <= max_pages:
+        payload = request('GET', base, token, f'/api/automation/seller/listings?status=DRAFT&page={page}&pageSize={page_size}')
+        data = payload.get('data') or {}
+        items = data.get('items') or []
+        if not items:
+            break
+        for item in items:
+            sku = item.get('sku')
+            if sku:
+                skus.add(str(sku).strip())
+        if not data.get('hasNextPage'):
+            break
+        page += 1
+    return skus
 
 
 def derive_category_id(category_name):
@@ -203,15 +276,61 @@ def main():
     write_state(state)
 
     candidates = fetch_candidates(base, token, args.page_size, args.max_pages)
-    todo = [c for c in candidates if c.get('canImport')]
+    draft_listing_skus = fetch_draft_listing_skus(base, token, page_size=args.page_size, max_pages=args.max_pages)
+
+    todo = [
+        c for c in candidates
+        if c.get('canImport') and is_new_import_candidate(c) and str(c.get('sku') or '').strip() not in draft_listing_skus
+    ]
     if args.skus:
         requested = set(args.skus)
         todo = [c for c in todo if c.get('sku') in requested]
+
+    skipped = []
+    for c in candidates:
+        sku = str(c.get('sku') or '').strip()
+        reasons = []
+        if not c.get('canImport'):
+            reasons.append('canImport=false')
+        if not is_new_import_candidate(c):
+            reasons.append('not-new-import')
+        if sku and sku in draft_listing_skus:
+            reasons.append('draft-listing-sku-exists')
+        if reasons:
+            skipped.append({
+                'sku': sku or None,
+                'candidateStatus': c.get('candidateStatus'),
+                'uploadStatus': c.get('uploadStatus'),
+                'importStatus': c.get('importStatus'),
+                'reasons': reasons,
+            })
+
+    state['draftListingSkuCount'] = len(draft_listing_skus)
+    state['eligibleCount'] = len(todo)
+    state['skipped'] = skipped
+    write_state(state)
 
     for c in todo[:args.limit]:
         sku = c['sku']
         row = {'sku': sku, 'candidateStatus': c.get('candidateStatus')}
         try:
+            row['guardChecks'] = {
+                'isNewImport': is_new_import_candidate(c),
+                'draftListingSkuExists': sku in draft_listing_skus,
+            }
+            if not row['guardChecks']['isNewImport']:
+                row['skipped'] = True
+                row['skipReason'] = 'not-new-import'
+                state['processed'].append(row)
+                write_state(state)
+                continue
+            if row['guardChecks']['draftListingSkuExists']:
+                row['skipped'] = True
+                row['skipReason'] = 'draft-listing-sku-exists'
+                state['processed'].append(row)
+                write_state(state)
+                continue
+
             imp = safe_request('POST', base, token, '/api/automation/seller/giga/import', {'skus': [sku]}, idempotency=True)
             row['import'] = imp
             if not imp['ok']:
@@ -219,6 +338,9 @@ def main():
                 write_state(state)
                 continue
             imported = imp['resp']
+            import_failure_message = extract_import_failure_message(imported)
+            if import_failure_message:
+                row['error'] = import_failure_message
             product_ids = extract_product_ids(imported)
             if not product_ids:
                 q = request('GET', base, token, '/api/automation/seller/listings?status=DRAFT&page=1&pageSize=100')

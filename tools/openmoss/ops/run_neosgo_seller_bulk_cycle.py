@@ -88,25 +88,64 @@ def _row_name(row: dict) -> str:
     )
 
 
+def _extract_import_failure_labels(raw_row: dict) -> list[str]:
+    labels: list[str] = []
+    results = (
+        raw_row.get("import", {})
+        .get("resp", {})
+        .get("data", {})
+        .get("results")
+        or []
+    )
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("status") or "").strip().upper() != "FAILED":
+            continue
+        message = str(item.get("message") or "").strip()
+        lowered = message.lower()
+        if not message:
+            continue
+        if "non-draft listing" in lowered:
+            labels.append("SKU_EXISTS_ON_NON_DRAFT")
+        elif "unique constraint failed" in lowered:
+            labels.append("SKU_UNIQUE_CONSTRAINT")
+        else:
+            labels.append(message)
+    return labels
+
+
+def _is_auto_repairable_label(label: str) -> bool:
+    normalized = str(label or "").strip().lower()
+    return normalized in {
+        "imported product id not found",
+        "only_draft_supported",
+        "sku_exists_on_non_draft",
+        "sku_unique_constraint",
+    } or "unique constraint" in normalized or "draft" in normalized
+
+
 def summarize(state: dict) -> dict:
     processed = state.get("processed", [])
     rows = []
-    for row in processed:
-        readiness = row.get("readiness", {}).get("resp", {}).get("data", {}).get("submissionReadiness", {})
-        submit_resp = row.get("submit", {}).get("resp", {}).get("data", {})
+    for raw_row in processed:
+        readiness = raw_row.get("readiness", {}).get("resp", {}).get("data", {}).get("submissionReadiness", {})
+        import_failure_labels = _extract_import_failure_labels(raw_row)
+        submit_resp = raw_row.get("submit", {}).get("resp", {}).get("data", {})
         rows.append(
             {
-                "sku": row.get("sku"),
-                "product_name": _row_name(row),
-                "product_id": row.get("productId"),
-                "submitted": bool(row.get("submit", {}).get("ok")),
+                "sku": raw_row.get("sku"),
+                "product_name": _row_name(raw_row),
+                "product_id": raw_row.get("productId"),
+                "submitted": bool(raw_row.get("submit", {}).get("ok")),
                 "review_status": submit_resp.get("reviewStatus"),
-                "status": submit_resp.get("status") or row.get("patch", {}).get("resp", {}).get("data", {}).get("listing", {}).get("status"),
-                "submission_price_usd": row.get("payload", {}).get("basePrice"),
+                "status": submit_resp.get("status") or raw_row.get("patch", {}).get("resp", {}).get("data", {}).get("listing", {}).get("status"),
+                "submission_price_usd": raw_row.get("payload", {}).get("basePrice"),
                 "blocking_issue_codes": readiness.get("issueCodes") or [],
                 "blocking_issues": readiness.get("issues") or [],
-                "error": row.get("error"),
-                "exception": row.get("exception"),
+                "error": raw_row.get("error"),
+                "exception": raw_row.get("exception"),
+                "import_failure_labels": import_failure_labels,
             }
         )
     success = [row for row in rows if row["submitted"]]
@@ -114,10 +153,14 @@ def summarize(state: dict) -> dict:
     failure_categories: dict[str, int] = {}
     auto_repairable_examples: list[dict] = []
     manual_review_examples: list[dict] = []
+    auto_repairable_count = 0
+    manual_review_count = 0
     for row in failed:
         labels: list[str] = []
         if row["blocking_issue_codes"]:
             labels.extend(str(code).strip() for code in row["blocking_issue_codes"] if str(code).strip())
+        if row["import_failure_labels"]:
+            labels.extend(str(label).strip() for label in row["import_failure_labels"] if str(label).strip())
         if row["error"]:
             labels.append(str(row["error"]).strip())
         if row["exception"]:
@@ -134,15 +177,14 @@ def summarize(state: dict) -> dict:
             "status": row["status"],
             "submission_price_usd": row["submission_price_usd"],
         }
-        if (
-            "imported product id not found" in normalized_labels
-            or any("unique constraint" in label for label in normalized_labels)
-            or any("draft" in label for label in normalized_labels)
-        ):
+        if any(_is_auto_repairable_label(label) for label in labels):
+            auto_repairable_count += 1
             if len(auto_repairable_examples) < 8:
                 auto_repairable_examples.append(sample)
-        elif len(manual_review_examples) < 8:
-            manual_review_examples.append(sample)
+        else:
+            manual_review_count += 1
+            if len(manual_review_examples) < 8:
+                manual_review_examples.append(sample)
     primary_blocker = ""
     if failure_categories:
         primary_blocker = sorted(failure_categories.items(), key=lambda item: (-item[1], item[0]))[0][0]
@@ -174,21 +216,8 @@ def summarize(state: dict) -> dict:
             "primary_blocker": primary_blocker,
             "failure_categories": failure_categories,
             "next_actions": next_actions,
-            "auto_repairable_count": len(failed) if not failed else sum(
-                count for label, count in failure_categories.items()
-                if label == "imported product id not found"
-                or "unique constraint" in label.lower()
-                or "draft" in label.lower()
-            ),
-            "manual_review_count": len(failed) if not failed else max(
-                0,
-                len(failed) - sum(
-                    count for label, count in failure_categories.items()
-                    if label == "imported product id not found"
-                    or "unique constraint" in label.lower()
-                    or "draft" in label.lower()
-                ),
-            ),
+            "auto_repairable_count": auto_repairable_count,
+            "manual_review_count": manual_review_count,
             "auto_repairable_examples": auto_repairable_examples,
             "manual_review_examples": manual_review_examples,
         },
@@ -251,6 +280,8 @@ def write_report(summary: dict) -> tuple[Path, Path]:
         lines.append(f"- SKU `{row['sku']}` | {row['product_name']} | submit_price=${row['submission_price_usd']} | submitted={row['submitted']} | status={row['status']} | review={row['review_status']}")
         if row["blocking_issue_codes"]:
             lines.append(f"  blockers={', '.join(row['blocking_issue_codes'])}")
+        if row["import_failure_labels"]:
+            lines.append(f"  import_failures={', '.join(row['import_failure_labels'])}")
         if row["error"] or row["exception"]:
             lines.append(f"  error={row['error'] or row['exception']}")
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
