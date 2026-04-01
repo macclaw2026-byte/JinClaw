@@ -19,6 +19,7 @@ from authorized_session_manager import build_authorized_session_plan
 from crawler_capability_profile import build_crawler_capability_profile
 from hook_registry import get_registered_hooks
 from human_checkpoint import build_human_checkpoint
+from memory_pipeline_runtime import build_memory_layers
 from permission_decision_runtime import build_permission_decision_bundle
 from paths import MEMORY_ROOT, POLICY_ROOT
 from security_policy import assess_plan_risk, classify_external_action, default_security_policy
@@ -232,11 +233,20 @@ def build_memory_bundle(task_id: str, contract: Dict[str, Any], state: Dict[str,
         task_types=[str(item) for item in intent.get("task_types", []) if str(item).strip()],
         risk_level=str(intent.get("risk_level", "")),
     ) if selected_plan.get("plan_id") else {}
+    layers = build_memory_layers(
+        task_id=task_id,
+        task_summary=task_summary,
+        matched_promoted_rules=matched_rules,
+        matched_error_recurrence=matched_recurrence,
+        plan_history_profile=history_profile,
+        state=state,
+    )
     bundle = {
         "task_summary": task_summary,
         "matched_promoted_rules": matched_rules[:5],
         "matched_error_recurrence": matched_recurrence[:5],
         "plan_history_profile": history_profile,
+        "layers": layers,
     }
     _write_json(MEMORY_ROOT / f"{task_id}.json", bundle)
     return bundle
