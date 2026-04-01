@@ -1411,6 +1411,9 @@ def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -
         f"通过强规则候选数: {summary['qualified_count']}",
         f"治理状态: {governance.get('status', 'unknown')}",
     ]
+    primary_blocker = governance.get("primary_blocker")
+    if primary_blocker and primary_blocker != "none":
+        lines.append(f"主阻塞: {primary_blocker}")
     next_actions = governance.get("next_actions", []) or []
     if next_actions:
         lines.append(f"下一步: {', '.join(next_actions[:3])}")

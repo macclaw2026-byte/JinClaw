@@ -160,6 +160,11 @@ def summarize(state: dict) -> dict:
     }
 
 
+def _top_success_rows(summary: dict, limit: int = 3) -> list[dict]:
+    rows = [row for row in summary.get("rows", []) if row.get("submitted")]
+    return rows[:limit]
+
+
 def write_report(summary: dict) -> tuple[Path, Path]:
     OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
     stamp = _utc_now().strftime("%Y%m%dT%H%M%SZ")
@@ -220,6 +225,11 @@ def send_to_telegram(chat_id: str, summary: dict, attachments: list[Path]) -> li
     )
     if next_actions:
         text += f"\nNext: {', '.join(next_actions)}"
+    top_success = _top_success_rows(summary)
+    if top_success:
+        text += "\nTop success:"
+        for row in top_success:
+            text += f"\n- {row['sku']} ${row['submission_price_usd']}"
     deliveries = []
     for idx, attachment in enumerate(attachments):
         cmd = [
