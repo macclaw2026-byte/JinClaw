@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from canonical_active_task import resolve_canonical_active_task
-from governance_runtime import build_memory_bundle
+from governance_runtime import build_governance_bundle
 from paths import BROWSER_SIGNALS_ROOT, OPENMOSS_ROOT, TASK_STATUS_ROOT, WORKSPACE_ROOT
 from progress_evidence import build_progress_evidence
 from run_liveness_verifier import build_run_liveness
@@ -387,13 +387,15 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
     business = _derive_business_outcome_from_workspace_guards(canonical_task_id, state)
     milestone_progress = _milestone_snapshot(contract, state)
     progress_evidence = build_progress_evidence(canonical_task_id)
-    memory = build_memory_bundle(
+    governance = build_governance_bundle(
         canonical_task_id,
+        str(state.get("current_stage", "")).strip(),
         contract,
         state,
         {
             "selected_plan": ((contract.get("metadata", {}) or {}).get("control_center", {}) or {}).get("selected_plan", {}),
             "intent": ((contract.get("metadata", {}) or {}).get("control_center", {}) or {}).get("intent", {}),
+            "approval": ((contract.get("metadata", {}) or {}).get("control_center", {}) or {}).get("approval", {}),
         },
     )
     snapshot: Dict[str, Any] = {
@@ -409,7 +411,8 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
         "milestone_progress": milestone_progress,
         "run_liveness": build_run_liveness(canonical_task_id),
         "goal_conformance": progress_evidence.get("goal_conformance", {}),
-        "memory": memory,
+        "governance": governance,
+        "memory": governance.get("memory", {}),
         "browser_signals": {
             "diagnosis": browser_signals.get("diagnosis", "none"),
             "recommended_action": browser_signals.get("recommended_action", "continue_current_plan"),

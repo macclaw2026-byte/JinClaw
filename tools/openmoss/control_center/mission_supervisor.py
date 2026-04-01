@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/mission_supervisor.py`
+- 文件作用：负责任务监督、空转识别与推进纠偏。
+- 顶层函数：_utc_now_iso、_write_json、_apply_repair、supervise_task、run_mission_supervisor。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import json
@@ -12,6 +20,7 @@ from paths import CONTROL_CENTER_RUNTIME_ROOT
 from progress_evidence import build_progress_evidence
 from response_policy_engine import build_supervisor_status_text
 from task_receipt_engine import emit_route_receipt
+from task_status_snapshot import build_task_status_snapshot
 
 AUTONOMY_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy")
 if str(AUTONOMY_DIR) not in sys.path:
@@ -24,15 +33,33 @@ SUPERVISOR_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "supervisor"
 
 
 def _utc_now_iso() -> str:
+    """
+    中文注解：
+    - 功能：实现 `_utc_now_iso` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return datetime.now(timezone.utc).isoformat()
 
 
 def _write_json(path: Path, payload: Dict[str, Any]) -> None:
+    """
+    中文注解：
+    - 功能：实现 `_write_json` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _apply_repair(task_id: str, evidence: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：实现 `_apply_repair` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     state = load_state(task_id)
     reason = str(evidence.get("reason", "unknown"))
     repaired = False
@@ -61,6 +88,12 @@ def _apply_repair(task_id: str, evidence: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def supervise_task(task_id: str, *, stale_after_seconds: int = 300, escalation_after_seconds: int = 900) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：实现 `supervise_task` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     evidence = build_progress_evidence(task_id, stale_after_seconds=stale_after_seconds)
     repair = _apply_repair(task_id, evidence) if evidence.get("needs_intervention") else {"task_id": task_id, "repaired": False, "reason": "healthy"}
     report: Dict[str, Any] = {"evidence": evidence, "repair": repair}
@@ -72,13 +105,13 @@ def supervise_task(task_id: str, *, stale_after_seconds: int = 300, escalation_a
                 continue
             if payload.get("task_id") != task_id:
                 continue
+            snapshot = build_task_status_snapshot(task_id)
+            snapshot["authoritative_summary"] = build_supervisor_status_text(task_id, evidence, repair, snapshot)
             route = {
                 "mode": "doctor_diagnostic",
                 "task_id": task_id,
                 "goal": payload.get("goal", ""),
-                "authoritative_task_status": {
-                    "authoritative_summary": build_supervisor_status_text(task_id, evidence, repair),
-                },
+                "authoritative_task_status": snapshot,
             }
             receipt = emit_route_receipt(
                 route,
@@ -93,6 +126,12 @@ def supervise_task(task_id: str, *, stale_after_seconds: int = 300, escalation_a
 
 
 def run_mission_supervisor(*, stale_after_seconds: int = 300, escalation_after_seconds: int = 900) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：实现 `run_mission_supervisor` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     reports: List[Dict[str, Any]] = []
     if not TASKS_ROOT.exists():
         return {"checked_at": _utc_now_iso(), "reports": reports}
