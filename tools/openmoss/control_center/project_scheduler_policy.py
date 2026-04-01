@@ -10,6 +10,10 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _blocked_count(system_summary: Dict[str, Any], category: str) -> int:
+    return int(((system_summary.get("blocked_categories", {}) or {}).get(category, 0) or 0))
+
+
 def _crawler_remediation_policy(
     crawler_profile: Dict[str, Any],
     remediation_execution: Dict[str, Any],
@@ -28,6 +32,9 @@ def _crawler_remediation_policy(
     recommended_mode = "steady"
     suggested_interval_seconds = 3600
     start_tasks = True
+    blocked_project_crawler = _blocked_count(system_summary, "project_crawler_remediation")
+    blocked_authorized_session = _blocked_count(system_summary, "authorized_session")
+    blocked_human_checkpoint = _blocked_count(system_summary, "human_checkpoint")
     if str(feedback.get("coverage_status", "")).strip().lower() == "thin":
         recommended_mode = "aggressive"
         suggested_interval_seconds = 1800
@@ -48,10 +55,22 @@ def _crawler_remediation_policy(
         recommended_mode = "aggressive"
         suggested_interval_seconds = min(suggested_interval_seconds, 1800)
         reasons.append("multiple_attention_sites")
+    if blocked_project_crawler > 0:
+        recommended_mode = "aggressive"
+        suggested_interval_seconds = min(suggested_interval_seconds, 900)
+        start_tasks = True
+        reasons.append("project_tasks_blocked_by_crawler_remediation")
+    if blocked_authorized_session > 0 or blocked_human_checkpoint > 0:
+        recommended_mode = "aggressive"
+        suggested_interval_seconds = min(suggested_interval_seconds, 1200)
+        reasons.append("crawler_routes_waiting_on_authorized_or_human_gate")
     if active_items and str(feedback.get("coverage_status", "")).strip().lower() == "strong":
         start_tasks = False
         suggested_interval_seconds = max(suggested_interval_seconds, 7200)
         reasons.append("active_remediation_tasks_already_running")
+    if blocked_project_crawler > 0:
+        start_tasks = True
+        reasons = [reason for reason in reasons if reason != "active_remediation_tasks_already_running"]
     return {
         "recommended_mode": recommended_mode,
         "suggested_interval_seconds": suggested_interval_seconds,
@@ -63,20 +82,38 @@ def _crawler_remediation_policy(
             "trend_direction": trend.get("direction", "unknown"),
             "attention_sites": attention_sites,
             "memory_writeback_tasks_total": system_summary.get("memory_writeback_tasks_total", 0),
+            "blocked_project_crawler_remediation_total": blocked_project_crawler,
+            "blocked_authorized_session_total": blocked_authorized_session,
+            "blocked_human_checkpoint_total": blocked_human_checkpoint,
         },
     }
 
 
 def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
+    blocked_approval = _blocked_count(system_summary, "approval_or_contract")
+    blocked_targeted_fix = _blocked_count(system_summary, "targeted_fix")
+    reasons = ["seller_bulk_is_time_window_gated_in_script"]
+    recommended_mode = "nightly_window"
+    suggested_interval_seconds = 900
+    if blocked_approval > 0:
+        recommended_mode = "approval_sensitive_nightly"
+        suggested_interval_seconds = 1800
+        reasons.append("project_approval_pressure_detected")
+    if blocked_targeted_fix >= 3:
+        recommended_mode = "repair_sensitive_nightly"
+        suggested_interval_seconds = max(suggested_interval_seconds, 1800)
+        reasons.append("multiple_targeted_fix_blockers_detected")
     return {
-        "recommended_mode": "nightly_window",
-        "suggested_interval_seconds": 900,
+        "recommended_mode": recommended_mode,
+        "suggested_interval_seconds": suggested_interval_seconds,
         "start_tasks": True,
-        "reasons": ["seller_bulk_is_time_window_gated_in_script"],
+        "reasons": reasons,
         "window_hour_new_york": 23,
         "skip_outside_window": True,
         "summary": {
             "memory_writeback_tasks_total": system_summary.get("memory_writeback_tasks_total", 0),
+            "blocked_approval_or_contract_total": blocked_approval,
+            "blocked_targeted_fix_total": blocked_targeted_fix,
         },
     }
 
@@ -94,6 +131,10 @@ def _cross_market_arbitrage_policy(
     loop_sleep_seconds = 300
     discovery_interval_seconds = 30 * 60
     matching_interval_seconds = 60 * 60
+    start_tasks = True
+    blocked_project_crawler = _blocked_count(system_summary, "project_crawler_remediation")
+    blocked_authorized_session = _blocked_count(system_summary, "authorized_session")
+    blocked_human_checkpoint = _blocked_count(system_summary, "human_checkpoint")
     if coverage_status == "thin":
         recommended_mode = "aggressive"
         loop_sleep_seconds = 180
@@ -118,19 +159,35 @@ def _cross_market_arbitrage_policy(
         recommended_mode = "aggressive"
         loop_sleep_seconds = min(loop_sleep_seconds, 180)
         reasons.append("multiple_attention_sites")
+    if blocked_project_crawler > 0:
+        recommended_mode = "remediation_hold"
+        loop_sleep_seconds = max(loop_sleep_seconds, 900)
+        discovery_interval_seconds = max(discovery_interval_seconds, 60 * 60)
+        matching_interval_seconds = max(matching_interval_seconds, 2 * 60 * 60)
+        start_tasks = False
+        reasons.append("project_tasks_blocked_by_crawler_remediation")
+    elif blocked_authorized_session > 0 or blocked_human_checkpoint > 0:
+        recommended_mode = "guarded"
+        loop_sleep_seconds = max(loop_sleep_seconds, 600)
+        discovery_interval_seconds = max(discovery_interval_seconds, 45 * 60)
+        matching_interval_seconds = max(matching_interval_seconds, 90 * 60)
+        reasons.append("crawler_routes_waiting_on_authorized_or_human_gate")
     return {
         "recommended_mode": recommended_mode,
         "loop_sleep_seconds": loop_sleep_seconds,
         "discovery_interval_seconds": discovery_interval_seconds,
         "matching_interval_seconds": matching_interval_seconds,
         "report_hour_new_york": 18,
-        "start_tasks": True,
+        "start_tasks": start_tasks,
         "reasons": reasons,
         "summary": {
             "feedback_coverage_status": feedback.get("coverage_status", "unknown"),
             "trend_direction": trend.get("direction", "unknown"),
             "attention_sites": attention_sites,
             "memory_writeback_tasks_total": system_summary.get("memory_writeback_tasks_total", 0),
+            "blocked_project_crawler_remediation_total": blocked_project_crawler,
+            "blocked_authorized_session_total": blocked_authorized_session,
+            "blocked_human_checkpoint_total": blocked_human_checkpoint,
         },
     }
 

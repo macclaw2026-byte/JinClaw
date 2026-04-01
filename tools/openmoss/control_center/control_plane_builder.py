@@ -21,6 +21,7 @@ from typing import Any, Dict, List
 from canonical_active_task import resolve_canonical_active_task
 from crawler_capability_profile import build_crawler_capability_profile
 from crawler_remediation_planner import build_crawler_remediation_plan
+from execution_governor import classify_blocked_runtime_state
 from memory_writeback_runtime import summarize_project_memory_writebacks
 from project_scheduler_policy import build_project_scheduler_policy
 from paths import (
@@ -205,6 +206,23 @@ def _conversation_links_for_task(task_id: str, canonical_task_id: str) -> List[D
     return rows
 
 
+def _normalized_blocked_runtime_state(state: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = (state.get("metadata", {}) or {}) if isinstance(state, dict) else {}
+    blocked = dict(metadata.get("blocked_runtime_state", {}) or {})
+    if blocked and str(blocked.get("category", "")).strip():
+        return blocked
+    if str(state.get("status", "")).strip() != "blocked":
+        return blocked
+    inferred = classify_blocked_runtime_state(
+        next_action=str(state.get("next_action", "")).strip(),
+        blockers=[str(item).strip() for item in (state.get("blockers", []) or []) if str(item).strip()],
+        governance_attention={},
+    )
+    if not str(inferred.get("attention_reason", "")).strip():
+        inferred["attention_reason"] = str(state.get("next_action", "")).strip() or "blocked_without_runtime_metadata"
+    return inferred
+
+
 def build_task_registry(*, stale_after_seconds: int = 300, escalation_after_seconds: int = 900) -> Dict[str, Any]:
     """
     中文注解：
@@ -229,6 +247,7 @@ def build_task_registry(*, stale_after_seconds: int = 300, escalation_after_seco
             canonical_task_id = str(canonical.get("canonical_task_id", task_id)).strip() or task_id
             evidence = build_progress_evidence(canonical_task_id, stale_after_seconds=stale_after_seconds)
             links = _conversation_links_for_task(task_id, canonical_task_id)
+            blocked_runtime_state = _normalized_blocked_runtime_state(state)
             entry = {
                 "task_id": task_id,
                 "canonical_task_id": canonical_task_id,
@@ -237,7 +256,7 @@ def build_task_registry(*, stale_after_seconds: int = 300, escalation_after_seco
                 "status": state.get("status", "unknown"),
                 "current_stage": state.get("current_stage", ""),
                 "next_action": state.get("next_action", ""),
-                "blocked_runtime_state": state.get("metadata", {}).get("blocked_runtime_state", {}) or {},
+                "blocked_runtime_state": blocked_runtime_state,
                 "last_progress_at": state.get("last_progress_at", ""),
                 "last_update_at": state.get("last_update_at", ""),
                 "progress_state": evidence.get("progress_state", "unknown"),
@@ -343,6 +362,16 @@ def _load_cross_market_arbitrage_scheduler_state() -> Dict[str, Any]:
     return _read_json(CROSS_MARKET_ARBITRAGE_SCHEDULER_STATE_PATH, {}) or {}
 
 
+def _blocked_category_counts(task_items: List[Dict[str, Any]]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for item in task_items:
+        if item.get("status") != "blocked":
+            continue
+        category = str(((item.get("blocked_runtime_state", {}) or {}).get("category", ""))).strip() or "unknown"
+        counts[category] = counts.get(category, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
 def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seconds: int = 900) -> Dict[str, Any]:
     """
     中文注解：
@@ -363,6 +392,9 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
         stale_after_seconds=stale_after_seconds,
         escalation_after_seconds=escalation_after_seconds,
     )
+    task_items = task_views["task_registry"].get("items", []) or []
+    blocked_category_counts = _blocked_category_counts(task_items)
+    top_blocked_category = next(iter(blocked_category_counts), "")
     snapshot = {
         "generated_at": _utc_now_iso(),
         "process_registry_path": process_registry.get("path"),
@@ -392,18 +424,15 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
             "seller_bulk_last_mode": seller_bulk_scheduler_state.get("last_mode", ""),
             "cross_market_arbitrage_last_mode": cross_market_arbitrage_scheduler_state.get("last_mode", ""),
             "memory_writeback_tasks_total": memory_writeback_overview.get("tasks_total", 0),
-            "tasks_total": len(task_views["task_registry"].get("items", [])),
-            "blocked_total": sum(1 for item in task_views["task_registry"].get("items", []) if item.get("status") == "blocked"),
-            "blocked_project_crawler_remediation_total": sum(
-                1
-                for item in task_views["task_registry"].get("items", [])
-                if str(((item.get("blocked_runtime_state", {}) or {}).get("category", ""))).strip() == "project_crawler_remediation"
-            ),
-            "blocked_approval_or_contract_total": sum(
-                1
-                for item in task_views["task_registry"].get("items", [])
-                if str(((item.get("blocked_runtime_state", {}) or {}).get("category", ""))).strip() == "approval_or_contract"
-            ),
+            "tasks_total": len(task_items),
+            "blocked_total": sum(1 for item in task_items if item.get("status") == "blocked"),
+            "blocked_project_crawler_remediation_total": blocked_category_counts.get("project_crawler_remediation", 0),
+            "blocked_approval_or_contract_total": blocked_category_counts.get("approval_or_contract", 0),
+            "blocked_authorized_session_total": blocked_category_counts.get("authorized_session", 0),
+            "blocked_human_checkpoint_total": blocked_category_counts.get("human_checkpoint", 0),
+            "blocked_targeted_fix_total": blocked_category_counts.get("targeted_fix", 0),
+            "blocked_categories": blocked_category_counts,
+            "top_blocked_category": top_blocked_category,
             "waiting_total": len(task_views["waiting_registry"].get("items", [])),
             "doctor_queue_total": len(task_views["doctor_queue"].get("items", [])),
             "alerts_total": len(task_views["alerts"].get("items", [])),
