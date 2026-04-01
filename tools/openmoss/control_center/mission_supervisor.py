@@ -153,6 +153,7 @@ def run_mission_supervisor(*, stale_after_seconds: int = 300, escalation_after_s
     )
     result = {
         "checked_at": _utc_now_iso(),
+        "crawler_feedback": (control_plane.get("crawler_capability_profile", {}) or {}).get("feedback", {}) or {},
         "crawler_remediation_queue": (control_plane.get("crawler_remediation_queue", {}) or {}),
         "crawler_remediation_plan": (control_plane.get("crawler_remediation_plan", {}) or {}),
         "reports": reports,

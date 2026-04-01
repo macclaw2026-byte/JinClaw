@@ -385,6 +385,8 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
         "crawler_health": {
             "summary": crawler_summary,
             "trend": crawler_profile.get("trend", {}) or {},
+            "feedback": crawler_profile.get("feedback", {}) or {},
+            "memory_writeback_overview": crawler_profile.get("memory_writeback_overview", {}) or {},
             "attention_sites": crawler_attention_sites,
             "recommended_project_actions": (crawler_profile.get("recommended_project_actions", []) or [])[:5],
             "priority_actions": (crawler_profile.get("priority_actions", []) or [])[:6],

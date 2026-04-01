@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
+from memory_writeback_runtime import summarize_project_memory_writebacks
 from paths import CRAWLER_CAPABILITY_HISTORY_PATH, CRAWLER_CAPABILITY_PROFILE_PATH
 
 
@@ -211,6 +212,38 @@ def _build_priority_actions(sites: List[Dict[str, Any]], summary: Dict[str, Any]
     return actions[:6]
 
 
+def _build_feedback_summary(overview: Dict[str, Any]) -> Dict[str, Any]:
+    target_counts = overview.get("target_counts", {}) or {}
+    source_counts = overview.get("source_counts", {}) or {}
+    recent_items = list(overview.get("recent_items", []) or [])
+    recent_project_items = [
+        item
+        for item in recent_items
+        if "project" in (((item.get("last_entry", {}) or {}).get("targets", []) or []))
+    ]
+    recent_project_sources: List[str] = []
+    for item in recent_project_items:
+        source = str(((item.get("last_entry", {}) or {}).get("source", ""))).strip()
+        if source and source not in recent_project_sources:
+            recent_project_sources.append(source)
+    has_crawler_feedback = bool(source_counts.get("crawler_remediation_cycle"))
+    has_seller_feedback = bool(source_counts.get("seller_bulk_cycle"))
+    coverage_status = "strong"
+    if not has_crawler_feedback and not has_seller_feedback:
+        coverage_status = "thin"
+    elif not has_crawler_feedback or not has_seller_feedback:
+        coverage_status = "partial"
+    return {
+        "tasks_total": int(overview.get("tasks_total", 0) or 0),
+        "project_target_total": int(target_counts.get("project", 0) or 0),
+        "runtime_target_total": int(target_counts.get("runtime", 0) or 0),
+        "recent_project_sources": recent_project_sources[:6],
+        "has_crawler_feedback": has_crawler_feedback,
+        "has_seller_feedback": has_seller_feedback,
+        "coverage_status": coverage_status,
+    }
+
+
 def build_crawler_capability_profile() -> Dict[str, Any]:
     sites: List[Dict[str, Any]] = []
     for profile_path in sorted(SITE_PROFILES_ROOT.glob("*.json")):
@@ -247,21 +280,54 @@ def build_crawler_capability_profile() -> Dict[str, Any]:
         "stability_score": stability_score,
         "primary_attention_reasons": dict(sorted(attention_reasons.items(), key=lambda item: (-item[1], item[0]))),
     }
+    memory_writeback_overview = summarize_project_memory_writebacks()
+    feedback = _build_feedback_summary(memory_writeback_overview)
     history = _append_history(summary)
     trend = _build_trend_summary(history.get("entries", []) or [], summary)
     priority_actions = _build_priority_actions(sites, summary, trend)
+    if not feedback.get("has_crawler_feedback"):
+        priority_actions.append(
+            {
+                "priority": "high",
+                "action": "restore_project_crawler_feedback_loop",
+                "reason": "crawler remediation cycle has not written project feedback yet",
+            }
+        )
+    if not feedback.get("has_seller_feedback"):
+        priority_actions.append(
+            {
+                "priority": "medium",
+                "action": "restore_project_seller_feedback_loop",
+                "reason": "seller nightly has not written project feedback yet",
+            }
+        )
+    if feedback.get("coverage_status") == "thin":
+        priority_actions.append(
+            {
+                "priority": "high",
+                "action": "increase_project_memory_feedback_coverage",
+                "reason": "project-target memory writeback coverage is too thin",
+            }
+        )
     profile = {
         "generated_at": _utc_now_iso(),
         "version": "crawler-capability-profile-v1",
         "summary": summary,
         "trend": trend,
+        "feedback": feedback,
+        "memory_writeback_overview": {
+            "tasks_total": memory_writeback_overview.get("tasks_total", 0),
+            "target_counts": memory_writeback_overview.get("target_counts", {}) or {},
+            "source_counts": memory_writeback_overview.get("source_counts", {}) or {},
+        },
         "history_path": str(CRAWLER_CAPABILITY_HISTORY_PATH),
         "recommended_project_actions": [
             "stabilize_sites_marked_attention_required" if attention_sites else "keep_site_profiles_fresh",
             "promote_high_confidence_tool_orders",
             "refresh_first_run_matrix_when_best_status_degrades",
+            "improve_project_feedback_loop" if feedback.get("coverage_status") != "strong" else "keep_project_feedback_loop_healthy",
         ],
-        "priority_actions": priority_actions,
+        "priority_actions": priority_actions[:8],
         "sites": sites,
     }
     _write_json(CRAWLER_CAPABILITY_PROFILE_PATH, profile)

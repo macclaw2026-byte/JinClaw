@@ -363,6 +363,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
             "crawler_depth_score": crawler_capability_profile.get("summary", {}).get("depth_score", 0),
             "crawler_stability_score": crawler_capability_profile.get("summary", {}).get("stability_score", 0),
             "crawler_trend_direction": crawler_capability_profile.get("trend", {}).get("direction", "unknown"),
+            "crawler_feedback_coverage_status": crawler_capability_profile.get("feedback", {}).get("coverage_status", "unknown"),
             "crawler_remediation_total": len(crawler_remediation_queue.get("items", [])),
             "crawler_remediation_plan_total": len(crawler_remediation_plan.get("items", [])),
             "crawler_remediation_execution_total": len(crawler_remediation_execution.get("items", [])),
