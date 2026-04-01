@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/human_checkpoint.py`
+- 文件作用：负责控制中心中与 `human_checkpoint` 相关的编排、分析或决策逻辑。
+- 顶层函数：_write_json、build_human_checkpoint、main。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import json
@@ -10,15 +18,29 @@ from paths import HUMAN_CHECKPOINTS_ROOT
 
 
 def _write_json(path: Path, payload: object) -> None:
+    """
+    中文注解：
+    - 功能：实现 `_write_json` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def build_human_checkpoint(task_id: str, challenge: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `build_human_checkpoint` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     needed = challenge.get("recommended_route") == "human_checkpoint" or challenge.get("challenge_type") == "human_verification_required"
     payload = {
         "task_id": task_id,
         "required": needed,
+        "governance_type": "human_checkpoint",
+        "risk": "medium" if needed else "low",
         "checkpoint_reason": challenge.get("challenge_type", "none"),
         "resume_condition": "human verification completed and execution can safely resume" if needed else "not_required",
         "instructions": [
@@ -32,6 +54,12 @@ def build_human_checkpoint(task_id: str, challenge: Dict[str, object]) -> Dict[s
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     import argparse
 
     parser = argparse.ArgumentParser(description="Create a human checkpoint for challenge-gated tasks")

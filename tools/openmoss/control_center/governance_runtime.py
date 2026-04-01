@@ -13,9 +13,12 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
+from approval_gate import review_plan
+from authorized_session_manager import build_authorized_session_plan
 from hook_registry import get_registered_hooks
+from human_checkpoint import build_human_checkpoint
 from paths import MEMORY_ROOT, POLICY_ROOT
-from security_policy import assess_plan_risk, classify_external_action
+from security_policy import assess_plan_risk, classify_external_action, default_security_policy
 
 
 LEARNING_ROOT = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/autonomy/learning")
@@ -108,6 +111,52 @@ def build_policy_bundle(task_id: str, contract: Dict[str, Any], state: Dict[str,
     return bundle
 
 
+def build_security_bundle(task_id: str, contract: Dict[str, Any], mission: Dict[str, Any]) -> Dict[str, Any]:
+    external_actions = _iter_external_actions(contract, mission)
+    policy = default_security_policy()
+    assessed = assess_plan_risk({"external_actions": external_actions})
+    bundle = {
+        "task_id": task_id,
+        "principle": policy.get("principle", ""),
+        "forbidden_actions": policy.get("forbidden_actions", []),
+        "network_allow_patterns": policy.get("network_allow_patterns", []),
+        "review_levels": policy.get("review_levels", {}),
+        "overall_risk": assessed.get("risk", "low"),
+    }
+    return bundle
+
+
+def build_approval_bundle(task_id: str, mission: Dict[str, Any]) -> Dict[str, Any]:
+    approval = mission.get("approval", {}) or {}
+    selected_plan = mission.get("selected_plan", {}) or {}
+    if not approval and selected_plan:
+        approval = review_plan(task_id, selected_plan)
+    return {
+        "task_id": task_id,
+        "overall_risk": approval.get("overall_risk", ""),
+        "pending": approval.get("pending", []),
+        "approved": approval.get("approved", []),
+        "decisions": approval.get("decisions", {}),
+    }
+
+
+def build_authorized_session_bundle(task_id: str, mission: Dict[str, Any]) -> Dict[str, Any]:
+    payload = mission.get("authorized_session", {}) or build_authorized_session_plan(
+        task_id,
+        mission.get("intent", {}) or {},
+        mission.get("challenge", {}) or {},
+    )
+    return payload
+
+
+def build_human_checkpoint_bundle(task_id: str, mission: Dict[str, Any]) -> Dict[str, Any]:
+    payload = mission.get("human_checkpoint", {}) or build_human_checkpoint(
+        task_id,
+        mission.get("challenge", {}) or {},
+    )
+    return payload
+
+
 def build_hook_bundle(task_id: str, stage_name: str, state: Dict[str, Any]) -> Dict[str, Any]:
     event_types = [
         "mission.built",
@@ -177,7 +226,11 @@ def build_memory_bundle(task_id: str, contract: Dict[str, Any], state: Dict[str,
 
 def build_governance_bundle(task_id: str, stage_name: str, contract: Dict[str, Any], state: Dict[str, Any], mission: Dict[str, Any]) -> Dict[str, Any]:
     return {
+        "security": build_security_bundle(task_id, contract, mission),
         "policy": build_policy_bundle(task_id, contract, state, mission),
+        "approval": build_approval_bundle(task_id, mission),
+        "authorized_session": build_authorized_session_bundle(task_id, mission),
+        "human_checkpoint": build_human_checkpoint_bundle(task_id, mission),
         "hooks": build_hook_bundle(task_id, stage_name, state),
         "memory": build_memory_bundle(task_id, contract, state, mission),
     }

@@ -45,6 +45,10 @@ def _governance_fragment(snapshot: Dict[str, Any]) -> str:
     - 设计意图：避免用户回执只报状态，不解释“为什么现在这样做”“风险在哪”“系统依据了哪些历史经验”。
     """
     governance = snapshot.get("governance", {}) or {}
+    security = governance.get("security", {}) or {}
+    approval = governance.get("approval", {}) or {}
+    authorized_session = governance.get("authorized_session", {}) or {}
+    human_checkpoint = governance.get("human_checkpoint", {}) or {}
     policy = governance.get("policy", {}) or {}
     memory = governance.get("memory", {}) or snapshot.get("memory", {}) or {}
     risk = str(policy.get("risk", "")).strip()
@@ -54,12 +58,18 @@ def _governance_fragment(snapshot: Dict[str, Any]) -> str:
     parts = []
     if risk:
         parts.append(f"治理风险级别 {risk}")
-    if pending:
+    if pending or approval.get("pending"):
         parts.append(f"待审批 {len(pending)} 项")
+    if authorized_session.get("needs_authorized_session"):
+        parts.append("需要授权态会话")
+    if human_checkpoint.get("required"):
+        parts.append("需要人工检查点")
     if matched_rules:
         parts.append(f"命中 durable rule {len(matched_rules)} 条")
     elif recurrence:
         parts.append(f"命中历史复发模式 {len(recurrence)} 条")
+    if not parts and security.get("overall_risk"):
+        parts.append(f"治理风险级别 {security.get('overall_risk')}")
     if not parts:
         return ""
     return " 当前治理上下文：" + "，".join(parts) + "。"

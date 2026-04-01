@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/approval_gate.py`
+- 文件作用：负责控制中心中与 `approval_gate` 相关的编排、分析或决策逻辑。
+- 顶层函数：_utc_now_iso、_write_json、_approval_path、_read_json、review_plan、approve_pending_action、main。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import json
@@ -12,25 +20,55 @@ from security_policy import assess_plan_risk, default_security_policy
 
 
 def _utc_now_iso() -> str:
+    """
+    中文注解：
+    - 功能：实现 `_utc_now_iso` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return datetime.now(timezone.utc).isoformat()
 
 
 def _write_json(path: Path, payload) -> None:
+    """
+    中文注解：
+    - 功能：实现 `_write_json` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _approval_path(task_id: str) -> Path:
+    """
+    中文注解：
+    - 功能：实现 `_approval_path` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return APPROVALS_ROOT / f"{task_id}.json"
 
 
 def _read_json(path: Path, default):
+    """
+    中文注解：
+    - 功能：实现 `_read_json` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if not path.exists():
         return default
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def review_plan(task_id: str, selected_plan: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `review_plan` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     policy = default_security_policy()
     assessed = assess_plan_risk(selected_plan)
     decisions: Dict[str, Dict[str, object]] = {}
@@ -61,6 +99,7 @@ def review_plan(task_id: str, selected_plan: Dict[str, object]) -> Dict[str, obj
         "reviewed_at": _utc_now_iso(),
         "security_policy": policy["principle"],
         "overall_risk": assessed["risk"],
+        "governance_type": "approval",
         "decisions": decisions,
         "approved": approved,
         "pending": pending,
@@ -70,6 +109,12 @@ def review_plan(task_id: str, selected_plan: Dict[str, object]) -> Dict[str, obj
 
 
 def approve_pending_action(task_id: str, approval_id: str, reviewer: str = "manual") -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `approve_pending_action` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     payload = _read_json(_approval_path(task_id), {})
     decisions = payload.get("decisions", {})
     if approval_id not in decisions:
@@ -85,6 +130,12 @@ def approve_pending_action(task_id: str, approval_id: str, reviewer: str = "manu
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     import argparse
 
     parser = argparse.ArgumentParser(description="Review an execution plan and produce approval decisions")
