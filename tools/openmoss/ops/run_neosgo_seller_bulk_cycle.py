@@ -118,7 +118,7 @@ def should_run_now(force: bool, scheduler_policy: dict | None = None, scheduler_
     return True, f"scheduled:{today}"
 
 
-def run_runner(limit: int, page_size: int, max_pages: int) -> subprocess.CompletedProcess[str]:
+def run_runner(limit: int, page_size: int, max_pages: int, batch_bias: str = "balanced") -> subprocess.CompletedProcess[str]:
     cmd = [
         "python3",
         str(RUNNER_PATH),
@@ -128,6 +128,8 @@ def run_runner(limit: int, page_size: int, max_pages: int) -> subprocess.Complet
         str(page_size),
         "--max-pages",
         str(max_pages),
+        "--batch-bias",
+        str(batch_bias or "balanced"),
     ]
     return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
@@ -529,6 +531,7 @@ def main():
         limit=runner_settings["limit"],
         page_size=runner_settings["page_size"],
         max_pages=runner_settings["max_pages"],
+        batch_bias=str(scheduler_policy.get("batch_bias", "")).strip() or "balanced",
     )
     state = load_state()
     summary = summarize(state)

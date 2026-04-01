@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json, uuid, time, traceback, re
+from datetime import datetime
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
@@ -33,6 +34,7 @@ def parse_args():
     parser.add_argument('--page-size', type=int, default=100, help='Number of GIGA candidates to fetch per page.')
     parser.add_argument('--max-pages', type=int, default=10, help='Maximum number of candidate pages to scan.')
     parser.add_argument('--sku', action='append', dest='skus', help='Specific SKU(s) to process. Can be passed multiple times.')
+    parser.add_argument('--batch-bias', default='balanced', help='Scheduler-provided batch bias for candidate ordering.')
     parser.add_argument('--no-submit', action='store_true', help='Stop after readiness check; do not submit even if ready.')
     parser.add_argument('--sleep-seconds', type=float, default=1.0, help='Pause between processed SKUs.')
     return parser.parse_args()
@@ -255,6 +257,29 @@ def normalize_text(value):
     return str(value).strip().lower()
 
 
+def _parse_candidate_timestamp(candidate):
+    for key in ('updatedAt', 'candidateUpdatedAt', 'createdAt', 'candidateCreatedAt'):
+        raw = str(candidate.get(key) or '').strip()
+        if not raw:
+            continue
+        try:
+            return datetime.fromisoformat(raw.replace('Z', '+00:00')).timestamp()
+        except ValueError:
+            continue
+    return 0.0
+
+
+def _candidate_priority_key(candidate, batch_bias):
+    bias = str(batch_bias or '').strip().lower()
+    recent_first = bias in {'repair_backpressure_batch', 'targeted_fix_batch'}
+    timestamp_rank = -_parse_candidate_timestamp(candidate) if recent_first else 0.0
+    return (
+        timestamp_rank,
+        str(candidate.get('candidateStatus') or ''),
+        str(candidate.get('sku') or ''),
+    )
+
+
 def is_new_import_candidate(candidate):
     status_fields = [
         candidate.get('uploadStatus'),
@@ -380,6 +405,7 @@ def main():
             'page_size': args.page_size,
             'max_pages': args.max_pages,
             'skus': args.skus or [],
+            'batch_bias': args.batch_bias,
             'no_submit': args.no_submit,
             'sleep_seconds': args.sleep_seconds,
         },
@@ -397,6 +423,8 @@ def main():
     if args.skus:
         requested = set(args.skus)
         todo = [c for c in todo if c.get('sku') in requested]
+    else:
+        todo = sorted(todo, key=lambda candidate: _candidate_priority_key(candidate, args.batch_bias))
 
     skipped = []
     for c in candidates:

@@ -19,6 +19,7 @@ from paths import (
     CRAWLER_REMEDIATION_EXECUTION_PATH,
     CRAWLER_REMEDIATION_PLAN_PATH,
     CRAWLER_REMEDIATION_QUEUE_PATH,
+    CRAWLER_REMEDIATION_SCHEDULER_STATE_PATH,
 )
 
 
@@ -52,6 +53,51 @@ def _execution_feedback_map() -> Dict[str, Dict[str, Any]]:
         for row in rows
         if str(row.get("source_remediation_id", "")).strip()
     }
+
+
+def _load_scheduler_state() -> Dict[str, Any]:
+    return _read_json(CRAWLER_REMEDIATION_SCHEDULER_STATE_PATH, {}) or {}
+
+
+def _derive_start_bias(scheduler_state: Dict[str, Any]) -> str:
+    explicit = str(scheduler_state.get("last_effective_start_bias", "")).strip()
+    if explicit:
+        return explicit
+    repair_mode = str(scheduler_state.get("last_repair_mode", "")).strip()
+    if repair_mode == "project_crawler_unblock":
+        return "site_revalidation_first"
+    if repair_mode == "route_gate_unblock":
+        return "route_unblock_first"
+    if repair_mode == "repair_efficiency_watch":
+        return "repair_hotspot_first"
+    return "balanced"
+
+
+def _plan_sort_key(item: Dict[str, Any], start_bias: str) -> tuple[int, int, str]:
+    priority_rank = {"high": 0, "medium": 1, "low": 2}.get(str(item.get("priority", "medium")).strip().lower(), 9)
+    execution_type = str(item.get("execution_type", "")).strip().lower()
+    bias_rank = {
+        "site_revalidation": 1,
+        "manual_triage": 2,
+        "field_coverage_upgrade": 3,
+    }
+    if start_bias == "route_unblock_first":
+        bias_rank = {
+            "manual_triage": 1,
+            "site_revalidation": 2,
+            "field_coverage_upgrade": 3,
+        }
+    elif start_bias == "repair_hotspot_first":
+        bias_rank = {
+            "site_revalidation": 1,
+            "field_coverage_upgrade": 2,
+            "manual_triage": 3,
+        }
+    return (
+        priority_rank,
+        bias_rank.get(execution_type, 9),
+        str(item.get("site", "")),
+    )
 
 
 def _priority_from_execution_feedback(priority: str, execution_feedback: Dict[str, Any]) -> tuple[str, str]:
@@ -168,6 +214,8 @@ def build_crawler_remediation_plan() -> Dict[str, Any]:
     queue = _read_json(CRAWLER_REMEDIATION_QUEUE_PATH, {"items": []}) or {"items": []}
     profile = _read_json(CRAWLER_CAPABILITY_PROFILE_PATH, {}) or {}
     execution_feedback_map = _execution_feedback_map()
+    scheduler_state = _load_scheduler_state()
+    start_bias = _derive_start_bias(scheduler_state)
     sites = profile.get("sites", []) or []
     profile_feedback = profile.get("feedback", {}) or {}
     site_map = {
@@ -184,13 +232,13 @@ def build_crawler_remediation_plan() -> Dict[str, Any]:
         )
         for item in (queue.get("items", []) or [])
     ]
-    priority_order = {"high": 0, "medium": 1, "low": 2}
-    plans.sort(key=lambda item: (priority_order.get(str(item.get("priority", "medium")), 9), str(item.get("site", ""))))
+    plans.sort(key=lambda item: _plan_sort_key(item, start_bias))
     payload = {
         "generated_at": _utc_now_iso(),
         "summary": {
             "items_total": len(plans),
             "high_priority_total": sum(1 for item in plans if item.get("priority") == "high"),
+            "start_bias": start_bias,
             "sites_covered": sorted({item.get("site", "") for item in plans if item.get("site", "")}),
         },
         "items": plans,
