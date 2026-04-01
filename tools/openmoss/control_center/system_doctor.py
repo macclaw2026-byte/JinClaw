@@ -359,6 +359,7 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
             "alerts_count": len(control_plane.get("alerts", {}).get("items", [])),
             "crawler_remediation_queue_count": len(control_plane.get("crawler_remediation_queue", {}).get("items", [])),
             "crawler_remediation_plan_count": len(control_plane.get("crawler_remediation_plan", {}).get("items", [])),
+            "crawler_remediation_execution_count": len(control_plane.get("crawler_remediation_execution", {}).get("items", [])),
         },
         "crawler_health": {
             "summary": crawler_summary,
@@ -368,6 +369,7 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
             "priority_actions": (crawler_profile.get("priority_actions", []) or [])[:6],
             "remediation_queue": (control_plane.get("crawler_remediation_queue", {}).get("items", []) or [])[:6],
             "remediation_plan": (control_plane.get("crawler_remediation_plan", {}).get("items", []) or [])[:6],
+            "remediation_execution": (control_plane.get("crawler_remediation_execution", {}).get("items", []) or [])[:6],
         },
         "reports": reports,
         "mission_supervisor": supervisor,
