@@ -447,6 +447,80 @@ def _load_doctor_last_run() -> Dict[str, Any]:
     return _read_json(DOCTOR_LAST_RUN_PATH, {}) or {}
 
 
+def _parse_iso(value: str) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _project_result_feedback_summary(
+    memory_writeback_overview: Dict[str, Any],
+    crawler_remediation_execution: Dict[str, Any],
+    seller_bulk_scheduler_state: Dict[str, Any],
+) -> Dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    recent_items = memory_writeback_overview.get("recent_items", []) or []
+    tracked = {
+        "crawler_remediation_cycle": {
+            "task_id": "project-crawler-remediation-cycle",
+            "kind": "project_runtime_loop",
+        },
+        "seller_bulk_cycle": {
+            "task_id": "project-neosgo-seller-bulk",
+            "kind": "project_runtime_loop",
+        },
+    }
+    for item in recent_items:
+        task_id = str(item.get("task_id", "")).strip()
+        last_entry = item.get("last_entry", {}) or {}
+        source = str(last_entry.get("source", "")).strip()
+        if source not in tracked:
+            continue
+        at = _parse_iso(last_entry.get("at"))
+        age_seconds = int((now - at).total_seconds()) if at else None
+        tracked[source].update(
+            {
+                "seen": True,
+                "at": last_entry.get("at", ""),
+                "age_seconds": age_seconds,
+                "attention_required": bool(last_entry.get("attention_required")),
+                "memory_reasons": list(last_entry.get("memory_reasons", []) or []),
+                "task_id": task_id or tracked[source]["task_id"],
+            }
+        )
+    remediation_items = crawler_remediation_execution.get("items", []) or []
+    tracked["crawler_remediation_cycle"]["active_execution_total"] = sum(
+        1
+        for item in remediation_items
+        if str(((item.get("task_state", {}) or {}).get("status", ""))).strip().lower() in {"running", "planning", "recovering", "blocked"}
+    )
+    tracked["seller_bulk_cycle"]["last_mode"] = str(seller_bulk_scheduler_state.get("last_mode", "")).strip()
+    tracked["seller_bulk_cycle"]["last_batch_bias"] = str(seller_bulk_scheduler_state.get("last_batch_bias", "")).strip()
+    tracked["seller_bulk_cycle"]["last_skip_reason"] = str(seller_bulk_scheduler_state.get("last_skip_reason", "")).strip()
+
+    active_total = sum(1 for item in tracked.values() if item.get("seen"))
+    recent_total = sum(1 for item in tracked.values() if item.get("seen") and (item.get("age_seconds") is None or item.get("age_seconds", 10**9) <= 6 * 3600))
+    attention_total = sum(1 for item in tracked.values() if item.get("attention_required"))
+    status = "thin"
+    if recent_total >= 2:
+        status = "strong"
+    elif recent_total == 1:
+        status = "partial"
+    if attention_total > 0 and status == "strong":
+        status = "watch"
+    return {
+        "status": status,
+        "active_total": active_total,
+        "recent_total": recent_total,
+        "attention_total": attention_total,
+        "loops": tracked,
+    }
+
+
 def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seconds: int = 900) -> Dict[str, Any]:
     """
     中文注解：
@@ -464,6 +538,11 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
     seller_bulk_scheduler_state = _load_seller_bulk_scheduler_state()
     cross_market_arbitrage_scheduler_state = _load_cross_market_arbitrage_scheduler_state()
     doctor_last_run = _load_doctor_last_run()
+    project_result_feedback = _project_result_feedback_summary(
+        memory_writeback_overview,
+        crawler_remediation_execution,
+        seller_bulk_scheduler_state,
+    )
     task_views = build_task_registry(
         stale_after_seconds=stale_after_seconds,
         escalation_after_seconds=escalation_after_seconds,
@@ -506,6 +585,9 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
             "seller_bulk_last_mode": seller_bulk_scheduler_state.get("last_mode", ""),
             "cross_market_arbitrage_last_mode": cross_market_arbitrage_scheduler_state.get("last_mode", ""),
             "memory_writeback_tasks_total": memory_writeback_overview.get("tasks_total", 0),
+            "project_result_feedback_status": project_result_feedback.get("status", "unknown"),
+            "project_result_feedback_recent_total": project_result_feedback.get("recent_total", 0),
+            "project_result_feedback_attention_total": project_result_feedback.get("attention_total", 0),
             "doctor_priority_focus": str(doctor_strategy.get("priority_focus", "")).strip() or "unknown",
             "doctor_repair_mode": str(doctor_strategy.get("repair_mode", "")).strip() or "unknown",
             "doctor_processed_total": processed_total,
@@ -541,6 +623,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
         "process_registry": process_registry,
         "crawler_capability_profile": crawler_capability_profile,
         "memory_writeback_overview": memory_writeback_overview,
+        "project_result_feedback": project_result_feedback,
         "crawler_remediation_queue": crawler_remediation_queue,
         "crawler_remediation_plan": crawler_remediation_plan,
         "crawler_remediation_execution": crawler_remediation_execution,
