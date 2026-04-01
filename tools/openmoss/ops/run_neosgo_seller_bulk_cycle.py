@@ -112,6 +112,8 @@ def summarize(state: dict) -> dict:
     success = [row for row in rows if row["submitted"]]
     failed = [row for row in rows if not row["submitted"]]
     failure_categories: dict[str, int] = {}
+    auto_repairable_examples: list[dict] = []
+    manual_review_examples: list[dict] = []
     for row in failed:
         labels: list[str] = []
         if row["blocking_issue_codes"]:
@@ -124,6 +126,23 @@ def summarize(state: dict) -> dict:
             labels.append(str(row["status"] or "unknown_failure").strip())
         for label in labels:
             failure_categories[label] = failure_categories.get(label, 0) + 1
+        normalized_labels = {label.lower() for label in labels}
+        sample = {
+            "sku": row["sku"],
+            "product_name": row["product_name"],
+            "labels": labels,
+            "status": row["status"],
+            "submission_price_usd": row["submission_price_usd"],
+        }
+        if (
+            "imported product id not found" in normalized_labels
+            or any("unique constraint" in label for label in normalized_labels)
+            or any("draft" in label for label in normalized_labels)
+        ):
+            if len(auto_repairable_examples) < 8:
+                auto_repairable_examples.append(sample)
+        elif len(manual_review_examples) < 8:
+            manual_review_examples.append(sample)
     primary_blocker = ""
     if failure_categories:
         primary_blocker = sorted(failure_categories.items(), key=lambda item: (-item[1], item[0]))[0][0]
@@ -155,6 +174,23 @@ def summarize(state: dict) -> dict:
             "primary_blocker": primary_blocker,
             "failure_categories": failure_categories,
             "next_actions": next_actions,
+            "auto_repairable_count": len(failed) if not failed else sum(
+                count for label, count in failure_categories.items()
+                if label == "imported product id not found"
+                or "unique constraint" in label.lower()
+                or "draft" in label.lower()
+            ),
+            "manual_review_count": len(failed) if not failed else max(
+                0,
+                len(failed) - sum(
+                    count for label, count in failure_categories.items()
+                    if label == "imported product id not found"
+                    or "unique constraint" in label.lower()
+                    or "draft" in label.lower()
+                ),
+            ),
+            "auto_repairable_examples": auto_repairable_examples,
+            "manual_review_examples": manual_review_examples,
         },
         "rows": rows,
     }
@@ -188,10 +224,22 @@ def write_report(summary: dict) -> tuple[Path, Path]:
     failure_categories = summary.get("governance", {}).get("failure_categories") or {}
     if next_actions:
         lines.append(f"- Next actions: {', '.join(next_actions)}")
+    lines.append(f"- Auto-repairable failures: {summary.get('governance', {}).get('auto_repairable_count', 0)}")
+    lines.append(f"- Manual-review failures: {summary.get('governance', {}).get('manual_review_count', 0)}")
     if failure_categories:
         lines.append("- Failure categories:")
         for label, count in sorted(failure_categories.items(), key=lambda item: (-item[1], item[0])):
             lines.append(f"  - {label}: {count}")
+    auto_repairable_examples = summary.get("governance", {}).get("auto_repairable_examples") or []
+    manual_review_examples = summary.get("governance", {}).get("manual_review_examples") or []
+    if auto_repairable_examples:
+        lines.append("- Auto-repairable examples:")
+        for row in auto_repairable_examples:
+            lines.append(f"  - {row['sku']} :: {', '.join(row['labels'])}")
+    if manual_review_examples:
+        lines.append("- Manual-review examples:")
+        for row in manual_review_examples:
+            lines.append(f"  - {row['sku']} :: {', '.join(row['labels'])}")
     lines.extend(
         [
             "",
@@ -225,6 +273,9 @@ def send_to_telegram(chat_id: str, summary: dict, attachments: list[Path]) -> li
     )
     if next_actions:
         text += f"\nNext: {', '.join(next_actions)}"
+    auto_count = governance.get("auto_repairable_count", 0)
+    manual_count = governance.get("manual_review_count", 0)
+    text += f"\nFailure split: auto={auto_count} manual={manual_count}"
     top_success = _top_success_rows(summary)
     if top_success:
         text += "\nTop success:"
