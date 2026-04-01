@@ -55,6 +55,33 @@ def _task_id_for_item(item: Dict[str, Any]) -> str:
     return f"crawler-remediation-{site}-{action}"
 
 
+def _start_bias_sort_key(item: Dict[str, Any], start_bias: str) -> tuple[int, int, str]:
+    priority_rank = {"high": 0, "medium": 1, "low": 2}.get(str(item.get("priority", "medium")).strip().lower(), 9)
+    execution_type = str(item.get("execution_type", "")).strip().lower()
+    bias_rank = {
+        "site_revalidation": 1,
+        "manual_triage": 2,
+        "field_coverage_upgrade": 3,
+    }
+    if start_bias == "route_unblock_first":
+        bias_rank = {
+            "manual_triage": 1,
+            "site_revalidation": 2,
+            "field_coverage_upgrade": 3,
+        }
+    elif start_bias == "repair_hotspot_first":
+        bias_rank = {
+            "site_revalidation": 1,
+            "field_coverage_upgrade": 2,
+            "manual_triage": 3,
+        }
+    return (
+        priority_rank,
+        bias_rank.get(execution_type, 9),
+        str(item.get("site", "")),
+    )
+
+
 def _task_exists(task_id: str) -> bool:
     return (TASKS_ROOT / task_id / "contract.json").exists()
 
@@ -92,9 +119,16 @@ def _metadata_for_item(item: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def execute_crawler_remediation_plan(*, start_tasks: bool = True, max_start_tasks: int | None = None) -> Dict[str, Any]:
+def execute_crawler_remediation_plan(
+    *,
+    start_tasks: bool = True,
+    max_start_tasks: int | None = None,
+    start_bias: str = "balanced",
+) -> Dict[str, Any]:
     plan = _read_json(CRAWLER_REMEDIATION_PLAN_PATH, {"items": []}) or {"items": []}
-    items = plan.get("items", []) or []
+    items = list(plan.get("items", []) or [])
+    if start_tasks:
+        items.sort(key=lambda item: _start_bias_sort_key(item, start_bias))
     results: List[Dict[str, Any]] = []
     started_count = 0
     for item in items:
@@ -155,6 +189,7 @@ def execute_crawler_remediation_plan(*, start_tasks: bool = True, max_start_task
         "created_total": sum(1 for item in results if item.get("status") == "created"),
         "existing_total": sum(1 for item in results if item.get("status") == "already_exists"),
         "max_start_tasks": max_start_tasks,
+        "start_bias": start_bias,
         "items": results,
     }
     _write_json(CRAWLER_REMEDIATION_EXECUTION_PATH, payload)

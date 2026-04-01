@@ -496,6 +496,7 @@ def main():
             "last_mode": scheduler_policy.get("recommended_mode", ""),
             "last_repair_focus": str(scheduler_policy.get("repair_focus", "")).strip(),
             "last_repair_mode": str(scheduler_policy.get("repair_mode", "")).strip(),
+            "last_batch_bias": str(scheduler_policy.get("batch_bias", "")).strip(),
             "last_interval_seconds": suggested_interval,
             "last_force": args.force,
             "last_requested_start_tasks": True,
@@ -514,6 +515,7 @@ def main():
                     "ran": False,
                     "reason": reason,
                     "scheduler_policy": scheduler_policy,
+                    "batch_bias": str(scheduler_policy.get("batch_bias", "")).strip(),
                     "runner_settings": runner_settings,
                     "scheduler_state_before": scheduler_state_before,
                     "scheduler_state_after": scheduler_state_after,
@@ -536,6 +538,7 @@ def main():
     summary["scheduler_policy"] = scheduler_policy
     summary["repair_focus"] = str(scheduler_policy.get("repair_focus", "")).strip()
     summary["repair_mode"] = str(scheduler_policy.get("repair_mode", "")).strip()
+    summary["batch_bias"] = str(scheduler_policy.get("batch_bias", "")).strip()
     summary["runner_settings"] = {
         "requested_limit": args.limit,
         "requested_page_size": args.page_size,
@@ -573,6 +576,7 @@ def main():
         "last_mode": scheduler_policy.get("recommended_mode", ""),
         "last_repair_focus": str(scheduler_policy.get("repair_focus", "")).strip(),
         "last_repair_mode": str(scheduler_policy.get("repair_mode", "")).strip(),
+        "last_batch_bias": str(scheduler_policy.get("batch_bias", "")).strip(),
         "last_interval_seconds": suggested_interval,
         "last_force": args.force,
         "last_requested_start_tasks": True,

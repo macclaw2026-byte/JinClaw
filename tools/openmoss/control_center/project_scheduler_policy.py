@@ -51,6 +51,7 @@ def _crawler_remediation_policy(
     suggested_interval_seconds = 3600
     start_tasks = True
     max_start_tasks: int | None = None
+    start_bias = "balanced"
     repair_focus = _derive_repair_focus(system_summary)
     repair_mode = "steady_balance"
     recovery_efficiency = _recovery_efficiency(system_summary)
@@ -82,12 +83,14 @@ def _crawler_remediation_policy(
         suggested_interval_seconds = min(suggested_interval_seconds, 900)
         start_tasks = True
         max_start_tasks = 2
+        start_bias = "site_revalidation_first"
         repair_mode = "project_crawler_unblock"
         reasons.append("project_tasks_blocked_by_crawler_remediation")
     if blocked_authorized_session > 0 or blocked_human_checkpoint > 0:
         recommended_mode = "aggressive"
         suggested_interval_seconds = min(suggested_interval_seconds, 1200)
         max_start_tasks = min(max_start_tasks or 2, 2)
+        start_bias = "route_unblock_first"
         if repair_mode == "steady_balance":
             repair_mode = "route_gate_unblock"
         reasons.append("crawler_routes_waiting_on_authorized_or_human_gate")
@@ -103,6 +106,7 @@ def _crawler_remediation_policy(
     if repair_focus == "repair_blockers" and recovery_efficiency < 0.3:
         suggested_interval_seconds = min(suggested_interval_seconds, 1800)
         max_start_tasks = 1
+        start_bias = "repair_hotspot_first"
         if repair_mode in {"steady_balance", "linkage_first"}:
             repair_mode = "repair_efficiency_watch"
         reasons.append("recovery_efficiency_low")
@@ -120,6 +124,7 @@ def _crawler_remediation_policy(
         "suggested_interval_seconds": suggested_interval_seconds,
         "start_tasks": start_tasks,
         "max_start_tasks": max_start_tasks,
+        "start_bias": start_bias,
         "active_execution_total": len(active_items),
         "reasons": reasons,
         "summary": {
@@ -144,6 +149,7 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
     recommended_mode = "nightly_window"
     suggested_interval_seconds = 900
     repair_mode = "steady_balance"
+    batch_bias = "balanced"
     effective_limit: int | None = None
     effective_page_size: int | None = None
     effective_max_pages: int | None = None
@@ -154,6 +160,7 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
         effective_limit = 20
         effective_page_size = 25
         effective_max_pages = 2
+        batch_bias = "approval_safe_batch"
         reasons.append("project_approval_pressure_detected")
     if blocked_targeted_fix >= 3:
         recommended_mode = "repair_sensitive_nightly"
@@ -162,6 +169,7 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
         effective_limit = 12
         effective_page_size = 20
         effective_max_pages = 2
+        batch_bias = "targeted_fix_batch"
         reasons.append("multiple_targeted_fix_blockers_detected")
     if repair_focus == "governance_blockers" and repair_mode == "steady_balance":
         repair_mode = "governance_watch"
@@ -175,6 +183,7 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
         effective_limit = 8
         effective_page_size = 15
         effective_max_pages = 1
+        batch_bias = "repair_backpressure_batch"
         reasons.append("recovery_efficiency_low")
     return {
         "recommended_mode": recommended_mode,
@@ -182,6 +191,7 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
         "repair_mode": repair_mode,
         "suggested_interval_seconds": suggested_interval_seconds,
         "start_tasks": True,
+        "batch_bias": batch_bias,
         "effective_limit": effective_limit,
         "effective_page_size": effective_page_size,
         "effective_max_pages": effective_max_pages,
