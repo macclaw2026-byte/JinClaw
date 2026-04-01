@@ -14,6 +14,17 @@ def _blocked_count(system_summary: Dict[str, Any], category: str) -> int:
     return int(((system_summary.get("blocked_categories", {}) or {}).get(category, 0) or 0))
 
 
+def _derive_repair_focus(system_summary: Dict[str, Any]) -> str:
+    top_blocked_category = str(system_summary.get("top_blocked_category", "")).strip()
+    if top_blocked_category in {"project_crawler_remediation", "approval_or_contract", "authorized_session", "human_checkpoint"}:
+        return "governance_blockers"
+    if top_blocked_category in {"targeted_fix", "runtime_failure", "runtime_or_contract_fix"}:
+        return "repair_blockers"
+    if top_blocked_category in {"session_binding", "relay_attach"}:
+        return "linkage_blockers"
+    return "general"
+
+
 def _crawler_remediation_policy(
     crawler_profile: Dict[str, Any],
     remediation_execution: Dict[str, Any],
@@ -32,6 +43,8 @@ def _crawler_remediation_policy(
     recommended_mode = "steady"
     suggested_interval_seconds = 3600
     start_tasks = True
+    repair_focus = _derive_repair_focus(system_summary)
+    repair_mode = "steady_balance"
     blocked_project_crawler = _blocked_count(system_summary, "project_crawler_remediation")
     blocked_authorized_session = _blocked_count(system_summary, "authorized_session")
     blocked_human_checkpoint = _blocked_count(system_summary, "human_checkpoint")
@@ -59,11 +72,23 @@ def _crawler_remediation_policy(
         recommended_mode = "aggressive"
         suggested_interval_seconds = min(suggested_interval_seconds, 900)
         start_tasks = True
+        repair_mode = "project_crawler_unblock"
         reasons.append("project_tasks_blocked_by_crawler_remediation")
     if blocked_authorized_session > 0 or blocked_human_checkpoint > 0:
         recommended_mode = "aggressive"
         suggested_interval_seconds = min(suggested_interval_seconds, 1200)
+        if repair_mode == "steady_balance":
+            repair_mode = "route_gate_unblock"
         reasons.append("crawler_routes_waiting_on_authorized_or_human_gate")
+    if repair_focus == "governance_blockers":
+        suggested_interval_seconds = min(suggested_interval_seconds, 1200)
+        repair_mode = "governance_first"
+        reasons.append("doctor_focus_governance_blockers")
+    elif repair_focus == "linkage_blockers":
+        suggested_interval_seconds = min(suggested_interval_seconds, 1500)
+        if repair_mode == "steady_balance":
+            repair_mode = "linkage_first"
+        reasons.append("doctor_focus_linkage_blockers")
     if active_items and str(feedback.get("coverage_status", "")).strip().lower() == "strong":
         start_tasks = False
         suggested_interval_seconds = max(suggested_interval_seconds, 7200)
@@ -73,6 +98,8 @@ def _crawler_remediation_policy(
         reasons = [reason for reason in reasons if reason != "active_remediation_tasks_already_running"]
     return {
         "recommended_mode": recommended_mode,
+        "repair_focus": repair_focus,
+        "repair_mode": repair_mode,
         "suggested_interval_seconds": suggested_interval_seconds,
         "start_tasks": start_tasks,
         "active_execution_total": len(active_items),
@@ -92,19 +119,31 @@ def _crawler_remediation_policy(
 def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
     blocked_approval = _blocked_count(system_summary, "approval_or_contract")
     blocked_targeted_fix = _blocked_count(system_summary, "targeted_fix")
+    repair_focus = _derive_repair_focus(system_summary)
     reasons = ["seller_bulk_is_time_window_gated_in_script"]
     recommended_mode = "nightly_window"
     suggested_interval_seconds = 900
+    repair_mode = "steady_balance"
     if blocked_approval > 0:
         recommended_mode = "approval_sensitive_nightly"
         suggested_interval_seconds = 1800
+        repair_mode = "approval_guarded"
         reasons.append("project_approval_pressure_detected")
     if blocked_targeted_fix >= 3:
         recommended_mode = "repair_sensitive_nightly"
         suggested_interval_seconds = max(suggested_interval_seconds, 1800)
+        repair_mode = "targeted_fix_bias"
         reasons.append("multiple_targeted_fix_blockers_detected")
+    if repair_focus == "governance_blockers" and repair_mode == "steady_balance":
+        repair_mode = "governance_watch"
+        reasons.append("doctor_focus_governance_blockers")
+    elif repair_focus == "repair_blockers":
+        repair_mode = "targeted_fix_bias"
+        reasons.append("doctor_focus_repair_blockers")
     return {
         "recommended_mode": recommended_mode,
+        "repair_focus": repair_focus,
+        "repair_mode": repair_mode,
         "suggested_interval_seconds": suggested_interval_seconds,
         "start_tasks": True,
         "reasons": reasons,
@@ -132,6 +171,8 @@ def _cross_market_arbitrage_policy(
     discovery_interval_seconds = 30 * 60
     matching_interval_seconds = 60 * 60
     start_tasks = True
+    repair_focus = _derive_repair_focus(system_summary)
+    repair_mode = "steady_balance"
     blocked_project_crawler = _blocked_count(system_summary, "project_crawler_remediation")
     blocked_authorized_session = _blocked_count(system_summary, "authorized_session")
     blocked_human_checkpoint = _blocked_count(system_summary, "human_checkpoint")
@@ -165,15 +206,26 @@ def _cross_market_arbitrage_policy(
         discovery_interval_seconds = max(discovery_interval_seconds, 60 * 60)
         matching_interval_seconds = max(matching_interval_seconds, 2 * 60 * 60)
         start_tasks = False
+        repair_mode = "crawler_hold"
         reasons.append("project_tasks_blocked_by_crawler_remediation")
     elif blocked_authorized_session > 0 or blocked_human_checkpoint > 0:
         recommended_mode = "guarded"
         loop_sleep_seconds = max(loop_sleep_seconds, 600)
         discovery_interval_seconds = max(discovery_interval_seconds, 45 * 60)
         matching_interval_seconds = max(matching_interval_seconds, 90 * 60)
+        repair_mode = "route_guarded"
         reasons.append("crawler_routes_waiting_on_authorized_or_human_gate")
+    if repair_focus == "repair_blockers" and repair_mode == "steady_balance":
+        recommended_mode = "light_touch"
+        loop_sleep_seconds = max(loop_sleep_seconds, 900)
+        discovery_interval_seconds = max(discovery_interval_seconds, 45 * 60)
+        matching_interval_seconds = max(matching_interval_seconds, 90 * 60)
+        repair_mode = "repair_observe"
+        reasons.append("doctor_focus_repair_blockers")
     return {
         "recommended_mode": recommended_mode,
+        "repair_focus": repair_focus,
+        "repair_mode": repair_mode,
         "loop_sleep_seconds": loop_sleep_seconds,
         "discovery_interval_seconds": discovery_interval_seconds,
         "matching_interval_seconds": matching_interval_seconds,

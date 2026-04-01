@@ -91,6 +91,58 @@ def _progress_age_seconds(*, status: str, next_action: str, last_progress_at: st
     return min(progress_age, update_age)
 
 
+def _doctor_cycle_strategy(control_plane: Dict[str, object]) -> Dict[str, object]:
+    summary = ((control_plane.get("system_snapshot", {}) or {}).get("summary", {}) or {}) if isinstance(control_plane, dict) else {}
+    blocked_categories = summary.get("blocked_categories", {}) or {}
+    top_blocked_category = str(summary.get("top_blocked_category", "")).strip()
+    strategy = {
+        "top_blocked_category": top_blocked_category,
+        "blocked_categories": blocked_categories,
+        "priority_focus": "general",
+        "repair_mode": "balanced",
+        "max_repairs_per_cycle": 12,
+        "allowed_buckets": ["critical", "high", "medium", "low"],
+    }
+    if top_blocked_category in {"project_crawler_remediation", "approval_or_contract", "authorized_session", "human_checkpoint"}:
+        strategy.update(
+            {
+                "priority_focus": "governance_blockers",
+                "repair_mode": "governance_first",
+                "max_repairs_per_cycle": 10,
+                "allowed_buckets": ["critical", "high"],
+            }
+        )
+    elif top_blocked_category in {"targeted_fix", "runtime_failure", "runtime_or_contract_fix"}:
+        strategy.update(
+            {
+                "priority_focus": "repair_blockers",
+                "repair_mode": "repair_first",
+                "max_repairs_per_cycle": 16,
+                "allowed_buckets": ["critical", "high", "medium"],
+            }
+        )
+    elif top_blocked_category in {"session_binding", "relay_attach"}:
+        strategy.update(
+            {
+                "priority_focus": "linkage_blockers",
+                "repair_mode": "linkage_first",
+                "max_repairs_per_cycle": 20,
+                "allowed_buckets": ["critical", "high", "medium", "low"],
+            }
+        )
+    return strategy
+
+
+def _should_process_doctor_item(item: Dict[str, object], strategy: Dict[str, object], processed_total: int) -> tuple[bool, str]:
+    if processed_total >= int(strategy.get("max_repairs_per_cycle", 0) or 0):
+        return False, "cycle_capacity_reached"
+    bucket = str(item.get("priority_bucket", "")).strip() or "low"
+    allowed = {str(v).strip() for v in (strategy.get("allowed_buckets", []) or []) if str(v).strip()}
+    if allowed and bucket not in allowed:
+        return False, f"bucket_filtered:{bucket}"
+    return True, "selected"
+
+
 def diagnose_task(task_id: str, *, idle_after_seconds: int = 180) -> Dict[str, object]:
     """
     中文注解：
@@ -301,20 +353,10 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
     )
     reports = []
     doctor_items = list(control_plane.get("doctor_queue", {}).get("items", []) or [])
-    blocked_summary = ((control_plane.get("system_snapshot", {}) or {}).get("summary", {}) or {}).get("blocked_categories", {}) or {}
-    doctor_strategy = {
-        "top_blocked_category": ((control_plane.get("system_snapshot", {}) or {}).get("summary", {}) or {}).get("top_blocked_category", ""),
-        "blocked_categories": blocked_summary,
-        "priority_focus": "general",
-    }
-    top_blocked_category = str(doctor_strategy.get("top_blocked_category", "")).strip()
-    if top_blocked_category in {"project_crawler_remediation", "approval_or_contract", "authorized_session", "human_checkpoint"}:
-        doctor_strategy["priority_focus"] = "governance_blockers"
-    elif top_blocked_category in {"targeted_fix", "runtime_failure", "runtime_or_contract_fix"}:
-        doctor_strategy["priority_focus"] = "repair_blockers"
-    elif top_blocked_category in {"session_binding", "relay_attach"}:
-        doctor_strategy["priority_focus"] = "linkage_blockers"
+    doctor_strategy = _doctor_cycle_strategy(control_plane)
     seen_task_ids = set()
+    processed_total = 0
+    skipped_reports = []
     # doctor_queue 是 control plane 给医生的统一待办清单；
     # 医生不再自己到处翻日志，而是集中读这份汇总视图。
     for item in doctor_items:
@@ -322,8 +364,23 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
         if not task_id or task_id in seen_task_ids:
             continue
         seen_task_ids.add(task_id)
+        should_process, decision_reason = _should_process_doctor_item(item, doctor_strategy, processed_total)
+        if not should_process:
+            skipped_reports.append(
+                {
+                    "task_id": task_id,
+                    "priority": {
+                        "score": int(item.get("priority_score", 0) or 0),
+                        "bucket": str(item.get("priority_bucket", "")).strip() or "unknown",
+                        "reason": str(item.get("priority_reason", "")).strip() or "unknown",
+                    },
+                    "skip_reason": decision_reason,
+                }
+            )
+            continue
         diagnosis = diagnose_task(task_id, idle_after_seconds=idle_after_seconds)
         repair = repair_task_if_possible(task_id, diagnosis)
+        processed_total += 1
         writeback_summary = {
             "attention_required": bool(diagnosis.get("stuck")),
             "state_patch": {},
@@ -416,6 +473,12 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
             "remediation_execution": (control_plane.get("crawler_remediation_execution", {}).get("items", []) or [])[:6],
         },
         "doctor_strategy": doctor_strategy,
+        "doctor_cycle_stats": {
+            "processed_total": processed_total,
+            "skipped_total": len(skipped_reports),
+            "max_repairs_per_cycle": int(doctor_strategy.get("max_repairs_per_cycle", 0) or 0),
+        },
+        "skipped_reports": skipped_reports[:20],
         "reports": reports,
         "mission_supervisor": supervisor,
     }

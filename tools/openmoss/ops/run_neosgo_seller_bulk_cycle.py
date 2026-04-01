@@ -462,6 +462,8 @@ def main():
         scheduler_state_after = {
             "updated_at": _utc_now().isoformat(),
             "last_mode": scheduler_policy.get("recommended_mode", ""),
+            "last_repair_focus": str(scheduler_policy.get("repair_focus", "")).strip(),
+            "last_repair_mode": str(scheduler_policy.get("repair_mode", "")).strip(),
             "last_interval_seconds": suggested_interval,
             "last_force": args.force,
             "last_requested_start_tasks": True,
@@ -492,6 +494,8 @@ def main():
     summary["runner_stdout_tail"] = proc.stdout[-4000:]
     summary["runner_stderr_tail"] = proc.stderr[-4000:]
     summary["scheduler_policy"] = scheduler_policy
+    summary["repair_focus"] = str(scheduler_policy.get("repair_focus", "")).strip()
+    summary["repair_mode"] = str(scheduler_policy.get("repair_mode", "")).strip()
     summary["scheduler_state_before"] = scheduler_state_before
     summary["memory_writeback"] = record_memory_writeback(
         "project-neosgo-seller-bulk",
@@ -521,6 +525,8 @@ def main():
     scheduler_state_after = {
         "updated_at": _utc_now().isoformat(),
         "last_mode": scheduler_policy.get("recommended_mode", ""),
+        "last_repair_focus": str(scheduler_policy.get("repair_focus", "")).strip(),
+        "last_repair_mode": str(scheduler_policy.get("repair_mode", "")).strip(),
         "last_interval_seconds": suggested_interval,
         "last_force": args.force,
         "last_requested_start_tasks": True,

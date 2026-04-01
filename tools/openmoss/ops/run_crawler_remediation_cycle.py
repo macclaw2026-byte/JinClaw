@@ -224,6 +224,8 @@ def run_cycle(*, start_tasks: bool = True, run_doctor: bool = True, force: bool 
         "skip_reason": skip_reason,
         "doctor_ran": run_doctor,
         "scheduler_policy": scheduler_policy,
+        "repair_focus": str(scheduler_policy.get("repair_focus", "")).strip(),
+        "repair_mode": str(scheduler_policy.get("repair_mode", "")).strip(),
         "scheduler_state_before": scheduler_state,
         "before_summary": _extract_summary(control_plane_before),
         "execution": execution,
@@ -261,6 +263,8 @@ def run_cycle(*, start_tasks: bool = True, run_doctor: bool = True, force: bool 
     scheduler_state_after = {
         "updated_at": payload["generated_at"],
         "last_mode": scheduler_policy.get("recommended_mode", ""),
+        "last_repair_focus": str(scheduler_policy.get("repair_focus", "")).strip(),
+        "last_repair_mode": str(scheduler_policy.get("repair_mode", "")).strip(),
         "last_interval_seconds": suggested_interval,
         "last_force": force,
         "last_requested_start_tasks": start_tasks,
