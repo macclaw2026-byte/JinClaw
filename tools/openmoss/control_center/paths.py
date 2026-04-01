@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/paths.py`
+- 文件作用：负责控制中心中与 `paths` 相关的编排、分析或决策逻辑。
+- 顶层函数：无顶层函数。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -28,12 +36,22 @@ AUTHORIZED_SESSIONS_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "authorized_sessions"
 HUMAN_CHECKPOINTS_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "human_checkpoints"
 EVENTS_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "events"
 HOOKS_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "hooks"
+GOVERNANCE_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "governance"
+POLICY_ROOT = GOVERNANCE_ROOT / "policy"
+MEMORY_ROOT = GOVERNANCE_ROOT / "memory"
 BRAIN_ROUTES_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "brain_routes"
 BRAIN_RECEIPTS_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "brain_receipts"
 BROWSER_SIGNALS_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "browser_signals"
 BROWSER_CHANNELS_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "browser_channels"
 TASK_STATUS_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "task_status"
 CONTRACT_QUARANTINE_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "contract_quarantine"
+CONTROL_PLANE_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "control_plane"
+PROCESS_REGISTRY_PATH = CONTROL_PLANE_ROOT / "process_registry.json"
+TASK_REGISTRY_PATH = CONTROL_PLANE_ROOT / "task_registry.json"
+WAITING_REGISTRY_PATH = CONTROL_PLANE_ROOT / "waiting_registry.json"
+DOCTOR_QUEUE_PATH = CONTROL_PLANE_ROOT / "doctor_queue.json"
+ALERTS_PATH = CONTROL_PLANE_ROOT / "alerts.json"
+SYSTEM_SNAPSHOT_PATH = CONTROL_PLANE_ROOT / "system_snapshot.json"
 CAPABILITY_CLONES_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "capability_clones"
 PROMOTED_CAPABILITIES_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "promoted_capabilities"
 GENERATED_CAPABILITIES_ROOT = OPENMOSS_ROOT / "generated_capabilities"

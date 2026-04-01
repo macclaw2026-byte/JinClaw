@@ -258,6 +258,7 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
         f"batch_focus: {json.dumps(stage_context.get('batch_focus', {}), ensure_ascii=False)}",
         f"browser_target_hint: {json.dumps(stage_context.get('browser_target_hint', {}), ensure_ascii=False)}",
         f"crawler: {json.dumps(stage_context.get('crawler', {}), ensure_ascii=False)}",
+        f"governance: {json.dumps(stage_context.get('governance', {}), ensure_ascii=False)}",
         f"execution_summary: {json.dumps(stage_context.get('summary', {}), ensure_ascii=False)}",
         f"allowed_tools: {json.dumps(stage_context.get('allowed_tools', []), ensure_ascii=False)}",
         f"business_verification_requirements: {json.dumps(verifier_requirements, ensure_ascii=False)}",

@@ -202,7 +202,6 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
     # 先把 mission 和 state 压成一份短摘要，后面 AI 执行包、状态回复、医生回执都会复用这份摘要。
     summary = compress_mission(task_id, mission, state)
     current_stage = state.get("current_stage", "") or (state.get("stage_order", [""])[0] if state.get("stage_order") else "")
-    context_packet = build_stage_context(task_id, current_stage, contract, state) if current_stage else {}
     # challenge 是运行态问题分类器的结果：
     # 它决定当前更像是业务推进、浏览器问题、审批阻塞还是需要更深的请求链调试。
     challenge = classify_challenge(task_id, state.get("blockers", []), state)
@@ -223,6 +222,7 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
     mission["resource_scout"] = prepare_research_package(task_id, build_resource_scout_brief(mission.get("intent", {}), mission.get("selected_plan", {}), mission.get("domain_profile", {}), mission.get("fetch_route", {})), mission.get("intent", {}))
     browser_signals = collect_browser_task_signals(task_id)
     _write_json(MISSIONS_ROOT / f"{task_id}.json", mission)
+    context_packet = build_stage_context(task_id, current_stage, contract, state) if current_stage else {}
     stage_state = state.get("stages", {}).get(current_stage, {}) if current_stage else {}
     stage_attempts = int(stage_state.get("attempts", 0) or 0) if current_stage else 0
     subtask_cursor = int(stage_state.get("subtask_cursor", max(stage_attempts - 1, 0)) or 0) if current_stage else 0

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict
 
 from cache_store import cache_get, cache_put
+from governance_runtime import build_governance_bundle
 from htn_planner import build_htn_tree, select_htn_focus_by_cursor
 from topology_mapper import build_topology
 from fractal_decomposer import select_loop_focus
@@ -68,6 +69,7 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
     subtask_cursor = int(stage_state.get("subtask_cursor", max(stage_attempts - 1, 0)) or 0)
     fractal_focus = select_loop_focus(fractal, stage_name, stage_attempts)
     htn_focus = select_htn_focus_by_cursor(htn, stage_name, subtask_cursor)
+    governance = build_governance_bundle(task_id, stage_name, contract, state, mission)
     signature = json.dumps(
         {
             "task_id": task_id,
@@ -76,6 +78,7 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
             "done_definition": contract.get("done_definition", ""),
             "selected_plan": selected_plan,
             "crawler": crawler,
+            "governance": governance,
             "topology": topology,
             "fractal_focus": fractal_focus,
             "htn_focus": htn_focus,
@@ -135,6 +138,7 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
             "last_listings_overview_navigation": state.get("metadata", {}).get("last_listings_overview_navigation", {}),
         },
         "crawler": crawler,
+        "governance": governance,
         "summary": {
             "current_stage": state.get("current_stage", "") or summary.get("current_stage", ""),
             "status": state.get("status", "") or summary.get("status", ""),
