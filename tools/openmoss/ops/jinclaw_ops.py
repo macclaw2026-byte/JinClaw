@@ -437,6 +437,10 @@ def status_payload() -> Dict[str, Any]:
         scheduler_policy = control_plane.get("project_scheduler_policy", {}) or {}
         if control_plane.get("crawler_remediation_scheduler_state"):
             scheduler_policy["crawler_remediation_state"] = control_plane.get("crawler_remediation_scheduler_state", {}) or {}
+        if control_plane.get("seller_bulk_scheduler_state"):
+            scheduler_policy["seller_bulk_state"] = control_plane.get("seller_bulk_scheduler_state", {}) or {}
+        if control_plane.get("cross_market_arbitrage_scheduler_state"):
+            scheduler_policy["cross_market_arbitrage_state"] = control_plane.get("cross_market_arbitrage_scheduler_state", {}) or {}
     except Exception as exc:
         scheduler_policy = {"error": str(exc)}
     return {

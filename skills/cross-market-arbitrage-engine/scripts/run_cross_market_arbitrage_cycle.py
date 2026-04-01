@@ -20,6 +20,7 @@ from openpyxl.utils import get_column_letter
 
 
 ROOT = Path("/Users/mac_claw/.openclaw/workspace")
+CONTROL_CENTER_ROOT = ROOT / "tools/openmoss/control_center"
 STATE_DIR = ROOT / ".state"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 STATE_PATH = STATE_DIR / "cross-market-arbitrage-engine.json"
@@ -32,6 +33,15 @@ AGENT_BROWSER = TOOLS_ROOT / "agent-browser-local" / "node_modules" / "agent-bro
 VENV_PY = TOOLS_ROOT / "matrix-venv" / "bin" / "python"
 SITE_PREFS_PATH = ROOT / "tools/openmoss/runtime/autonomy/learning/crawler_site_preferences.json"
 OPENCLAW_BIN = "/opt/homebrew/bin/openclaw"
+
+import sys
+
+if str(CONTROL_CENTER_ROOT) not in sys.path:
+    sys.path.insert(0, str(CONTROL_CENTER_ROOT))
+
+from control_plane_builder import build_control_plane
+from memory_writeback_runtime import record_memory_writeback
+from paths import CROSS_MARKET_ARBITRAGE_SCHEDULER_STATE_PATH
 
 DISCOVERY_INTERVAL_SECONDS = 30 * 60
 MATCH_INTERVAL_SECONDS = 60 * 60
@@ -293,6 +303,53 @@ def _utc_now_iso() -> str:
 
 def _ny_now() -> datetime:
     return _utc_now().astimezone(REPORT_TIMEZONE)
+
+
+def _read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _parse_iso(value: str) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _seconds_since(value: str) -> int | None:
+    dt = _parse_iso(value)
+    if not dt:
+        return None
+    return max(0, int((_utc_now() - dt).total_seconds()))
+
+
+def _load_scheduler_policy() -> dict[str, Any]:
+    try:
+        control_plane = build_control_plane()
+    except Exception:
+        return {}
+    return (control_plane.get("project_scheduler_policy", {}) or {}).get("cross_market_arbitrage", {}) or {}
+
+
+def _load_scheduler_state() -> dict[str, Any]:
+    return _read_json(CROSS_MARKET_ARBITRAGE_SCHEDULER_STATE_PATH, {})
+
+
+def _write_scheduler_state(payload: dict[str, Any]) -> None:
+    _write_json_file(CROSS_MARKET_ARBITRAGE_SCHEDULER_STATE_PATH, payload)
 
 
 def _slug(text: str) -> str:
@@ -1607,8 +1664,15 @@ def _match_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[str
     return state, decisions, fetch_log
 
 
-def _report_cycle(state: dict[str, Any], *, chat_id: str | None, force_send: bool = False) -> dict[str, Any]:
+def _report_cycle(
+    state: dict[str, Any],
+    *,
+    chat_id: str | None,
+    force_send: bool = False,
+    scheduler_policy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     run_id = _utc_now().strftime("%Y%m%dT%H%M%SZ")
+    scheduler_policy = scheduler_policy or {}
     rows = _state_candidate_window(state, hours=REPORT_WINDOW_HOURS)
     decisions: list[ArbitrageDecision] = []
     fetch_log: list[dict[str, Any]] = []
@@ -1623,11 +1687,12 @@ def _report_cycle(state: dict[str, Any], *, chat_id: str | None, force_send: boo
         "discovery_candidate_count": len(rows),
         "qualified_count": sum(1 for item in decisions if item.qualified),
         "timing": {
-            "discovery_interval_seconds": DISCOVERY_INTERVAL_SECONDS,
-            "matching_interval_seconds": MATCH_INTERVAL_SECONDS,
-            "report_hour_new_york": REPORT_HOUR,
+            "discovery_interval_seconds": int(scheduler_policy.get("discovery_interval_seconds", DISCOVERY_INTERVAL_SECONDS) or DISCOVERY_INTERVAL_SECONDS),
+            "matching_interval_seconds": int(scheduler_policy.get("matching_interval_seconds", MATCH_INTERVAL_SECONDS) or MATCH_INTERVAL_SECONDS),
+            "report_hour_new_york": int(scheduler_policy.get("report_hour_new_york", REPORT_HOUR) or REPORT_HOUR),
         },
         "governance": _build_governance_summary(rows, decisions),
+        "scheduler_policy": scheduler_policy,
     }
     excel_path = _write_excel(run_id, decisions, summary)
     md_path = _write_markdown(run_id, decisions, summary)
@@ -1647,24 +1712,43 @@ def _report_cycle(state: dict[str, Any], *, chat_id: str | None, force_send: boo
     deliveries = []
     if chat_id and force_send:
         deliveries = _send_to_telegram(chat_id=chat_id, text=_summary_text(summary, decisions), media_paths=[md_path, json_path, excel_path])
+    summary["memory_writeback"] = record_memory_writeback(
+        "project-cross-market-arbitrage",
+        source="cross_market_arbitrage_cycle",
+        summary={
+            "attention_required": bool((summary.get("governance", {}) or {}).get("primary_blocker")),
+            "state_patch": {},
+            "governance_patch": {},
+            "next_actions": [
+                str(item).strip()
+                for item in ((summary.get("governance", {}) or {}).get("next_actions", []) or [])
+                if str(item).strip()
+            ],
+            "warnings": [str((summary.get("governance", {}) or {}).get("primary_blocker", "")).strip()] if str((summary.get("governance", {}) or {}).get("primary_blocker", "")).strip() else [],
+            "errors": [],
+            "decisions": ["cross_market_arbitrage_cycle_completed"],
+            "memory_targets": ["project", "runtime"],
+            "memory_reasons": ["cross_market_arbitrage_cycle", "project_arbitrage_feedback"],
+        },
+    )
     _save_state(state)
     return {"run_id": run_id, "summary": summary, "excel_path": str(excel_path), "markdown_path": str(md_path), "json_path": str(json_path), "deliveries": deliveries}
 
 
-def _discovery_due(state: dict[str, Any]) -> bool:
+def _discovery_due(state: dict[str, Any], interval_seconds: int = DISCOVERY_INTERVAL_SECONDS) -> bool:
     last = parse_dt(state.get("last_discovery_at", ""))
-    return last is None or (_utc_now() - last).total_seconds() >= DISCOVERY_INTERVAL_SECONDS
+    return last is None or (_utc_now() - last).total_seconds() >= interval_seconds
 
 
-def _match_due(state: dict[str, Any]) -> bool:
+def _match_due(state: dict[str, Any], interval_seconds: int = MATCH_INTERVAL_SECONDS) -> bool:
     last = parse_dt(state.get("last_match_at", ""))
     has_unmatched = any(not row.get("last_matched_at") for row in (state.get("candidates") or {}).values())
-    return has_unmatched and (last is None or (_utc_now() - last).total_seconds() >= MATCH_INTERVAL_SECONDS)
+    return has_unmatched and (last is None or (_utc_now() - last).total_seconds() >= interval_seconds)
 
 
-def _report_due(state: dict[str, Any]) -> bool:
+def _report_due(state: dict[str, Any], report_hour: int = REPORT_HOUR) -> bool:
     ny_now = _ny_now()
-    if ny_now.hour < REPORT_HOUR:
+    if ny_now.hour < report_hour:
         return False
     return state.get("last_report_date") != ny_now.date().isoformat()
 
@@ -1685,18 +1769,50 @@ def _seconds_until_next_discovery() -> int:
 def run_daemon() -> int:
     while True:
         state = _load_state()
+        scheduler_policy = _load_scheduler_policy()
+        scheduler_state = _load_scheduler_state()
+        discovery_interval = int(scheduler_policy.get("discovery_interval_seconds", DISCOVERY_INTERVAL_SECONDS) or DISCOVERY_INTERVAL_SECONDS)
+        matching_interval = int(scheduler_policy.get("matching_interval_seconds", MATCH_INTERVAL_SECONDS) or MATCH_INTERVAL_SECONDS)
+        report_hour = int(scheduler_policy.get("report_hour_new_york", REPORT_HOUR) or REPORT_HOUR)
+        loop_sleep_seconds = int(scheduler_policy.get("loop_sleep_seconds", 300) or 300)
         changed = False
-        if _discovery_due(state):
+        effective_discovery = False
+        effective_match = False
+        effective_report = False
+        if bool(scheduler_policy.get("start_tasks", True)) and _discovery_due(state, interval_seconds=discovery_interval):
             state, _, _ = _discover_cycle(state, test=False)
             changed = True
-        if _match_due(state):
+            effective_discovery = True
+        if bool(scheduler_policy.get("start_tasks", True)) and _match_due(state, interval_seconds=matching_interval):
             state, _, _ = _match_cycle(state, test=False)
             changed = True
+            effective_match = True
         if changed:
             _save_state(state)
-        if _report_due(state):
-            _report_cycle(state, chat_id=os.environ.get("CROSS_MARKET_TELEGRAM_CHAT", DEFAULT_TELEGRAM_TARGET), force_send=True)
-        time.sleep(300)
+        if _report_due(state, report_hour=report_hour):
+            _report_cycle(
+                state,
+                chat_id=os.environ.get("CROSS_MARKET_TELEGRAM_CHAT", DEFAULT_TELEGRAM_TARGET),
+                force_send=True,
+                scheduler_policy=scheduler_policy,
+            )
+            effective_report = True
+        scheduler_state_after = {
+            "updated_at": _utc_now_iso(),
+            "last_mode": scheduler_policy.get("recommended_mode", ""),
+            "loop_sleep_seconds": loop_sleep_seconds,
+            "discovery_interval_seconds": discovery_interval,
+            "matching_interval_seconds": matching_interval,
+            "report_hour_new_york": report_hour,
+            "last_effective_discovery": effective_discovery,
+            "last_effective_match": effective_match,
+            "last_effective_report": effective_report,
+            "last_discovery_started_at": _utc_now_iso() if effective_discovery else scheduler_state.get("last_discovery_started_at", ""),
+            "last_match_started_at": _utc_now_iso() if effective_match else scheduler_state.get("last_match_started_at", ""),
+            "last_report_started_at": _utc_now_iso() if effective_report else scheduler_state.get("last_report_started_at", ""),
+        }
+        _write_scheduler_state(scheduler_state_after)
+        time.sleep(loop_sleep_seconds)
 
 
 def main() -> int:
@@ -1705,16 +1821,51 @@ def main() -> int:
     parser.add_argument("--test", action="store_true")
     parser.add_argument("--send-telegram", action="store_true")
     parser.add_argument("--telegram-chat", default=DEFAULT_TELEGRAM_TARGET)
+    parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     if args.mode == "daemon":
         return run_daemon()
+    scheduler_policy = _load_scheduler_policy()
+    scheduler_state_before = _load_scheduler_state()
+    if not args.force and scheduler_policy and not bool(scheduler_policy.get("start_tasks", True)):
+        payload = {
+            "ran": False,
+            "reason": "scheduler_policy_start_tasks_false",
+            "scheduler_policy": scheduler_policy,
+            "scheduler_state_before": scheduler_state_before,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
     state = _load_state()
     state, _, discover_log = _discover_cycle(state, test=args.test)
     state, decisions, match_log = _match_cycle(state, test=args.test)
     _save_state(state)
-    payload = _report_cycle(state, chat_id=args.telegram_chat if args.send_telegram else None, force_send=args.send_telegram)
+    payload = _report_cycle(
+        state,
+        chat_id=args.telegram_chat if args.send_telegram else None,
+        force_send=args.send_telegram,
+        scheduler_policy=scheduler_policy,
+    )
     payload["fetch_log_count"] = len(discover_log) + len(match_log)
     payload["qualified_preview"] = [asdict(item) for item in decisions if item.qualified][:3]
+    payload["scheduler_policy"] = scheduler_policy
+    payload["scheduler_state_before"] = scheduler_state_before
+    scheduler_state_after = {
+        "updated_at": _utc_now_iso(),
+        "last_mode": scheduler_policy.get("recommended_mode", ""),
+        "loop_sleep_seconds": int(scheduler_policy.get("loop_sleep_seconds", 300) or 300),
+        "discovery_interval_seconds": int(scheduler_policy.get("discovery_interval_seconds", DISCOVERY_INTERVAL_SECONDS) or DISCOVERY_INTERVAL_SECONDS),
+        "matching_interval_seconds": int(scheduler_policy.get("matching_interval_seconds", MATCH_INTERVAL_SECONDS) or MATCH_INTERVAL_SECONDS),
+        "report_hour_new_york": int(scheduler_policy.get("report_hour_new_york", REPORT_HOUR) or REPORT_HOUR),
+        "last_effective_discovery": True,
+        "last_effective_match": True,
+        "last_effective_report": True,
+        "last_discovery_started_at": _utc_now_iso(),
+        "last_match_started_at": _utc_now_iso(),
+        "last_report_started_at": _utc_now_iso(),
+    }
+    payload["scheduler_state_after"] = scheduler_state_after
+    _write_scheduler_state(scheduler_state_after)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 

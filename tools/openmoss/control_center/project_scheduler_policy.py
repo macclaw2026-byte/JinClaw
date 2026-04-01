@@ -73,7 +73,63 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
         "suggested_interval_seconds": 900,
         "start_tasks": True,
         "reasons": ["seller_bulk_is_time_window_gated_in_script"],
+        "window_hour_new_york": 23,
+        "skip_outside_window": True,
         "summary": {
+            "memory_writeback_tasks_total": system_summary.get("memory_writeback_tasks_total", 0),
+        },
+    }
+
+
+def _cross_market_arbitrage_policy(
+    crawler_profile: Dict[str, Any],
+    system_summary: Dict[str, Any],
+) -> Dict[str, Any]:
+    feedback = crawler_profile.get("feedback", {}) or {}
+    trend = crawler_profile.get("trend", {}) or {}
+    attention_sites = int((crawler_profile.get("summary", {}) or {}).get("sites_attention_required", 0) or 0)
+    reasons: List[str] = []
+    coverage_status = str(feedback.get("coverage_status", "")).strip().lower()
+    recommended_mode = "steady"
+    loop_sleep_seconds = 300
+    discovery_interval_seconds = 30 * 60
+    matching_interval_seconds = 60 * 60
+    if coverage_status == "thin":
+        recommended_mode = "aggressive"
+        loop_sleep_seconds = 180
+        discovery_interval_seconds = 15 * 60
+        matching_interval_seconds = 30 * 60
+        reasons.append("project_feedback_coverage_thin")
+    elif coverage_status == "partial":
+        recommended_mode = "steady"
+        loop_sleep_seconds = 300
+        reasons.append("project_feedback_coverage_partial")
+    else:
+        recommended_mode = "light_touch"
+        loop_sleep_seconds = 600
+        reasons.append("project_feedback_coverage_strong")
+    if str(trend.get("direction", "")).strip().lower() == "degrading":
+        recommended_mode = "aggressive"
+        loop_sleep_seconds = min(loop_sleep_seconds, 180)
+        discovery_interval_seconds = min(discovery_interval_seconds, 15 * 60)
+        matching_interval_seconds = min(matching_interval_seconds, 30 * 60)
+        reasons.append("crawler_trend_degrading")
+    if attention_sites >= 3:
+        recommended_mode = "aggressive"
+        loop_sleep_seconds = min(loop_sleep_seconds, 180)
+        reasons.append("multiple_attention_sites")
+    return {
+        "recommended_mode": recommended_mode,
+        "loop_sleep_seconds": loop_sleep_seconds,
+        "discovery_interval_seconds": discovery_interval_seconds,
+        "matching_interval_seconds": matching_interval_seconds,
+        "report_hour_new_york": 18,
+        "start_tasks": True,
+        "reasons": reasons,
+        "summary": {
+            "feedback_coverage_status": feedback.get("coverage_status", "unknown"),
+            "trend_direction": trend.get("direction", "unknown"),
+            "attention_sites": attention_sites,
             "memory_writeback_tasks_total": system_summary.get("memory_writeback_tasks_total", 0),
         },
     }
@@ -89,4 +145,5 @@ def build_project_scheduler_policy(
         "generated_at": _utc_now_iso(),
         "crawler_remediation": _crawler_remediation_policy(crawler_profile, remediation_execution, system_summary),
         "seller_bulk": _seller_bulk_policy(system_summary),
+        "cross_market_arbitrage": _cross_market_arbitrage_policy(crawler_profile, system_summary),
     }

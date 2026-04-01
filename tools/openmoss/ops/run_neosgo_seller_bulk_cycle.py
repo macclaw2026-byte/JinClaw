@@ -26,7 +26,9 @@ import sys
 if str(CONTROL_CENTER_ROOT) not in sys.path:
     sys.path.insert(0, str(CONTROL_CENTER_ROOT))
 
+from control_plane_builder import build_control_plane
 from memory_writeback_runtime import record_memory_writeback
+from paths import SELLER_BULK_SCHEDULER_STATE_PATH
 
 
 def parse_args():
@@ -48,15 +50,71 @@ def _ny_now() -> datetime:
     return _utc_now().astimezone(NY_TZ)
 
 
-def should_run_now(force: bool) -> tuple[bool, str]:
+def _read_json(path: Path, default: dict) -> dict:
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def _write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _parse_iso(value: str) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _seconds_since(value: str) -> int | None:
+    dt = _parse_iso(value)
+    if not dt:
+        return None
+    return max(0, int((_utc_now() - dt).total_seconds()))
+
+
+def _load_scheduler_state() -> dict:
+    return _read_json(SELLER_BULK_SCHEDULER_STATE_PATH, {})
+
+
+def _write_scheduler_state(payload: dict) -> None:
+    _write_json(SELLER_BULK_SCHEDULER_STATE_PATH, payload)
+
+
+def _load_scheduler_policy() -> dict:
+    try:
+        control_plane = build_control_plane()
+    except Exception:
+        return {}
+    return (control_plane.get("project_scheduler_policy", {}) or {}).get("seller_bulk", {}) or {}
+
+
+def should_run_now(force: bool, scheduler_policy: dict | None = None, scheduler_state: dict | None = None) -> tuple[bool, str]:
     if force:
         return True, "forced"
+    scheduler_policy = scheduler_policy or {}
+    scheduler_state = scheduler_state or {}
+    if scheduler_policy and not bool(scheduler_policy.get("start_tasks", True)):
+        return False, "scheduler_policy_start_tasks_false"
     now_ny = _ny_now()
-    if now_ny.hour != 23:
+    window_hour = int(scheduler_policy.get("window_hour_new_york", 23) or 23)
+    if bool(scheduler_policy.get("skip_outside_window", True)) and now_ny.hour != window_hour:
         return False, f"outside_window:{now_ny.strftime('%Y-%m-%d %H:%M:%S %Z')}"
     today = now_ny.strftime("%Y-%m-%d")
     if STAMP_PATH.exists() and STAMP_PATH.read_text(encoding="utf-8").strip() == today:
         return False, f"already_ran:{today}"
+    suggested_interval = int(scheduler_policy.get("suggested_interval_seconds", 0) or 0)
+    since_last_started = _seconds_since(str(scheduler_state.get("last_started_at", "")))
+    if suggested_interval > 0 and since_last_started is not None and since_last_started < suggested_interval:
+        return False, f"scheduler_backoff_active:{suggested_interval}"
     return True, f"scheduled:{today}"
 
 
@@ -390,9 +448,42 @@ def mark_schedule_run():
 
 def main():
     args = parse_args()
-    should_run, reason = should_run_now(force=args.force)
+    scheduler_policy = _load_scheduler_policy()
+    scheduler_state_before = _load_scheduler_state()
+    should_run, reason = should_run_now(force=args.force, scheduler_policy=scheduler_policy, scheduler_state=scheduler_state_before)
     if not should_run:
-        print(json.dumps({"ran": False, "reason": reason}, ensure_ascii=False))
+        suggested_interval = int(scheduler_policy.get("suggested_interval_seconds", 0) or 0)
+        next_eligible_at = ""
+        if suggested_interval > 0:
+            next_eligible_at = datetime.fromtimestamp(
+                _utc_now().timestamp() + suggested_interval,
+                tz=timezone.utc,
+            ).isoformat()
+        scheduler_state_after = {
+            "updated_at": _utc_now().isoformat(),
+            "last_mode": scheduler_policy.get("recommended_mode", ""),
+            "last_interval_seconds": suggested_interval,
+            "last_force": args.force,
+            "last_requested_start_tasks": True,
+            "last_effective_start_tasks": False,
+            "last_skip_reason": reason,
+            "last_started_at": scheduler_state_before.get("last_started_at", ""),
+            "next_eligible_at": next_eligible_at,
+        }
+        _write_scheduler_state(scheduler_state_after)
+        print(
+            json.dumps(
+                {
+                    "ran": False,
+                    "reason": reason,
+                    "scheduler_policy": scheduler_policy,
+                    "scheduler_state_before": scheduler_state_before,
+                    "scheduler_state_after": scheduler_state_after,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
         return 0
     proc = run_runner(limit=args.limit, page_size=args.page_size, max_pages=args.max_pages)
     state = load_state()
@@ -400,6 +491,8 @@ def main():
     summary["runner_returncode"] = proc.returncode
     summary["runner_stdout_tail"] = proc.stdout[-4000:]
     summary["runner_stderr_tail"] = proc.stderr[-4000:]
+    summary["scheduler_policy"] = scheduler_policy
+    summary["scheduler_state_before"] = scheduler_state_before
     summary["memory_writeback"] = record_memory_writeback(
         "project-neosgo-seller-bulk",
         source="seller_bulk_cycle",
@@ -418,6 +511,26 @@ def main():
     md_path, json_path = write_report(summary)
     deliveries = [] if args.no_telegram else send_to_telegram(args.chat_id, summary, [md_path, json_path])
     summary["telegram_deliveries"] = deliveries
+    suggested_interval = int(scheduler_policy.get("suggested_interval_seconds", 0) or 0)
+    next_eligible_at = ""
+    if suggested_interval > 0:
+        next_eligible_at = datetime.fromtimestamp(
+            _utc_now().timestamp() + suggested_interval,
+            tz=timezone.utc,
+        ).isoformat()
+    scheduler_state_after = {
+        "updated_at": _utc_now().isoformat(),
+        "last_mode": scheduler_policy.get("recommended_mode", ""),
+        "last_interval_seconds": suggested_interval,
+        "last_force": args.force,
+        "last_requested_start_tasks": True,
+        "last_effective_start_tasks": True,
+        "last_skip_reason": "",
+        "last_started_at": _utc_now().isoformat(),
+        "next_eligible_at": next_eligible_at,
+    }
+    summary["scheduler_state_after"] = scheduler_state_after
+    _write_scheduler_state(scheduler_state_after)
     json_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     mark_schedule_run()
     print(json.dumps(summary, ensure_ascii=False, indent=2))
