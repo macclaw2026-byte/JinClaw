@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/route_guardrails.py`
+- 文件作用：负责路由守卫、切根与主题纠偏。
+- 顶层函数：persist_route、_normalize_set、_normalize_goal、_looks_like_status_query、_safe_contract、_extract_current_intent、_topic_diverged、_next_root_task_id、_build_task、reroot_route_if_needed。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import json
@@ -22,6 +30,12 @@ from task_ingress import slugify
 
 
 def persist_route(provider: str, conversation_id: str, route: Dict[str, object]) -> str:
+    """
+    中文注解：
+    - 功能：实现 `persist_route` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     path = BRAIN_ROUTES_ROOT / provider / f"{conversation_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(route, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -29,14 +43,32 @@ def persist_route(provider: str, conversation_id: str, route: Dict[str, object])
 
 
 def _normalize_set(values) -> Set[str]:
+    """
+    中文注解：
+    - 功能：实现 `_normalize_set` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return {str(item).strip().lower() for item in (values or []) if str(item).strip()}
 
 
 def _normalize_goal(text: str) -> str:
+    """
+    中文注解：
+    - 功能：实现 `_normalize_goal` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return re.sub(r"\s+", "", str(text or "").strip().lower())
 
 
 def _looks_like_status_query(text: str) -> bool:
+    """
+    中文注解：
+    - 功能：实现 `_looks_like_status_query` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     normalized = _normalize_goal(text)
     patterns = (
         "进展",
@@ -56,7 +88,31 @@ def _looks_like_status_query(text: str) -> bool:
     return any(token in normalized for token in patterns)
 
 
+def _governance_blocks_actionable_followup(snapshot: Dict[str, object]) -> bool:
+    """
+    中文注解：
+    - 功能：判断当前任务是否处于“最好先回权威状态而不是继续吞入动作指令”的治理态。
+    - 判定依据：待审批、以及 business 尚未完成但风险极高的状态。
+    """
+    governance = snapshot.get("governance", {}) or {}
+    policy = governance.get("policy", {}) or {}
+    pending = policy.get("pending_approvals", []) or []
+    risk = str(policy.get("risk", "")).strip().lower()
+    business = snapshot.get("business_outcome", {}) or {}
+    if pending:
+        return True
+    if risk == "critical" and not business.get("goal_satisfied"):
+        return True
+    return False
+
+
 def _safe_contract(task_id: str):
+    """
+    中文注解：
+    - 功能：实现 `_safe_contract` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if not task_id or not contract_path(task_id).exists():
         return None
     try:
@@ -66,6 +122,12 @@ def _safe_contract(task_id: str):
 
 
 def _extract_current_intent(task_id: str) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_extract_current_intent` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     contract = _safe_contract(task_id)
     if not contract:
         return {}
@@ -79,6 +141,12 @@ def _extract_current_intent(task_id: str) -> Dict[str, object]:
 
 
 def _topic_diverged(current_intent: Dict[str, object], new_intent: Dict[str, object], current_goal: str, new_goal: str) -> bool:
+    """
+    中文注解：
+    - 功能：实现 `_topic_diverged` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     current_types = _normalize_set(current_intent.get("task_types", []))
     new_types = _normalize_set(new_intent.get("task_types", []))
     current_domains = _normalize_set(current_intent.get("domains", [])) | _normalize_set(current_intent.get("likely_platforms", []))
@@ -109,6 +177,12 @@ def _topic_diverged(current_intent: Dict[str, object], new_intent: Dict[str, obj
 
 
 def _next_root_task_id(goal: str) -> str:
+    """
+    中文注解：
+    - 功能：实现 `_next_root_task_id` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     clean_goal = sanitize_goal_text(goal)
     base = slugify(clean_goal)
     if base == "autonomy-task":
@@ -126,6 +200,12 @@ def _next_root_task_id(goal: str) -> str:
 
 
 def _build_task(task_id: str, goal: str, source: str, metadata_extra: Dict[str, object] | None = None) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_build_task` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     clean_goal = sanitize_goal_text(goal)
     package = build_control_center_package(task_id, clean_goal, source=source)
     metadata = dict(package["metadata"])
@@ -157,8 +237,19 @@ def reroot_route_if_needed(
     goal: str,
     session_key: str,
 ) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `reroot_route_if_needed` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     goal = sanitize_goal_text(goal)
-    if route.get("task_id") and _looks_like_status_query(goal):
+    route_intent = route.get("intent", {}) or analyze_intent(goal, source="route_guardrails:actionability")
+    actionable = (
+        bool(goal)
+        and not (len(str(goal).strip()) < 24 and route_intent.get("task_types", ["general"]) == ["general"] and not any(route_intent.get(key) for key in ("requires_external_information", "needs_browser", "may_download_artifacts", "may_execute_external_code")))
+    )
+    if route.get("task_id") and _looks_like_status_query(goal) and not actionable:
         snapshot = build_task_status_snapshot(str(route.get("task_id")))
         route = dict(route)
         route["mode"] = "authoritative_task_status"
@@ -169,31 +260,46 @@ def reroot_route_if_needed(
 
     existing_task_id = str(route.get("task_id", "")).strip()
     predecessor_task_id = str(route.get("predecessor_task_id", "")).strip()
-    if not predecessor_task_id or not existing_task_id:
+    if not existing_task_id:
         return route
 
-    current_intent = _extract_current_intent(predecessor_task_id) or _extract_current_intent(str(route.get("lineage_root_task_id", "")).strip())
+    snapshot = build_task_status_snapshot(existing_task_id)
+    route = dict(route)
+    route["authoritative_task_status"] = route.get("authoritative_task_status") or snapshot
+    if _governance_blocks_actionable_followup(snapshot) and not actionable:
+        route["mode"] = "authoritative_task_status"
+        route["created_task"] = False
+        route["attached_existing"] = True
+        return route
+
+    comparison_task_id = predecessor_task_id or existing_task_id
+    current_intent = _extract_current_intent(comparison_task_id) or _extract_current_intent(str(route.get("lineage_root_task_id", "")).strip())
     new_intent = route.get("intent", {}) or analyze_intent(goal, source="route_guardrails")
-    current_contract = _safe_contract(predecessor_task_id)
+    current_contract = _safe_contract(comparison_task_id)
     current_goal = str(current_contract.user_goal if current_contract else "")
     if not _topic_diverged(current_intent, new_intent, current_goal, goal):
         return route
 
     new_task_id = _next_root_task_id(goal)
-    stale_state = load_state(existing_task_id)
-    stale_state.status = "blocked"
-    stale_state.next_action = f"rerooted_to:{new_task_id}"
-    stale_state.blockers = [f"rerooted into a new root task {new_task_id} because the topic diverged from predecessor {predecessor_task_id}"]
-    stale_state.metadata["superseded_by_task_id"] = new_task_id
-    stale_state.last_update_at = utc_now_iso()
-    save_state(stale_state)
-    log_event(existing_task_id, "task_rerooted_out_of_lineage", new_root_task_id=new_task_id, predecessor_task_id=predecessor_task_id)
+    if predecessor_task_id:
+        stale_state = load_state(existing_task_id)
+        stale_state.status = "blocked"
+        stale_state.next_action = f"rerooted_to:{new_task_id}"
+        stale_state.blockers = [f"rerooted into a new root task {new_task_id} because the topic diverged from predecessor {predecessor_task_id}"]
+        stale_state.metadata["superseded_by_task_id"] = new_task_id
+        stale_state.last_update_at = utc_now_iso()
+        save_state(stale_state)
+        log_event(existing_task_id, "task_rerooted_out_of_lineage", new_root_task_id=new_task_id, predecessor_task_id=predecessor_task_id)
+    else:
+        # 当前会话直接绑在一个 root task 上时，如果用户已经明显切换主题，
+        # 这里只需要把会话链改挂到新的 root task，不能把旧 root mission 误判成被 supersede。
+        log_event(existing_task_id, "conversation_rerooted_to_new_root_task", new_root_task_id=new_task_id, conversation_id=conversation_id)
     _build_task(
         new_task_id,
         goal,
         source=f"{route.get('source', 'route_guardrails')}:rerooted",
         metadata_extra={
-            "rerooted_from_task_id": predecessor_task_id,
+            "rerooted_from_task_id": comparison_task_id,
             "rerooted_from_route_task_id": existing_task_id,
             "rerooted_at": utc_now_iso(),
         },
@@ -209,18 +315,18 @@ def reroot_route_if_needed(
         "last_sender_id": route.get("sender_id", ""),
         "last_sender_name": route.get("sender_name", ""),
         "brain_source": route.get("source", ""),
-        "rerooted_from_task_id": predecessor_task_id,
+        "rerooted_from_task_id": comparison_task_id,
     }
     if session_key:
         payload["session_key"] = session_key
     link_path = write_link(provider, conversation_id, payload)
-    log_event(new_task_id, "task_rerooted_from_prior_topic", prior_task_id=predecessor_task_id, prior_route_task_id=existing_task_id)
+    log_event(new_task_id, "task_rerooted_from_prior_topic", prior_task_id=comparison_task_id, prior_route_task_id=existing_task_id)
     route = dict(route)
     route["mode"] = "create_new_root_task"
     route["created_task"] = True
     route["attached_existing"] = False
     route["rerooted"] = True
-    route["rerooted_from_task_id"] = predecessor_task_id
+    route["rerooted_from_task_id"] = comparison_task_id
     route["task_id"] = new_task_id
     route["lineage_root_task_id"] = new_task_id
     route["link_path"] = link_path
