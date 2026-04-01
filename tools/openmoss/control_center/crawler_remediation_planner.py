@@ -16,6 +16,7 @@ from typing import Any, Dict, List
 
 from paths import (
     CRAWLER_CAPABILITY_PROFILE_PATH,
+    CRAWLER_REMEDIATION_EXECUTION_PATH,
     CRAWLER_REMEDIATION_PLAN_PATH,
     CRAWLER_REMEDIATION_QUEUE_PATH,
 )
@@ -43,16 +44,49 @@ def _write_json(path: Path, payload: Dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _plan_for_action(item: Dict[str, Any], site_map: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+def _execution_feedback_map() -> Dict[str, Dict[str, Any]]:
+    execution = _read_json(CRAWLER_REMEDIATION_EXECUTION_PATH, {"items": []}) or {"items": []}
+    rows = execution.get("items", []) or []
+    return {
+        str(row.get("source_remediation_id", "")).strip(): row
+        for row in rows
+        if str(row.get("source_remediation_id", "")).strip()
+    }
+
+
+def _priority_from_execution_feedback(priority: str, execution_feedback: Dict[str, Any]) -> tuple[str, str]:
+    task_state = execution_feedback.get("task_state", {}) or {}
+    status = str(task_state.get("status", "")).strip().lower()
+    current_stage = str(task_state.get("current_stage", "")).strip().lower()
+    if status in {"failed", "blocked"}:
+        return "high", f"previous remediation task is {status}"
+    if status == "recovering":
+        return "high", "previous remediation task is recovering"
+    if status == "completed":
+        return "low", "previous remediation task already completed"
+    if status in {"running", "planning"}:
+        return "medium", f"previous remediation task active at {current_stage or status}"
+    return priority, ""
+
+
+def _plan_for_action(
+    item: Dict[str, Any],
+    site_map: Dict[str, Dict[str, Any]],
+    execution_feedback: Dict[str, Any],
+) -> Dict[str, Any]:
     site = str(item.get("site", "")).strip().lower()
     action = str(item.get("action", "")).strip()
     site_profile = site_map.get(site, {})
     preferred_tools = site_profile.get("preferred_tool_order", []) or []
     task_output_fields = list((site_profile.get("task_output_fields", {}) or {}).keys())
+    effective_priority, priority_reason = _priority_from_execution_feedback(
+        str(item.get("priority", "medium")),
+        execution_feedback,
+    )
     if action == "stabilize_site_profile":
         return {
             "id": item.get("id", ""),
-            "priority": item.get("priority", "medium"),
+            "priority": effective_priority,
             "execution_type": "site_revalidation",
             "site": site,
             "goal": f"重新验证 {site} 的抓取矩阵，优先补齐可用主栈与关键结构字段。",
@@ -67,11 +101,13 @@ def _plan_for_action(item: Dict[str, Any], site_map: Dict[str, Dict[str, Any]]) 
                 str(REPORTS_ROOT / f"{site}-latest-run.json"),
                 str(SITE_PROFILES_ROOT / f"{site}.json"),
             ],
+            "execution_feedback": execution_feedback,
+            "priority_reason": priority_reason,
         }
     if action == "improve_structured_field_coverage":
         return {
             "id": item.get("id", ""),
-            "priority": item.get("priority", "medium"),
+            "priority": effective_priority,
             "execution_type": "field_coverage_upgrade",
             "site": site,
             "goal": "补齐项目级 crawler 关键结构字段覆盖率，优先修复当前为空或缺失的字段。",
@@ -86,10 +122,12 @@ def _plan_for_action(item: Dict[str, Any], site_map: Dict[str, Dict[str, Any]]) 
                 str(CRAWLER_CAPABILITY_PROFILE_PATH),
             ],
             "focus_fields": task_output_fields[:8],
+            "execution_feedback": execution_feedback,
+            "priority_reason": priority_reason,
         }
     return {
         "id": item.get("id", ""),
-        "priority": item.get("priority", "medium"),
+        "priority": effective_priority,
         "execution_type": "manual_triage",
         "site": site,
         "goal": str(item.get("reason", "")).strip() or "人工检查 remediation action",
@@ -97,19 +135,31 @@ def _plan_for_action(item: Dict[str, Any], site_map: Dict[str, Dict[str, Any]]) 
         "suggested_tools": [],
         "verification_targets": ["root cause is clarified"],
         "evidence_inputs": [],
+        "execution_feedback": execution_feedback,
+        "priority_reason": priority_reason,
     }
 
 
 def build_crawler_remediation_plan() -> Dict[str, Any]:
     queue = _read_json(CRAWLER_REMEDIATION_QUEUE_PATH, {"items": []}) or {"items": []}
     profile = _read_json(CRAWLER_CAPABILITY_PROFILE_PATH, {}) or {}
+    execution_feedback_map = _execution_feedback_map()
     sites = profile.get("sites", []) or []
     site_map = {
         str(site.get("site", "")).strip().lower(): site
         for site in sites
         if str(site.get("site", "")).strip()
     }
-    plans = [_plan_for_action(item, site_map) for item in (queue.get("items", []) or [])]
+    plans = [
+        _plan_for_action(
+            item,
+            site_map,
+            execution_feedback_map.get(str(item.get("id", "")).strip(), {}),
+        )
+        for item in (queue.get("items", []) or [])
+    ]
+    priority_order = {"high": 0, "medium": 1, "low": 2}
+    plans.sort(key=lambda item: (priority_order.get(str(item.get("priority", "medium")), 9), str(item.get("site", ""))))
     payload = {
         "generated_at": _utc_now_iso(),
         "summary": {
