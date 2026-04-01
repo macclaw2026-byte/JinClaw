@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
+from control_plane_builder import build_control_plane
 from paths import CONTROL_CENTER_RUNTIME_ROOT
 from progress_evidence import build_progress_evidence
 from response_policy_engine import build_supervisor_status_text
@@ -146,6 +147,14 @@ def run_mission_supervisor(*, stale_after_seconds: int = 300, escalation_after_s
                 escalation_after_seconds=escalation_after_seconds,
             )
         )
-    result = {"checked_at": _utc_now_iso(), "reports": reports}
+    control_plane = build_control_plane(
+        stale_after_seconds=stale_after_seconds,
+        escalation_after_seconds=escalation_after_seconds,
+    )
+    result = {
+        "checked_at": _utc_now_iso(),
+        "crawler_remediation_queue": (control_plane.get("crawler_remediation_queue", {}) or {}),
+        "reports": reports,
+    }
     _write_json(SUPERVISOR_ROOT / "last_run.json", result)
     return result

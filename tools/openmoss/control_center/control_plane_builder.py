@@ -23,6 +23,7 @@ from crawler_capability_profile import build_crawler_capability_profile
 from paths import (
     ALERTS_PATH,
     CRAWLER_CAPABILITY_PROFILE_PATH,
+    CRAWLER_REMEDIATION_QUEUE_PATH,
     DOCTOR_QUEUE_PATH,
     PROCESS_REGISTRY_PATH,
     SYSTEM_SNAPSHOT_PATH,
@@ -289,6 +290,32 @@ def build_task_registry(*, stale_after_seconds: int = 300, escalation_after_seco
     }
 
 
+def build_crawler_remediation_queue(crawler_capability_profile: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：把 crawler capability profile 里的优先修复建议整理成 control plane 可消费的项目级待办队列。
+    - 设计意图：让系统不只知道“哪里弱”，还知道“下一步应该先修什么”，供医生、监督器和后续调度链共享。
+    """
+    items: List[Dict[str, Any]] = []
+    for index, action in enumerate(crawler_capability_profile.get("priority_actions", []) or [], start=1):
+        items.append(
+            {
+                "id": f"crawler-remediation-{index}",
+                "priority": action.get("priority", "medium"),
+                "action": action.get("action", ""),
+                "site": action.get("site", ""),
+                "reason": action.get("reason", ""),
+                "status": "pending",
+            }
+        )
+    queue = {
+        "generated_at": _utc_now_iso(),
+        "items": items,
+    }
+    _write_json(CRAWLER_REMEDIATION_QUEUE_PATH, queue)
+    return queue
+
+
 def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seconds: int = 900) -> Dict[str, Any]:
     """
     中文注解：
@@ -298,6 +325,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
     """
     process_registry = build_process_registry()
     crawler_capability_profile = build_crawler_capability_profile()
+    crawler_remediation_queue = build_crawler_remediation_queue(crawler_capability_profile)
     task_views = build_task_registry(
         stale_after_seconds=stale_after_seconds,
         escalation_after_seconds=escalation_after_seconds,
@@ -306,6 +334,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
         "generated_at": _utc_now_iso(),
         "process_registry_path": process_registry.get("path"),
         "crawler_capability_profile_path": str(CRAWLER_CAPABILITY_PROFILE_PATH),
+        "crawler_remediation_queue_path": str(CRAWLER_REMEDIATION_QUEUE_PATH),
         "task_registry_path": str(TASK_REGISTRY_PATH),
         "waiting_registry_path": str(WAITING_REGISTRY_PATH),
         "doctor_queue_path": str(DOCTOR_QUEUE_PATH),
@@ -320,6 +349,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
             "crawler_depth_score": crawler_capability_profile.get("summary", {}).get("depth_score", 0),
             "crawler_stability_score": crawler_capability_profile.get("summary", {}).get("stability_score", 0),
             "crawler_trend_direction": crawler_capability_profile.get("trend", {}).get("direction", "unknown"),
+            "crawler_remediation_total": len(crawler_remediation_queue.get("items", [])),
             "tasks_total": len(task_views["task_registry"].get("items", [])),
             "waiting_total": len(task_views["waiting_registry"].get("items", [])),
             "doctor_queue_total": len(task_views["doctor_queue"].get("items", [])),
@@ -330,6 +360,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
     return {
         "process_registry": process_registry,
         "crawler_capability_profile": crawler_capability_profile,
+        "crawler_remediation_queue": crawler_remediation_queue,
         **task_views,
         "system_snapshot": snapshot,
     }
