@@ -185,6 +185,13 @@ def _force_browser_batch_plan(mission: Dict[str, object]) -> Dict[str, object]:
     return mission
 
 
+def _hook_next_actions(event_result: Dict[str, object]) -> list[str]:
+    actions: list[str] = []
+    for item in event_result.get("emitted_hooks", []) or []:
+        actions.extend([str(value) for value in item.get("next_actions", []) or [] if str(value).strip()])
+    return actions
+
+
 def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str, object]) -> Dict[str, object]:
     """
     中文注解：
@@ -205,9 +212,12 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
     # challenge 是运行态问题分类器的结果：
     # 它决定当前更像是业务推进、浏览器问题、审批阻塞还是需要更深的请求链调试。
     challenge = classify_challenge(task_id, state.get("blockers", []), state)
+    challenge_event = {}
     if challenge.get("challenge_type") not in {"", "none"}:
-        publish_event("challenge.detected", {"task_id": task_id, "mission": mission, "challenge": challenge})
+        challenge_event = publish_event("challenge.detected", {"task_id": task_id, "mission": mission, "challenge": challenge})
     mission["challenge"] = challenge
+    if challenge_event:
+        mission["challenge_hook"] = challenge_event
     mission["authorized_session"] = build_authorized_session_plan(task_id, mission.get("intent", {}), challenge)
     mission["human_checkpoint"] = build_human_checkpoint(task_id, challenge)
     mission["fetch_route"] = build_fetch_route(task_id, mission.get("intent", {}), mission.get("selected_plan", {}), mission.get("domain_profile", {}), challenge)
@@ -321,6 +331,12 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
             "action": problem.get("recommended_action", "diagnose_and_retry"),
             "reason": "task is recovering and should follow the problem solver recommendation",
             "auto_safe": problem.get("recommended_action") in {"repair_and_retry", "apply_permission_recovery", "reacquire_browser_channel"},
+        }
+    elif _hook_next_actions(challenge_event):
+        next_decision = {
+            "action": _hook_next_actions(challenge_event)[0],
+            "reason": "challenge hook produced a concrete next action that should override generic monitoring",
+            "auto_safe": True,
         }
     elif current_stage and state.get("status") in {"planning", "running"}:
         next_decision = {

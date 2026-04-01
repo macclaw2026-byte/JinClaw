@@ -355,8 +355,8 @@ def _load_mission_payload(task_id: str, contract, state) -> Dict[str, object]:
     }
 
 
-def _emit_preflight_event(task_id: str, stage_name: str, event_suffix: str, payload: Dict[str, object]) -> None:
-    publish_event(
+def _emit_preflight_event(task_id: str, stage_name: str, event_suffix: str, payload: Dict[str, object]) -> Dict[str, object]:
+    return publish_event(
         f"stage.{stage_name}.{event_suffix}",
         {
             "task_id": task_id,
@@ -377,7 +377,7 @@ def run_stage_preflight(task_id: str, stage_name: str) -> Dict[str, object]:
     state_obj = load_state(task_id)
     mission = _load_mission_payload(task_id, contract, state_obj)
     governance = build_governance_bundle(task_id, stage_name, contract.to_dict(), state_obj.to_dict(), mission)
-    _emit_preflight_event(
+    pre_execute_event = _emit_preflight_event(
         task_id,
         stage_name,
         "pre_execute",
@@ -393,12 +393,13 @@ def run_stage_preflight(task_id: str, stage_name: str) -> Dict[str, object]:
             "action": "satisfy_stage_contract_preflight",
             "result": contract_preflight,
         }
-        _emit_preflight_event(
+        blocked_event = _emit_preflight_event(
             task_id,
             stage_name,
             "preflight_blocked",
             {"mission": mission, "governance": governance, "preflight": response},
         )
+        response["hook_event"] = {"pre_execute": pre_execute_event, "terminal": blocked_event}
         return response
     stpa_preflight = _run_stpa_guard(task_id, stage_name)
     if not stpa_preflight.get("ok", False):
@@ -409,12 +410,13 @@ def run_stage_preflight(task_id: str, stage_name: str) -> Dict[str, object]:
             "action": "resolve_stpa_control_gap",
             "result": stpa_preflight,
         }
-        _emit_preflight_event(
+        blocked_event = _emit_preflight_event(
             task_id,
             stage_name,
             "preflight_blocked",
             {"mission": mission, "governance": governance, "preflight": response},
         )
+        response["hook_event"] = {"pre_execute": pre_execute_event, "terminal": blocked_event}
         return response
 
     summary = load_task_summary(task_id)
@@ -428,20 +430,22 @@ def run_stage_preflight(task_id: str, stage_name: str) -> Dict[str, object]:
                 "action": "stage_contract_preflight",
                 "result": contract_preflight,
             }
-            _emit_preflight_event(
+            terminal_event = _emit_preflight_event(
                 task_id,
                 stage_name,
                 "preflight_passed",
                 {"mission": mission, "governance": governance, "preflight": response},
             )
+            response["hook_event"] = {"pre_execute": pre_execute_event, "terminal": terminal_event}
             return response
         response = {"ok": True, "status": "no_preflight_needed"}
-        _emit_preflight_event(
+        terminal_event = _emit_preflight_event(
             task_id,
             stage_name,
             "preflight_passed",
             {"mission": mission, "governance": governance, "preflight": response},
         )
+        response["hook_event"] = {"pre_execute": pre_execute_event, "terminal": terminal_event}
         return response
     error_text = str(last_failure.get("error") or "").strip()
     if not error_text:
@@ -453,20 +457,22 @@ def run_stage_preflight(task_id: str, stage_name: str) -> Dict[str, object]:
                 "action": "stage_contract_preflight",
                 "result": contract_preflight,
             }
-            _emit_preflight_event(
+            terminal_event = _emit_preflight_event(
                 task_id,
                 stage_name,
                 "preflight_passed",
                 {"mission": mission, "governance": governance, "preflight": response},
             )
+            response["hook_event"] = {"pre_execute": pre_execute_event, "terminal": terminal_event}
             return response
         response = {"ok": True, "status": "no_preflight_needed"}
-        _emit_preflight_event(
+        terminal_event = _emit_preflight_event(
             task_id,
             stage_name,
             "preflight_passed",
             {"mission": mission, "governance": governance, "preflight": response},
         )
+        response["hook_event"] = {"pre_execute": pre_execute_event, "terminal": terminal_event}
         return response
 
     rule = resolve_rule_for_error(error_text)
@@ -479,20 +485,22 @@ def run_stage_preflight(task_id: str, stage_name: str) -> Dict[str, object]:
                 "action": "stage_contract_preflight",
                 "result": contract_preflight,
             }
-            _emit_preflight_event(
+            terminal_event = _emit_preflight_event(
                 task_id,
                 stage_name,
                 "preflight_passed",
                 {"mission": mission, "governance": governance, "preflight": response},
             )
+            response["hook_event"] = {"pre_execute": pre_execute_event, "terminal": terminal_event}
             return response
         response = {"ok": True, "status": "no_promoted_rule"}
-        _emit_preflight_event(
+        terminal_event = _emit_preflight_event(
             task_id,
             stage_name,
             "preflight_passed",
             {"mission": mission, "governance": governance, "preflight": response},
         )
+        response["hook_event"] = {"pre_execute": pre_execute_event, "terminal": terminal_event}
         return response
 
     action = str(rule.get("preferred_action") or "").strip()
@@ -505,20 +513,22 @@ def run_stage_preflight(task_id: str, stage_name: str) -> Dict[str, object]:
                 "action": "stage_contract_preflight",
                 "result": contract_preflight,
             }
-            _emit_preflight_event(
+            terminal_event = _emit_preflight_event(
                 task_id,
                 stage_name,
                 "preflight_passed",
                 {"mission": mission, "governance": governance, "preflight": response},
             )
+            response["hook_event"] = {"pre_execute": pre_execute_event, "terminal": terminal_event}
             return response
         response = {"ok": True, "status": "no_preflight_action"}
-        _emit_preflight_event(
+        terminal_event = _emit_preflight_event(
             task_id,
             stage_name,
             "preflight_passed",
             {"mission": mission, "governance": governance, "preflight": response},
         )
+        response["hook_event"] = {"pre_execute": pre_execute_event, "terminal": terminal_event}
         return response
 
     guard_result = _run_stage_specific_guard(error_text, rule)
@@ -536,12 +546,13 @@ def run_stage_preflight(task_id: str, stage_name: str) -> Dict[str, object]:
             "error_text": error_text,
             "rule": rule,
         }
-        _emit_preflight_event(
+        terminal_event = _emit_preflight_event(
             task_id,
             stage_name,
             "preflight_passed" if continue_execution else "preflight_blocked",
             {"mission": mission, "governance": governance, "preflight": response},
         )
+        response["hook_event"] = {"pre_execute": pre_execute_event, "terminal": terminal_event}
         return response
 
     result = apply_recovery_action(action, error_text, task_id=task_id)
@@ -558,10 +569,11 @@ def run_stage_preflight(task_id: str, stage_name: str) -> Dict[str, object]:
         "error_text": error_text,
         "rule": rule,
     }
-    _emit_preflight_event(
+    terminal_event = _emit_preflight_event(
         task_id,
         stage_name,
         "preflight_passed" if continue_execution else "preflight_blocked",
         {"mission": mission, "governance": governance, "preflight": response},
     )
+    response["hook_event"] = {"pre_execute": pre_execute_event, "terminal": terminal_event}
     return response

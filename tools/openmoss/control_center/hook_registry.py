@@ -93,6 +93,10 @@ DEFAULT_HOOKS: Dict[str, List[Dict[str, object]]] = {
         _hook("monitor_liveness_and_retry_path", phase="recovery", blocking=True, emits=["runtime.recovery_reviewed"]),
         _hook("refresh_task_memory_snapshot", phase="recovery", emits=["memory.snapshot_refreshed"]),
     ],
+    "doctor.escalation": [
+        _hook("refresh_task_memory_snapshot", phase="recovery", emits=["memory.snapshot_refreshed"]),
+        _hook("monitor_liveness_and_retry_path", phase="recovery", emits=["runtime.retry_path_reviewed"]),
+    ],
 }
 
 

@@ -182,6 +182,24 @@ def _summarize_preflight_block(preflight: Dict) -> list[str]:
     return blockers
 
 
+def _collect_hook_attention(preflight: Dict) -> Dict[str, object]:
+    hook_events = preflight.get("hook_event", {}) or {}
+    warnings: list[str] = []
+    next_actions: list[str] = []
+    attention_required = False
+    for event_payload in hook_events.values():
+        for hook_result in (event_payload or {}).get("emitted_hooks", []) or []:
+            if str(hook_result.get("status", "")).strip() in {"attention_required", "failed"}:
+                attention_required = True
+            warnings.extend([str(item) for item in hook_result.get("warnings", []) or [] if str(item).strip()])
+            next_actions.extend([str(item) for item in hook_result.get("next_actions", []) or [] if str(item).strip()])
+    return {
+        "attention_required": attention_required,
+        "warnings": sorted(set(warnings)),
+        "next_actions": next_actions,
+    }
+
+
 def _gateway_call(method: str, params: Dict, timeout_seconds: int = 15) -> Dict:
     """
     中文注解：
@@ -692,12 +710,14 @@ def dispatch_stage(task_id: str) -> Dict:
     # 这里会综合审批、命令、路径、promoted rule 等信息，判断“现在这一步能不能安全开工”。
     preflight = run_stage_preflight(task_id, stage_name)
     if preflight.get("status") != "no_preflight_needed" and preflight.get("status") != "no_promoted_rule":
+        hook_attention = _collect_hook_attention(preflight)
         state.metadata["last_preflight"] = {
             "stage_name": stage_name,
             "ran_at": utc_now_iso(),
             "status": preflight.get("status"),
             "action": preflight.get("action", ""),
             "result": preflight.get("result", {}),
+            "hook_attention": hook_attention,
         }
         stage = state.stages.get(stage_name)
         if stage:
@@ -706,9 +726,12 @@ def dispatch_stage(task_id: str) -> Dict:
         save_state(state)
         log_event(task_id, "stage_preflight_ran", stage=stage_name, preflight=preflight)
     if not preflight.get("ok", True):
+        hook_attention = _collect_hook_attention(preflight)
         state.status = "recovering"
-        state.next_action = str(preflight.get("action") or "run_root_cause_review_before_retry")
+        state.next_action = str((hook_attention.get("next_actions", []) or [preflight.get("action") or "run_root_cause_review_before_retry"])[0])
         state.blockers = _summarize_preflight_block(preflight)
+        state.blockers.extend([f"hook_warning:{item}" for item in hook_attention.get("warnings", []) if item])
+        state.blockers = list(dict.fromkeys(state.blockers))
         state.last_update_at = utc_now_iso()
         current_stage = state.stages.get(stage_name)
         if current_stage:

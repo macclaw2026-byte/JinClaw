@@ -1704,6 +1704,19 @@ def _maybe_take_over_failed_task(task_id: str) -> dict | None:
     state.next_action = "doctor_investigating_failure"
     state.last_update_at = utc_now_iso()
     save_state(state)
+    doctor_event = publish_event(
+        "doctor.escalation",
+        {
+            "task_id": task_id,
+            "snapshot": build_task_status_snapshot(task_id),
+            "blockers": state.blockers or [],
+            "doctor_takeover": state.metadata.get("doctor_takeover", {}) or {},
+        },
+    )
+    state = load_state(task_id)
+    state.metadata["doctor_takeover"]["hook_event"] = doctor_event
+    state.last_update_at = utc_now_iso()
+    save_state(state)
     log_event(task_id, "failed_task_escalated_to_doctor", delivered=bool(receipt))
     run_system_doctor(idle_after_seconds=1, escalation_after_seconds=1)
     return receipt
