@@ -30,6 +30,8 @@ WAREHOUSE = {
 def parse_args():
     parser = argparse.ArgumentParser(description='Bulk import, patch, and submit Neosgo seller listings.')
     parser.add_argument('--limit', type=int, default=10, help='Maximum number of importable candidates to process.')
+    parser.add_argument('--page-size', type=int, default=100, help='Number of GIGA candidates to fetch per page.')
+    parser.add_argument('--max-pages', type=int, default=10, help='Maximum number of candidate pages to scan.')
     parser.add_argument('--sku', action='append', dest='skus', help='Specific SKU(s) to process. Can be passed multiple times.')
     parser.add_argument('--no-submit', action='store_true', help='Stop after readiness check; do not submit even if ready.')
     parser.add_argument('--sleep-seconds', type=float, default=1.0, help='Pause between processed SKUs.')
@@ -109,6 +111,20 @@ def pick_submission_price(listing):
     return round(base + PRICE_MARKUP_USD, 2)
 
 
+def pick_description(listing, candidate):
+    description = listing.get('description')
+    if isinstance(description, str) and description.strip():
+        return description
+    title = (
+        listing.get('title')
+        or listing.get('name')
+        or candidate.get('productName')
+        or candidate.get('sku')
+        or 'Neosgo imported listing'
+    )
+    return f'<p>{title}</p>'
+
+
 def extract_product_ids(imported):
     product_ids = []
     if not isinstance(imported, dict):
@@ -129,6 +145,22 @@ def extract_product_ids(imported):
         if isinstance(imported.get(key), list):
             return imported[key]
     return product_ids
+
+
+def fetch_candidates(base, token, page_size, max_pages):
+    candidates = []
+    page = 1
+    while page <= max_pages:
+        payload = request('GET', base, token, f'/api/automation/seller/giga/candidates?page={page}&pageSize={page_size}')
+        data = payload.get('data') or {}
+        items = data.get('candidates') or []
+        if not items:
+            break
+        candidates.extend(items)
+        if not data.get('hasNextPage'):
+            break
+        page += 1
+    return candidates
 
 
 def derive_category_id(category_name):
@@ -160,6 +192,8 @@ def main():
         'startedAt': time.time(),
         'args': {
             'limit': args.limit,
+            'page_size': args.page_size,
+            'max_pages': args.max_pages,
             'skus': args.skus or [],
             'no_submit': args.no_submit,
             'sleep_seconds': args.sleep_seconds,
@@ -168,8 +202,7 @@ def main():
     }
     write_state(state)
 
-    cand = request('GET', base, token, '/api/automation/seller/giga/candidates?page=1&pageSize=30')
-    candidates = cand['data']['candidates']
+    candidates = fetch_candidates(base, token, args.page_size, args.max_pages)
     todo = [c for c in candidates if c.get('canImport')]
     if args.skus:
         requested = set(args.skus)
@@ -206,6 +239,7 @@ def main():
                 'brand': listing.get('brand') or DEFAULT_BRAND,
                 'categoryId': pick_category_id(listing, c),
                 'basePrice': pick_submission_price(listing),
+                'description': pick_description(listing, c),
                 'shippingTemplateId': listing.get('shippingTemplateId') or SHIPPING_TEMPLATE_ID,
                 'quantityAvailable': pick_quantity_available(listing),
                 'packingUnits': listing.get('packingUnits') or derive_packing_units(listing),
@@ -230,9 +264,17 @@ def main():
             row['exception'] = repr(exc)
             row['traceback'] = traceback.format_exc()
         state['processed'].append(row)
+        state['processedCount'] = len(state['processed'])
+        state['successCount'] = sum(1 for item in state['processed'] if item.get('submit', {}).get('ok'))
+        state['failureCount'] = state['processedCount'] - state['successCount']
         write_state(state)
         time.sleep(args.sleep_seconds)
 
+    state['finishedAt'] = time.time()
+    state['processedCount'] = len(state['processed'])
+    state['successCount'] = sum(1 for item in state['processed'] if item.get('submit', {}).get('ok'))
+    state['failureCount'] = state['processedCount'] - state['successCount']
+    write_state(state)
     print(json.dumps(state, ensure_ascii=False, indent=2))
 
 if __name__ == '__main__':
