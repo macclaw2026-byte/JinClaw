@@ -110,6 +110,7 @@ def write_report(payload: dict) -> tuple[Path, Path]:
 def send_to_telegram(chat_id: str, payload: dict, attachments: list[Path]) -> list[dict]:
     execution = payload.get("execution", {}) or {}
     doctor_summary = payload.get("doctor_summary", {}) or {}
+    scheduler_policy = payload.get("scheduler_policy", {}) or {}
     priority_actions = doctor_summary.get("priority_actions", []) or []
     text = (
         "Crawler remediation cycle finished.\n"
@@ -117,6 +118,11 @@ def send_to_telegram(chat_id: str, payload: dict, attachments: list[Path]) -> li
         f"Existing: {execution.get('existing_total', 0)}\n"
         f"Created: {execution.get('created_total', 0)}"
     )
+    if scheduler_policy:
+        text += (
+            f"\nMode: {scheduler_policy.get('recommended_mode', 'unknown')}"
+            f" | start={bool(payload.get('effective_start_tasks'))}"
+        )
     if priority_actions:
         text += "\nTop priorities:"
         for item in priority_actions[:3]:
@@ -153,13 +159,19 @@ def send_to_telegram(chat_id: str, payload: dict, attachments: list[Path]) -> li
 
 def run_cycle(*, start_tasks: bool = True, run_doctor: bool = True) -> dict:
     control_plane_before = build_control_plane()
-    execution = execute_crawler_remediation_plan(start_tasks=start_tasks)
+    scheduler_policy = (control_plane_before.get("project_scheduler_policy", {}) or {}).get("crawler_remediation", {}) or {}
+    effective_start_tasks = bool(start_tasks)
+    if start_tasks and scheduler_policy and not bool(scheduler_policy.get("start_tasks", True)):
+        effective_start_tasks = False
+    execution = execute_crawler_remediation_plan(start_tasks=effective_start_tasks)
     doctor = run_system_doctor() if run_doctor else {}
     control_plane_after = build_control_plane()
     payload = {
         "generated_at": _utc_now_iso(),
         "start_tasks": start_tasks,
+        "effective_start_tasks": effective_start_tasks,
         "doctor_ran": run_doctor,
+        "scheduler_policy": scheduler_policy,
         "before_summary": _extract_summary(control_plane_before),
         "execution": execution,
         "after_summary": _extract_summary(control_plane_after),

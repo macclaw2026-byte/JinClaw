@@ -423,6 +423,20 @@ def status_payload() -> Dict[str, Any]:
     - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
     """
+    control_plane_summary = {}
+    scheduler_policy = {}
+    try:
+        import sys
+
+        if str(CONTROL_CENTER_ROOT) not in sys.path:
+            sys.path.insert(0, str(CONTROL_CENTER_ROOT))
+        from control_plane_builder import build_control_plane
+
+        control_plane = build_control_plane()
+        control_plane_summary = (control_plane.get("system_snapshot", {}) or {}).get("summary", {}) or {}
+        scheduler_policy = control_plane.get("project_scheduler_policy", {}) or {}
+    except Exception as exc:
+        scheduler_policy = {"error": str(exc)}
     return {
         "checked_at": utc_now_iso(),
         "workspace": str(WORKSPACE_ROOT),
@@ -431,6 +445,8 @@ def status_payload() -> Dict[str, Any]:
         "launch_agents": launch_agent_summary(),
         "runtime": runtime_summary(),
         "message_pipeline": message_pipeline_summary(),
+        "control_plane_summary": control_plane_summary,
+        "project_scheduler_policy": scheduler_policy,
     }
 
 
@@ -497,6 +513,7 @@ def doctor_payload() -> Dict[str, Any]:
 
     payload["issues"] = issues
     payload["warnings"] = warnings
+    payload["scheduler"] = payload.get("project_scheduler_policy", {}) or {}
     payload["ok"] = not issues
     return payload
 

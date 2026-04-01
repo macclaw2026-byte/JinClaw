@@ -22,6 +22,7 @@ from canonical_active_task import resolve_canonical_active_task
 from crawler_capability_profile import build_crawler_capability_profile
 from crawler_remediation_planner import build_crawler_remediation_plan
 from memory_writeback_runtime import summarize_project_memory_writebacks
+from project_scheduler_policy import build_project_scheduler_policy
 from paths import (
     ALERTS_PATH,
     CRAWLER_CAPABILITY_PROFILE_PATH,
@@ -374,6 +375,11 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
             "alerts_total": len(task_views["alerts"].get("items", [])),
         },
     }
+    project_scheduler_policy = build_project_scheduler_policy(
+        crawler_profile=crawler_capability_profile,
+        remediation_execution=crawler_remediation_execution,
+        system_summary=snapshot.get("summary", {}) or {},
+    )
     snapshot["path"] = _write_json(SYSTEM_SNAPSHOT_PATH, snapshot)
     return {
         "process_registry": process_registry,
@@ -382,6 +388,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
         "crawler_remediation_queue": crawler_remediation_queue,
         "crawler_remediation_plan": crawler_remediation_plan,
         "crawler_remediation_execution": crawler_remediation_execution,
+        "project_scheduler_policy": project_scheduler_policy,
         **task_views,
         "system_snapshot": snapshot,
     }
