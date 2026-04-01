@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/autonomy/preflight_engine.py`
+- 文件作用：负责执行前检查、风险门控与历史 guard 套用。
+- 顶层函数：_normalize_path、_resolve_command_path、_extract_path、_extract_missing_command、_run_permission_guard、_run_path_guard、_run_dependency_guard、_run_required_commands_guard、_run_required_paths_guard、_run_writable_paths_guard、_run_contract_guards、_run_stpa_guard、_run_stage_specific_guard、run_stage_preflight。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import os
@@ -10,7 +18,7 @@ from pathlib import Path
 from typing import Dict
 
 from learning_engine import load_task_summary
-from manager import load_contract
+from manager import load_contract, load_state
 from promotion_engine import resolve_rule_for_error
 from recovery_engine import apply_recovery_action, classify_failure
 import sys
@@ -21,6 +29,8 @@ if str(CONTROL_CENTER_DIR) not in sys.path:
 
 from stpa_auditor import audit_mission, evaluate_stage_gate
 from topology_mapper import build_topology
+from event_bus import publish_event
+from governance_runtime import build_governance_bundle
 
 
 NON_BLOCKING_PREFLIGHT_STATUSES = {
@@ -50,10 +60,22 @@ COMMAND_FALLBACKS = {
 
 
 def _normalize_path(raw: str) -> Path:
+    """
+    中文注解：
+    - 功能：实现 `_normalize_path` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return Path(raw).expanduser()
 
 
 def _resolve_command_path(command: str) -> str:
+    """
+    中文注解：
+    - 功能：实现 `_resolve_command_path` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if not command:
         return ""
     if "/" in command:
@@ -70,6 +92,12 @@ def _resolve_command_path(command: str) -> str:
 
 
 def _extract_path(error_text: str) -> Path | None:
+    """
+    中文注解：
+    - 功能：实现 `_extract_path` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     matches = re.findall(r"(/Users/[^\s:'\"]+|/tmp/[^\s:'\"]+|\.[/\w\-.]+)", error_text)
     if not matches:
         return None
@@ -77,11 +105,23 @@ def _extract_path(error_text: str) -> Path | None:
 
 
 def _extract_missing_command(error_text: str) -> str:
+    """
+    中文注解：
+    - 功能：实现 `_extract_missing_command` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     match = re.search(r"command not found:\s*([A-Za-z0-9._/-]+)", error_text, re.IGNORECASE)
     return match.group(1).strip() if match else ""
 
 
 def _run_permission_guard(error_text: str) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_run_permission_guard` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     path = _extract_path(error_text)
     if not path:
         return {"ok": False, "status": "permission_guard_missing_path"}
@@ -101,6 +141,12 @@ def _run_permission_guard(error_text: str) -> Dict[str, object]:
 
 
 def _run_path_guard(error_text: str) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_run_path_guard` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     path = _extract_path(error_text)
     if not path:
         return {"ok": False, "status": "path_guard_missing_path"}
@@ -113,6 +159,12 @@ def _run_path_guard(error_text: str) -> Dict[str, object]:
 
 
 def _run_dependency_guard(error_text: str) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_run_dependency_guard` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     command = _extract_missing_command(error_text)
     if not command:
         return {"ok": False, "status": "dependency_guard_unknown_dependency"}
@@ -126,6 +178,12 @@ def _run_dependency_guard(error_text: str) -> Dict[str, object]:
 
 
 def _run_required_commands_guard(commands: list[str]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_run_required_commands_guard` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     resolved = {command: _resolve_command_path(command) for command in commands if command}
     missing = [command for command, path in resolved.items() if not path]
     if missing:
@@ -134,6 +192,12 @@ def _run_required_commands_guard(commands: list[str]) -> Dict[str, object]:
 
 
 def _run_required_paths_guard(paths: list[str]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_run_required_paths_guard` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     missing = [raw for raw in paths if raw and not _normalize_path(raw).exists()]
     if missing:
         return {"ok": False, "status": "required_paths_missing", "missing_paths": missing}
@@ -141,6 +205,12 @@ def _run_required_paths_guard(paths: list[str]) -> Dict[str, object]:
 
 
 def _run_writable_paths_guard(paths: list[str]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_run_writable_paths_guard` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     verified = []
     for raw in paths:
         if not raw:
@@ -160,6 +230,12 @@ def _run_writable_paths_guard(paths: list[str]) -> Dict[str, object]:
 
 
 def _run_contract_guards(task_id: str, stage_name: str) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_run_contract_guards` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     contract = load_contract(task_id)
     stage = next((item for item in contract.stages if item.name == stage_name), None)
     if not stage:
@@ -217,6 +293,12 @@ def _run_contract_guards(task_id: str, stage_name: str) -> Dict[str, object]:
 
 
 def _run_stpa_guard(task_id: str, stage_name: str) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_run_stpa_guard` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     mission_path = MISSIONS_ROOT / f"{task_id}.json"
     if not mission_path.exists():
         return {"ok": True, "status": "no_mission_for_stpa"}
@@ -234,6 +316,12 @@ def _run_stpa_guard(task_id: str, stage_name: str) -> Dict[str, object]:
 
 
 def _run_stage_specific_guard(error_text: str, rule: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_run_stage_specific_guard` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     classification = classify_failure(error_text)
     if classification == "permission_error":
         return _run_permission_guard(error_text)
@@ -249,79 +337,194 @@ def _run_stage_specific_guard(error_text: str, rule: Dict[str, object]) -> Dict[
     return {"ok": False, "status": "no_stage_specific_guard"}
 
 
+def _load_mission_payload(task_id: str, contract, state) -> Dict[str, object]:
+    mission_path = MISSIONS_ROOT / f"{task_id}.json"
+    if mission_path.exists():
+        try:
+            return json.loads(mission_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+    return {
+        "task_id": task_id,
+        "selected_plan": (contract.metadata.get("control_center", {}) or {}).get("selected_plan", {}),
+        "intent": (contract.metadata.get("control_center", {}) or {}).get("intent", {}),
+        "challenge": state.metadata.get("last_challenge", {}) or {},
+        "approval": contract.metadata.get("approval", {}) or {},
+        "authorized_session": contract.metadata.get("authorized_session", {}) or {},
+        "human_checkpoint": contract.metadata.get("human_checkpoint", {}) or {},
+    }
+
+
+def _emit_preflight_event(task_id: str, stage_name: str, event_suffix: str, payload: Dict[str, object]) -> None:
+    publish_event(
+        f"stage.{stage_name}.{event_suffix}",
+        {
+            "task_id": task_id,
+            "stage_name": stage_name,
+            **payload,
+        },
+    )
+
+
 def run_stage_preflight(task_id: str, stage_name: str) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `run_stage_preflight` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
+    contract = load_contract(task_id)
+    state_obj = load_state(task_id)
+    mission = _load_mission_payload(task_id, contract, state_obj)
+    governance = build_governance_bundle(task_id, stage_name, contract.to_dict(), state_obj.to_dict(), mission)
+    _emit_preflight_event(
+        task_id,
+        stage_name,
+        "pre_execute",
+        {"mission": mission, "governance": governance},
+    )
     contract_preflight = _run_contract_guards(task_id, stage_name)
     contract_applied = contract_preflight.get("status") not in {"no_stage_contract", "no_contract_preflight_rules"}
     if contract_applied and not contract_preflight.get("ok", False):
-        return {
+        response = {
             "ok": False,
             "status": "preflight_blocked",
             "guard_type": "contract",
             "action": "satisfy_stage_contract_preflight",
             "result": contract_preflight,
         }
+        _emit_preflight_event(
+            task_id,
+            stage_name,
+            "preflight_blocked",
+            {"mission": mission, "governance": governance, "preflight": response},
+        )
+        return response
     stpa_preflight = _run_stpa_guard(task_id, stage_name)
     if not stpa_preflight.get("ok", False):
-        return {
+        response = {
             "ok": False,
             "status": "preflight_blocked",
             "guard_type": "stpa",
             "action": "resolve_stpa_control_gap",
             "result": stpa_preflight,
         }
+        _emit_preflight_event(
+            task_id,
+            stage_name,
+            "preflight_blocked",
+            {"mission": mission, "governance": governance, "preflight": response},
+        )
+        return response
 
     summary = load_task_summary(task_id)
     last_failure = summary.get("last_failure") or {}
     if last_failure.get("stage") != stage_name:
         if contract_applied:
-            return {
+            response = {
                 "ok": True,
                 "status": "preflight_applied",
                 "guard_type": "contract",
                 "action": "stage_contract_preflight",
                 "result": contract_preflight,
             }
-        return {"ok": True, "status": "no_preflight_needed"}
+            _emit_preflight_event(
+                task_id,
+                stage_name,
+                "preflight_passed",
+                {"mission": mission, "governance": governance, "preflight": response},
+            )
+            return response
+        response = {"ok": True, "status": "no_preflight_needed"}
+        _emit_preflight_event(
+            task_id,
+            stage_name,
+            "preflight_passed",
+            {"mission": mission, "governance": governance, "preflight": response},
+        )
+        return response
     error_text = str(last_failure.get("error") or "").strip()
     if not error_text:
         if contract_applied:
-            return {
+            response = {
                 "ok": True,
                 "status": "preflight_applied",
                 "guard_type": "contract",
                 "action": "stage_contract_preflight",
                 "result": contract_preflight,
             }
-        return {"ok": True, "status": "no_preflight_needed"}
+            _emit_preflight_event(
+                task_id,
+                stage_name,
+                "preflight_passed",
+                {"mission": mission, "governance": governance, "preflight": response},
+            )
+            return response
+        response = {"ok": True, "status": "no_preflight_needed"}
+        _emit_preflight_event(
+            task_id,
+            stage_name,
+            "preflight_passed",
+            {"mission": mission, "governance": governance, "preflight": response},
+        )
+        return response
 
     rule = resolve_rule_for_error(error_text)
     if not rule:
         if contract_applied:
-            return {
+            response = {
                 "ok": True,
                 "status": "preflight_applied",
                 "guard_type": "contract",
                 "action": "stage_contract_preflight",
                 "result": contract_preflight,
             }
-        return {"ok": True, "status": "no_promoted_rule"}
+            _emit_preflight_event(
+                task_id,
+                stage_name,
+                "preflight_passed",
+                {"mission": mission, "governance": governance, "preflight": response},
+            )
+            return response
+        response = {"ok": True, "status": "no_promoted_rule"}
+        _emit_preflight_event(
+            task_id,
+            stage_name,
+            "preflight_passed",
+            {"mission": mission, "governance": governance, "preflight": response},
+        )
+        return response
 
     action = str(rule.get("preferred_action") or "").strip()
     if not action:
         if contract_applied:
-            return {
+            response = {
                 "ok": True,
                 "status": "preflight_applied",
                 "guard_type": "contract",
                 "action": "stage_contract_preflight",
                 "result": contract_preflight,
             }
-        return {"ok": True, "status": "no_preflight_action"}
+            _emit_preflight_event(
+                task_id,
+                stage_name,
+                "preflight_passed",
+                {"mission": mission, "governance": governance, "preflight": response},
+            )
+            return response
+        response = {"ok": True, "status": "no_preflight_action"}
+        _emit_preflight_event(
+            task_id,
+            stage_name,
+            "preflight_passed",
+            {"mission": mission, "governance": governance, "preflight": response},
+        )
+        return response
 
     guard_result = _run_stage_specific_guard(error_text, rule)
     if guard_result.get("status") not in {"no_stage_specific_guard", "dependency_guard_unknown_dependency"}:
         continue_execution = bool(guard_result.get("ok"))
-        return {
+        response = {
             "ok": continue_execution,
             "status": "preflight_applied" if continue_execution else "preflight_blocked",
             "guard_type": "contract+learned" if contract_applied else classify_failure(error_text),
@@ -333,10 +536,17 @@ def run_stage_preflight(task_id: str, stage_name: str) -> Dict[str, object]:
             "error_text": error_text,
             "rule": rule,
         }
+        _emit_preflight_event(
+            task_id,
+            stage_name,
+            "preflight_passed" if continue_execution else "preflight_blocked",
+            {"mission": mission, "governance": governance, "preflight": response},
+        )
+        return response
 
-    result = apply_recovery_action(action, error_text)
+    result = apply_recovery_action(action, error_text, task_id=task_id)
     continue_execution = result.get("status") in NON_BLOCKING_PREFLIGHT_STATUSES
-    return {
+    response = {
         "ok": continue_execution,
         "status": "preflight_applied" if continue_execution else "preflight_blocked",
         "guard_type": "contract+generic" if contract_applied else "generic",
@@ -348,3 +558,10 @@ def run_stage_preflight(task_id: str, stage_name: str) -> Dict[str, object]:
         "error_text": error_text,
         "rule": rule,
     }
+    _emit_preflight_event(
+        task_id,
+        stage_name,
+        "preflight_passed" if continue_execution else "preflight_blocked",
+        {"mission": mission, "governance": governance, "preflight": response},
+    )
+    return response

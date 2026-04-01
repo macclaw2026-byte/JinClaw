@@ -17,18 +17,82 @@ from typing import Dict, List
 from paths import HOOKS_ROOT
 
 
-DEFAULT_HOOKS: Dict[str, List[str]] = {
-    "mission.built": ["evaluate_clone_need"],
-    "plan.reselected": ["audit_plan_switch"],
-    "challenge.detected": ["route_challenge_response"],
-    "capability.clone_requested": ["run_capability_clone_pipeline"],
-    "capability.clone_verified": ["promote_cloned_capability"],
-    "stage.understand.entered": ["refresh_task_memory_snapshot"],
-    "stage.plan.entered": ["refresh_task_memory_snapshot", "audit_plan_switch"],
-    "stage.execute.entered": ["refresh_task_memory_snapshot", "verify_execution_policy_handoff"],
-    "stage.verify.entered": ["refresh_task_memory_snapshot", "verify_execution_policy_handoff"],
-    "stage.learn.entered": ["refresh_task_memory_snapshot"],
-    "stage.execute.waiting": ["monitor_liveness_and_retry_path"],
+def _hook(
+    name: str,
+    *,
+    phase: str,
+    priority: int = 100,
+    blocking: bool = False,
+    idempotent: bool = True,
+    retryable: bool = True,
+    timeout_ms: int = 1500,
+    failure_policy: str = "record_and_continue",
+    required_inputs: list[str] | None = None,
+    emits: list[str] | None = None,
+) -> Dict[str, object]:
+    return {
+        "name": name,
+        "phase": phase,
+        "priority": priority,
+        "blocking": blocking,
+        "idempotent": idempotent,
+        "retryable": retryable,
+        "timeout_ms": timeout_ms,
+        "failure_policy": failure_policy,
+        "required_inputs": required_inputs or ["task_id"],
+        "emits": emits or [],
+    }
+
+
+DEFAULT_HOOKS: Dict[str, List[Dict[str, object]]] = {
+    "mission.built": [
+        _hook("evaluate_clone_need", phase="pre_decision", emits=["capability.clone_requested"]),
+    ],
+    "plan.reselected": [
+        _hook("audit_plan_switch", phase="pre_decision", emits=["plan.audit_recorded"]),
+    ],
+    "challenge.detected": [
+        _hook("route_challenge_response", phase="recovery", blocking=True, emits=["challenge.route_selected"]),
+    ],
+    "capability.clone_requested": [
+        _hook("run_capability_clone_pipeline", phase="post_execute", blocking=True, timeout_ms=5000, emits=["capability.clone_verified"]),
+    ],
+    "capability.clone_verified": [
+        _hook("promote_cloned_capability", phase="post_execute", emits=["capability.promoted"]),
+    ],
+    "stage.understand.entered": [
+        _hook("refresh_task_memory_snapshot", phase="pre_execute", emits=["memory.snapshot_refreshed"]),
+    ],
+    "stage.plan.entered": [
+        _hook("refresh_task_memory_snapshot", phase="pre_execute", emits=["memory.snapshot_refreshed"]),
+        _hook("audit_plan_switch", phase="pre_decision", emits=["plan.audit_recorded"]),
+    ],
+    "stage.execute.entered": [
+        _hook("refresh_task_memory_snapshot", phase="pre_execute", emits=["memory.snapshot_refreshed"]),
+        _hook("verify_execution_policy_handoff", phase="pre_execute", blocking=True, emits=["policy.handoff_verified"]),
+    ],
+    "stage.verify.entered": [
+        _hook("refresh_task_memory_snapshot", phase="pre_execute", emits=["memory.snapshot_refreshed"]),
+        _hook("verify_execution_policy_handoff", phase="pre_execute", blocking=True, emits=["policy.handoff_verified"]),
+    ],
+    "stage.learn.entered": [
+        _hook("refresh_task_memory_snapshot", phase="post_execute", emits=["memory.snapshot_refreshed"]),
+    ],
+    "stage.execute.pre_execute": [
+        _hook("refresh_task_memory_snapshot", phase="pre_execute", emits=["memory.snapshot_refreshed"]),
+        _hook("verify_execution_policy_handoff", phase="pre_execute", blocking=True, emits=["policy.handoff_verified"]),
+    ],
+    "stage.verify.pre_execute": [
+        _hook("refresh_task_memory_snapshot", phase="pre_execute", emits=["memory.snapshot_refreshed"]),
+        _hook("verify_execution_policy_handoff", phase="pre_execute", blocking=True, emits=["policy.handoff_verified"]),
+    ],
+    "stage.execute.waiting": [
+        _hook("monitor_liveness_and_retry_path", phase="recovery", emits=["runtime.retry_path_reviewed"]),
+    ],
+    "recovery.requested": [
+        _hook("monitor_liveness_and_retry_path", phase="recovery", blocking=True, emits=["runtime.recovery_reviewed"]),
+        _hook("refresh_task_memory_snapshot", phase="recovery", emits=["memory.snapshot_refreshed"]),
+    ],
 }
 
 
@@ -50,8 +114,12 @@ def get_registered_hooks(event_type: str) -> Dict[str, object]:
     - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
     """
-    hooks = DEFAULT_HOOKS.get(event_type, [])
-    payload = {"event_type": event_type, "hooks": hooks}
+    hook_specs = DEFAULT_HOOKS.get(event_type, [])
+    payload = {
+        "event_type": event_type,
+        "hooks": [str(item.get("name", "")) for item in hook_specs if str(item.get("name", "")).strip()],
+        "hook_specs": hook_specs,
+    }
     _write_json(HOOKS_ROOT / f"{event_type.replace('.', '_')}.json", payload)
     return payload
 

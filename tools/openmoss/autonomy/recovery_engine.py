@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/autonomy/recovery_engine.py`
+- 文件作用：负责失败分类、恢复动作生成与恢复执行。
+- 顶层函数：classify_failure、propose_recovery、_extract_path、apply_recovery_action。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import re
@@ -15,9 +23,41 @@ if str(CONTROL_CENTER_DIR) not in __import__("sys").path:
 
 from browser_task_signals import collect_browser_task_signals
 from browser_channel_recovery import recover_browser_channel
+from event_bus import publish_event
+
+
+def _emit_recovery_event(task_id: str, event_suffix: str, payload: Dict[str, str]) -> None:
+    if not str(task_id or "").strip():
+        return
+    publish_event(
+        f"recovery.{event_suffix}",
+        {
+            "task_id": task_id,
+            **payload,
+        },
+    )
+
+
+def _finish_recovery(task_id: str, action: str, result: Dict[str, str]) -> Dict[str, str]:
+    _emit_recovery_event(
+        task_id,
+        "applied",
+        {
+            "action": action,
+            "recovery": result,
+            "blockers": [str(result.get("blocker", "")).strip()] if str(result.get("blocker", "")).strip() else [],
+        },
+    )
+    return result
 
 
 def classify_failure(error_text: str) -> str:
+    """
+    中文注解：
+    - 功能：实现 `classify_failure` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     error = error_text.lower()
     if "upload_control_path_invalid" in error:
         return "upload_control_path_invalid"
@@ -51,6 +91,12 @@ def classify_failure(error_text: str) -> str:
 
 
 def propose_recovery(error_text: str, attempts: int) -> Dict[str, str]:
+    """
+    中文注解：
+    - 功能：实现 `propose_recovery` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     classification = classify_failure(error_text)
     recurrence = get_error_recurrence(error_text)
     promoted_rule = resolve_rule_for_error(error_text)
@@ -99,6 +145,12 @@ def propose_recovery(error_text: str, attempts: int) -> Dict[str, str]:
 
 
 def _extract_path(error_text: str) -> Path | None:
+    """
+    中文注解：
+    - 功能：实现 `_extract_path` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     matches = re.findall(r"(/Users/[^\s:'\"]+|/tmp/[^\s:'\"]+|\.[/\w\-.]+)", error_text)
     if not matches:
         return None
@@ -106,54 +158,70 @@ def _extract_path(error_text: str) -> Path | None:
 
 
 def apply_recovery_action(action: str, error_text: str, task_id: str = "") -> Dict[str, str]:
+    """
+    中文注解：
+    - 功能：实现 `apply_recovery_action` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
+    _emit_recovery_event(
+        task_id,
+        "requested",
+        {
+            "action": action,
+            "error_text": error_text,
+            "classification": classify_failure(error_text),
+            "blockers": [str(error_text).strip()] if str(error_text).strip() else [],
+        },
+    )
     if action == "retry_same_stage_with_fresh_evidence":
-        return {"ok": "true", "status": "state_reset_only", "note": "stage can be retried immediately"}
+        return _finish_recovery(task_id, action, {"ok": "true", "status": "state_reset_only", "note": "stage can be retried immediately"})
 
     if action == "inspect_permissions_then_retry":
         path = _extract_path(error_text)
         if path and path.exists():
             mode = path.stat().st_mode | 0o100
             path.chmod(mode)
-            return {"ok": "true", "status": "chmod_applied", "path": str(path)}
-        return {"ok": "false", "status": "path_not_found_for_permission_fix"}
+            return _finish_recovery(task_id, action, {"ok": "true", "status": "chmod_applied", "path": str(path)})
+        return _finish_recovery(task_id, action, {"ok": "false", "status": "path_not_found_for_permission_fix"})
 
     if action == "repair_missing_path_or_dependency":
         path = _extract_path(error_text)
         if path:
             target = path if path.suffix == "" else path.parent
             target.mkdir(parents=True, exist_ok=True)
-            return {"ok": "true", "status": "path_created", "path": str(target)}
-        return {"ok": "false", "status": "no_path_detected"}
+            return _finish_recovery(task_id, action, {"ok": "true", "status": "path_created", "path": str(target)})
+        return _finish_recovery(task_id, action, {"ok": "false", "status": "no_path_detected"})
 
     if action == "repair_credentials_or_configuration":
-        return {"ok": "false", "status": "needs_external_secret_or_config"}
+        return _finish_recovery(task_id, action, {"ok": "false", "status": "needs_external_secret_or_config"})
 
     if action == "switch_tool_path_or_slow_down":
-        return {"ok": "true", "status": "tool_switch_recommended", "note": "requires alternate execution path"}
+        return _finish_recovery(task_id, action, {"ok": "true", "status": "tool_switch_recommended", "note": "requires alternate execution path"})
 
     if action == "reacquire_browser_channel":
         recovery = recover_browser_channel(task_id, expected_domains=["seller.neosgo.com"])
         if recovery.get("ok"):
-            return {
+            return _finish_recovery(task_id, action, {
                 "ok": "true",
                 "status": "browser_channel_recovered",
                 "target_id": str(recovery.get("target_id", "")),
                 "page_url": str(recovery.get("page_url", "")),
-            }
-        return {
+            })
+        return _finish_recovery(task_id, action, {
             "ok": "false",
             "status": str(recovery.get("status", "browser_channel_recovery_failed")),
             "next_action": "reacquire_browser_channel",
             "blocker": str(recovery.get("status", "browser_channel_recovery_failed")),
-        }
+        })
 
     if action == "await_relay_attach_checkpoint":
-        return {
+        return _finish_recovery(task_id, action, {
             "ok": "false",
             "status": "await_relay_attach_checkpoint",
             "next_action": "await_relay_attach_checkpoint",
             "blocker": "chrome-relay has no attached tabs",
-        }
+        })
 
     if action == "install_preflight_guard_and_targeted_recovery":
         classification = classify_failure(error_text)
@@ -161,56 +229,56 @@ def apply_recovery_action(action: str, error_text: str, task_id: str = "") -> Di
         if classification == "permission_error" and path and path.exists():
             mode = path.stat().st_mode | 0o100
             path.chmod(mode)
-            return {"ok": "true", "status": "durable_permission_guard_applied", "path": str(path)}
+            return _finish_recovery(task_id, action, {"ok": "true", "status": "durable_permission_guard_applied", "path": str(path)})
         if classification == "missing_dependency" and path:
             target = path if path.suffix == "" else path.parent
             target.mkdir(parents=True, exist_ok=True)
-            return {"ok": "true", "status": "durable_path_guard_applied", "path": str(target)}
+            return _finish_recovery(task_id, action, {"ok": "true", "status": "durable_path_guard_applied", "path": str(target)})
         if classification == "anti_automation_or_rate_limit":
-            return {"ok": "true", "status": "durable_slowdown_policy_requested", "note": "future executions should back off earlier"}
-        return {"ok": "true", "status": "durable_review_rule_requested"}
+            return _finish_recovery(task_id, action, {"ok": "true", "status": "durable_slowdown_policy_requested", "note": "future executions should back off earlier"})
+        return _finish_recovery(task_id, action, {"ok": "true", "status": "durable_review_rule_requested"})
 
     if action in {"run_root_cause_review_before_retry", "escalate_to_runtime_review"}:
-        return {"ok": "true", "status": "review_required"}
+        return _finish_recovery(task_id, action, {"ok": "true", "status": "review_required"})
 
     if action == "repair_verification_failure":
         signals = collect_browser_task_signals(task_id) if task_id else {"diagnosis": "none"}
         diagnosis = str(signals.get("diagnosis", "none"))
         if diagnosis == "upload_control_path_invalid":
-            return {
+            return _finish_recovery(task_id, action, {
                 "ok": "false",
                 "status": "upload_control_path_invalid",
                 "next_action": "needs_network_request_level_debugging",
                 "blocker": "upload_control_path_invalid",
-            }
+            })
         if diagnosis == "frontend_binding_not_triggered":
-            return {
+            return _finish_recovery(task_id, action, {
                 "ok": "false",
                 "status": "frontend_binding_not_triggered",
                 "next_action": "investigate_frontend_binding_and_network_request_chain",
                 "blocker": "frontend_binding_not_triggered",
-            }
+            })
         if diagnosis == "needs_network_request_level_debugging":
-            return {
+            return _finish_recovery(task_id, action, {
                 "ok": "false",
                 "status": "needs_network_request_level_debugging",
                 "next_action": "needs_network_request_level_debugging",
                 "blocker": "needs_network_request_level_debugging",
-            }
+            })
         if diagnosis == "browser_form_validation_blocking_submit":
-            return {
+            return _finish_recovery(task_id, action, {
                 "ok": "false",
                 "status": "browser_form_validation_blocking_submit",
                 "next_action": "normalize_invalid_numeric_fields_then_resubmit",
                 "blocker": "browser_form_validation_blocking_submit",
-            }
+            })
         if diagnosis == "upload_saved_successfully":
-            return {
+            return _finish_recovery(task_id, action, {
                 "ok": "true",
                 "status": "business_outcome_confirmed",
                 "next_action": "confirm_business_outcome_and_finalize",
-            }
-        return {"ok": "true", "status": "verification_repair_requested"}
+            })
+        return _finish_recovery(task_id, action, {"ok": "true", "status": "verification_repair_requested"})
 
     if action in {
         "needs_network_request_level_debugging",
@@ -218,9 +286,9 @@ def apply_recovery_action(action: str, error_text: str, task_id: str = "") -> Di
         "normalize_invalid_numeric_fields_then_resubmit",
         "reacquire_browser_channel",
     }:
-        return {"ok": "false", "status": action, "next_action": action, "blocker": action}
+        return _finish_recovery(task_id, action, {"ok": "false", "status": action, "next_action": action, "blocker": action})
 
     if action == "confirm_business_outcome_and_finalize":
-        return {"ok": "true", "status": "business_outcome_confirmed", "next_action": action}
+        return _finish_recovery(task_id, action, {"ok": "true", "status": "business_outcome_confirmed", "next_action": action})
 
-    return {"ok": "false", "status": "unknown_action"}
+    return _finish_recovery(task_id, action, {"ok": "false", "status": "unknown_action"})

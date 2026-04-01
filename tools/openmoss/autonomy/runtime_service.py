@@ -34,6 +34,7 @@ if str(CONTROL_CENTER_DIR) not in sys.path:
     sys.path.insert(0, str(CONTROL_CENTER_DIR))
 
 from mission_loop import run_mission_cycle
+from event_bus import publish_event
 from browser_channel_recovery import prune_relay_tabs, recover_browser_channel, navigate_relay_to_url
 from browser_task_signals import collect_browser_task_signals
 from mission_supervisor import supervise_task
@@ -53,6 +54,24 @@ def utc_now_iso() -> str:
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
     """
     return datetime.now(timezone.utc).isoformat()
+
+
+def _emit_runtime_hook_event_once(task_id: str, event_type: str, marker: str, payload: dict) -> None:
+    state = load_state(task_id)
+    markers = state.metadata.get("runtime_hook_markers", {}) or {}
+    if str(markers.get(event_type, "")) == str(marker):
+        return
+    publish_event(
+        event_type,
+        {
+            "task_id": task_id,
+            **payload,
+        },
+    )
+    markers[event_type] = marker
+    state.metadata["runtime_hook_markers"] = markers
+    state.last_update_at = utc_now_iso()
+    save_state(state)
 
 
 def _preflight_block_details(state) -> dict:
@@ -1316,6 +1335,24 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
     # waiting_external / poll_run 是外部 run 仍在执行或看起来仍在执行的状态。
     # runtime 会先做 stale 判断，再决定继续 poll 还是直接重启该阶段。
     if state.status == "waiting_external" or state.next_action.startswith("poll_run:"):
+        waiting = state.metadata.get("waiting_external", {}) or {}
+        waiting_marker = ":".join(
+            [
+                str(state.current_stage or ""),
+                str(waiting.get("run_id", "") or state.next_action),
+            ]
+        )
+        _emit_runtime_hook_event_once(
+            task_id,
+            f"stage.{state.current_stage}.waiting" if state.current_stage else "stage.unknown.waiting",
+            waiting_marker,
+            {
+                "stage_name": state.current_stage,
+                "waiting_external": waiting,
+                "blockers": state.blockers or [],
+                "snapshot": build_task_status_snapshot(task_id),
+            },
+        )
         restarted = _repair_stale_waiting_external(task_id, stale_after_seconds=stale_after_seconds)
         if restarted:
             restarted["mission_cycle"] = mission_cycle
@@ -1396,6 +1433,18 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
     # 真正把当前 stage 派发给 AI agent 的路径在这里：
     # runtime -> action_executor.dispatch_stage -> gateway.chat.send / agent.wait
     if state.status == "running" and state.next_action.startswith("execute_stage:"):
+        entered_marker = ":".join([str(state.current_stage or ""), str(state.next_action or "")])
+        _emit_runtime_hook_event_once(
+            task_id,
+            f"stage.{state.current_stage}.entered" if state.current_stage else "stage.unknown.entered",
+            entered_marker,
+            {
+                "stage_name": state.current_stage,
+                "mission": mission_cycle.get("mission", {}) if isinstance(mission_cycle, dict) else {},
+                "snapshot": build_task_status_snapshot(task_id),
+                "blockers": state.blockers or [],
+            },
+        )
         dispatch = dispatch_stage(task_id)
         if dispatch.get("status") == "no_bound_session":
             _mark_binding_required(task_id, "no session link is bound for this task")
