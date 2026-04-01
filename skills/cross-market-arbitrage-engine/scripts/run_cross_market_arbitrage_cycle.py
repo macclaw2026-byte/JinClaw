@@ -368,6 +368,9 @@ def _execution_flags_from_scheduler_policy(scheduler_policy: dict[str, Any] | No
     if repair_mode == "crawler_hold":
         flags["allow_discovery"] = False
         flags["allow_match"] = False
+    elif repair_mode == "repair_backpressure":
+        flags["allow_discovery"] = False
+        flags["allow_match"] = True
     elif repair_mode == "repair_observe":
         flags["allow_discovery"] = False
         flags["allow_match"] = True

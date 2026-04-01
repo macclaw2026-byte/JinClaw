@@ -14,6 +14,13 @@ def _blocked_count(system_summary: Dict[str, Any], category: str) -> int:
     return int(((system_summary.get("blocked_categories", {}) or {}).get(category, 0) or 0))
 
 
+def _recovery_efficiency(system_summary: Dict[str, Any]) -> float:
+    try:
+        return float(system_summary.get("recovery_efficiency_ratio", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _derive_repair_focus(system_summary: Dict[str, Any]) -> str:
     top_blocked_category = str(system_summary.get("top_blocked_category", "")).strip()
     if top_blocked_category in {"project_crawler_remediation", "approval_or_contract", "authorized_session", "human_checkpoint"}:
@@ -45,6 +52,7 @@ def _crawler_remediation_policy(
     start_tasks = True
     repair_focus = _derive_repair_focus(system_summary)
     repair_mode = "steady_balance"
+    recovery_efficiency = _recovery_efficiency(system_summary)
     blocked_project_crawler = _blocked_count(system_summary, "project_crawler_remediation")
     blocked_authorized_session = _blocked_count(system_summary, "authorized_session")
     blocked_human_checkpoint = _blocked_count(system_summary, "human_checkpoint")
@@ -89,6 +97,11 @@ def _crawler_remediation_policy(
         if repair_mode == "steady_balance":
             repair_mode = "linkage_first"
         reasons.append("doctor_focus_linkage_blockers")
+    if repair_focus == "repair_blockers" and recovery_efficiency < 0.3:
+        suggested_interval_seconds = min(suggested_interval_seconds, 1800)
+        if repair_mode == "steady_balance":
+            repair_mode = "repair_efficiency_watch"
+        reasons.append("recovery_efficiency_low")
     if active_items and str(feedback.get("coverage_status", "")).strip().lower() == "strong":
         start_tasks = False
         suggested_interval_seconds = max(suggested_interval_seconds, 7200)
@@ -109,6 +122,7 @@ def _crawler_remediation_policy(
             "trend_direction": trend.get("direction", "unknown"),
             "attention_sites": attention_sites,
             "memory_writeback_tasks_total": system_summary.get("memory_writeback_tasks_total", 0),
+            "recovery_efficiency_ratio": recovery_efficiency,
             "blocked_project_crawler_remediation_total": blocked_project_crawler,
             "blocked_authorized_session_total": blocked_authorized_session,
             "blocked_human_checkpoint_total": blocked_human_checkpoint,
@@ -120,6 +134,7 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
     blocked_approval = _blocked_count(system_summary, "approval_or_contract")
     blocked_targeted_fix = _blocked_count(system_summary, "targeted_fix")
     repair_focus = _derive_repair_focus(system_summary)
+    recovery_efficiency = _recovery_efficiency(system_summary)
     reasons = ["seller_bulk_is_time_window_gated_in_script"]
     recommended_mode = "nightly_window"
     suggested_interval_seconds = 900
@@ -140,6 +155,10 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
     elif repair_focus == "repair_blockers":
         repair_mode = "targeted_fix_bias"
         reasons.append("doctor_focus_repair_blockers")
+    if repair_focus == "repair_blockers" and recovery_efficiency < 0.25:
+        suggested_interval_seconds = max(suggested_interval_seconds, 2700)
+        repair_mode = "repair_backpressure"
+        reasons.append("recovery_efficiency_low")
     return {
         "recommended_mode": recommended_mode,
         "repair_focus": repair_focus,
@@ -151,6 +170,7 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
         "skip_outside_window": True,
         "summary": {
             "memory_writeback_tasks_total": system_summary.get("memory_writeback_tasks_total", 0),
+            "recovery_efficiency_ratio": recovery_efficiency,
             "blocked_approval_or_contract_total": blocked_approval,
             "blocked_targeted_fix_total": blocked_targeted_fix,
         },
@@ -173,6 +193,7 @@ def _cross_market_arbitrage_policy(
     start_tasks = True
     repair_focus = _derive_repair_focus(system_summary)
     repair_mode = "steady_balance"
+    recovery_efficiency = _recovery_efficiency(system_summary)
     blocked_project_crawler = _blocked_count(system_summary, "project_crawler_remediation")
     blocked_authorized_session = _blocked_count(system_summary, "authorized_session")
     blocked_human_checkpoint = _blocked_count(system_summary, "human_checkpoint")
@@ -222,6 +243,13 @@ def _cross_market_arbitrage_policy(
         matching_interval_seconds = max(matching_interval_seconds, 90 * 60)
         repair_mode = "repair_observe"
         reasons.append("doctor_focus_repair_blockers")
+    if repair_focus == "repair_blockers" and recovery_efficiency < 0.25:
+        recommended_mode = "repair_hold"
+        loop_sleep_seconds = max(loop_sleep_seconds, 1200)
+        discovery_interval_seconds = max(discovery_interval_seconds, 60 * 60)
+        matching_interval_seconds = max(matching_interval_seconds, 2 * 60 * 60)
+        repair_mode = "repair_backpressure"
+        reasons.append("recovery_efficiency_low")
     return {
         "recommended_mode": recommended_mode,
         "repair_focus": repair_focus,
@@ -237,6 +265,7 @@ def _cross_market_arbitrage_policy(
             "trend_direction": trend.get("direction", "unknown"),
             "attention_sites": attention_sites,
             "memory_writeback_tasks_total": system_summary.get("memory_writeback_tasks_total", 0),
+            "recovery_efficiency_ratio": recovery_efficiency,
             "blocked_project_crawler_remediation_total": blocked_project_crawler,
             "blocked_authorized_session_total": blocked_authorized_session,
             "blocked_human_checkpoint_total": blocked_human_checkpoint,
