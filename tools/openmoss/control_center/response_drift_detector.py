@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict
 
+from execution_governor import governance_attention_flags
 from task_status_snapshot import build_task_status_snapshot
 
 
@@ -50,26 +51,6 @@ def _looks_like_status_query(goal: str) -> bool:
     return any(token in normalized for token in patterns)
 
 
-def _governance_attention_flags(snapshot: Dict[str, Any]) -> Dict[str, bool]:
-    """
-    中文注解：
-    - 功能：从权威快照里抽取“回复是否需要额外解释治理上下文”的布尔信号。
-    - 设计意图：让回复降级逻辑不只看 status，还看审批、风险和历史规则命中。
-    """
-    governance = snapshot.get("governance", {}) or {}
-    policy = governance.get("policy", {}) or {}
-    memory = governance.get("memory", {}) or snapshot.get("memory", {}) or {}
-    risk = str(policy.get("risk", "")).strip().lower()
-    pending = policy.get("pending_approvals", []) or []
-    matched_rules = memory.get("matched_promoted_rules", []) or []
-    matched_recurrence = memory.get("matched_error_recurrence", []) or []
-    return {
-        "high_risk": risk in {"high", "critical"},
-        "approval_pending": bool(pending),
-        "memory_guidance_present": bool(matched_rules or matched_recurrence),
-    }
-
-
 def reconcile_route_with_authoritative_state(route: Dict[str, Any]) -> Dict[str, Any]:
     """
     中文注解：
@@ -83,7 +64,7 @@ def reconcile_route_with_authoritative_state(route: Dict[str, Any]) -> Dict[str,
     snapshot = route.get("authoritative_task_status", {}) or build_task_status_snapshot(task_id)
     status = str(snapshot.get("status", "unknown"))
     goal = str(route.get("goal", ""))
-    governance_flags = _governance_attention_flags(snapshot)
+    governance_flags = governance_attention_flags(snapshot)
     route = dict(route)
     route["authoritative_task_status"] = snapshot
     route["response_drift_checked"] = True
