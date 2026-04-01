@@ -275,9 +275,54 @@ def _snapshot_governance_attention(snapshot: Dict[str, object]) -> Dict[str, obj
         "project_feedback_status": str(((project_control.get("summary", {}) or {}).get("crawler_feedback_coverage_status", ""))).strip() or "unknown",
         "scheduler_modes": dict(project_control.get("scheduler_modes", {}) or {}),
     }
-    if not task_id or not path.exists():
-        return None
-    return load_state(task_id)
+
+
+def _is_lightweight_followup_prompt(text: str, intent: Dict[str, object]) -> bool:
+    normalized = re.sub(r"\s+", "", text.strip().lower())
+    if not normalized:
+        return False
+    lightweight_tokens = {
+        "继续",
+        "继续吧",
+        "接着",
+        "开始吧",
+        "开始",
+        "可以",
+        "好的",
+        "同意",
+        "继续推进",
+        "继续。",
+        "continue",
+        "goon",
+        "start",
+    }
+    if normalized in lightweight_tokens:
+        return True
+    if len(normalized) <= 12 and _looks_like_followup_goal(text, intent):
+        return True
+    return False
+
+
+def _should_prefer_governance_status_reply(text: str, intent: Dict[str, object], snapshot: Dict[str, object]) -> bool:
+    if not _is_lightweight_followup_prompt(text, intent):
+        return False
+    if str(snapshot.get("status", "")).strip() != "blocked":
+        return False
+    next_action = str(snapshot.get("next_action", "")).strip()
+    if next_action == "await_project_crawler_remediation":
+        return True
+    governance_attention = _snapshot_governance_attention(snapshot)
+    permission_status = str(governance_attention.get("permission_overall_status", "")).strip().lower()
+    crawler_health_status = str(governance_attention.get("crawler_health_status", "")).strip().lower()
+    if permission_status == "blocked":
+        return True
+    if crawler_health_status == "critical" and next_action in {
+        "request_authorized_session",
+        "await_human_verification_checkpoint",
+        "await_approval_or_contract_fix",
+    }:
+        return True
+    return False
 
 
 def _task_predecessor(task_id: str) -> str:
@@ -628,7 +673,18 @@ def route_instruction(
             # 2. 是否只是继续当前 root mission
             # 3. 是否应当沿 lineage 开 successor
             existing_task_id = str(existing.get("task_id", ""))
-            if mission_profile.get("matched") and not _task_matches_root_mission_profile(existing_task_id, mission_profile):
+            governance_snapshot = build_task_status_snapshot(existing_task_id) if existing_task_id else {}
+            if governance_snapshot and _should_prefer_governance_status_reply(goal, intent, governance_snapshot):
+                route["mode"] = "authoritative_task_status"
+                route["authoritative_task_status"] = governance_snapshot
+                route["governance_attention"] = _snapshot_governance_attention(governance_snapshot)
+                response_constraints = dict(governance_snapshot.get("reply_contract", {}) or {})
+                response_constraints["governance_attention"] = route["governance_attention"]
+                response_constraints["brain_router_reason"] = "lightweight_followup_while_governance_blocked"
+                route["response_constraints"] = response_constraints
+                route["task_id"] = existing_task_id
+                route["link_path"] = write_link(provider, conversation_id, existing)
+            elif mission_profile.get("matched") and not _task_matches_root_mission_profile(existing_task_id, mission_profile):
                 # 主题已经明显切根，并且新目标命中了 mission profile；
                 # 这里优先创建稳定的 root mission，而不是继续在旧 follow-up 上堆叠。
                 task_id = str(mission_profile.get("root_task_id", "")).strip() or slugify(goal)
