@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
-from paths import CRAWLER_CAPABILITY_PROFILE_PATH
+from paths import CRAWLER_CAPABILITY_HISTORY_PATH, CRAWLER_CAPABILITY_PROFILE_PATH
 
 
 CRAWLER_ROOT = Path("/Users/mac_claw/.openclaw/workspace/crawler")
@@ -40,6 +40,11 @@ def _read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except OSError:
         return ""
+
+
+def _write_json(path: Path, payload: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _score_site(profile: Dict[str, Any], latest_run: Dict[str, Any], auth_policy_exists: bool) -> Dict[str, Any]:
@@ -118,6 +123,94 @@ def _score_site(profile: Dict[str, Any], latest_run: Dict[str, Any], auth_policy
     }
 
 
+def _append_history(summary: Dict[str, Any]) -> Dict[str, Any]:
+    history = _read_json(CRAWLER_CAPABILITY_HISTORY_PATH, {"entries": []}) or {"entries": []}
+    entries = list(history.get("entries", []) or [])
+    entries.append(
+        {
+            "generated_at": _utc_now_iso(),
+            "summary": summary,
+        }
+    )
+    entries = entries[-30:]
+    payload = {"entries": entries}
+    _write_json(CRAWLER_CAPABILITY_HISTORY_PATH, payload)
+    return payload
+
+
+def _trend_delta(current: float, previous: float) -> float:
+    return round(float(current or 0) - float(previous or 0), 2)
+
+
+def _build_trend_summary(history_entries: List[Dict[str, Any]], summary: Dict[str, Any]) -> Dict[str, Any]:
+    if len(history_entries) < 2:
+        return {
+            "sample_size": len(history_entries),
+            "direction": "insufficient_history",
+            "deltas": {},
+        }
+    previous = (history_entries[-2].get("summary", {}) or {})
+    deltas = {
+        "width_score": _trend_delta(summary.get("width_score", 0), previous.get("width_score", 0)),
+        "breadth_score": _trend_delta(summary.get("breadth_score", 0), previous.get("breadth_score", 0)),
+        "depth_score": _trend_delta(summary.get("depth_score", 0), previous.get("depth_score", 0)),
+        "stability_score": _trend_delta(summary.get("stability_score", 0), previous.get("stability_score", 0)),
+        "sites_production_ready": _trend_delta(summary.get("sites_production_ready", 0), previous.get("sites_production_ready", 0)),
+        "sites_attention_required": _trend_delta(summary.get("sites_attention_required", 0), previous.get("sites_attention_required", 0)),
+    }
+    negative_axes = sum(1 for key, value in deltas.items() if key.endswith("_score") and value < 0)
+    positive_axes = sum(1 for key, value in deltas.items() if key.endswith("_score") and value > 0)
+    direction = "stable"
+    if negative_axes >= 2:
+        direction = "degrading"
+    elif positive_axes >= 2:
+        direction = "improving"
+    return {
+        "sample_size": len(history_entries),
+        "direction": direction,
+        "deltas": deltas,
+    }
+
+
+def _build_priority_actions(sites: List[Dict[str, Any]], summary: Dict[str, Any], trend: Dict[str, Any]) -> List[Dict[str, Any]]:
+    actions: List[Dict[str, Any]] = []
+    ranked_sites = sorted(
+        [site for site in sites if site.get("readiness") != "production_ready"],
+        key=lambda item: (
+            len(item.get("primary_limitations", []) or []),
+            -(item.get("depth_score", 0.0) or 0.0),
+            -(item.get("stability_score", 0.0) or 0.0),
+        ),
+        reverse=True,
+    )
+    for site in ranked_sites[:5]:
+        actions.append(
+            {
+                "site": site.get("site", ""),
+                "priority": "high" if "no_usable_tool" in (site.get("primary_limitations", []) or []) else "medium",
+                "action": "stabilize_site_profile",
+                "reason": ", ".join((site.get("primary_limitations", []) or [])[:3]),
+            }
+        )
+    if float(summary.get("depth_score", 0) or 0) < 50:
+        actions.append(
+            {
+                "priority": "high",
+                "action": "improve_structured_field_coverage",
+                "reason": "project depth score remains below target",
+            }
+        )
+    if trend.get("direction") == "degrading":
+        actions.append(
+            {
+                "priority": "high",
+                "action": "rerun_first_run_matrix",
+                "reason": "crawler capability trend is degrading",
+            }
+        )
+    return actions[:6]
+
+
 def build_crawler_capability_profile() -> Dict[str, Any]:
     sites: List[Dict[str, Any]] = []
     for profile_path in sorted(SITE_PROFILES_ROOT.glob("*.json")):
@@ -143,29 +236,35 @@ def build_crawler_capability_profile() -> Dict[str, Any]:
         for item in site.get("primary_limitations", []) or []:
             attention_reasons[item] = attention_reasons.get(item, 0) + 1
 
+    summary = {
+        "sites_total": sites_total,
+        "sites_production_ready": len(usable_sites),
+        "sites_attention_required": len(attention_sites),
+        "authenticated_sites": len(authenticated_sites),
+        "width_score": width_score,
+        "breadth_score": breadth_score,
+        "depth_score": depth_score,
+        "stability_score": stability_score,
+        "primary_attention_reasons": dict(sorted(attention_reasons.items(), key=lambda item: (-item[1], item[0]))),
+    }
+    history = _append_history(summary)
+    trend = _build_trend_summary(history.get("entries", []) or [], summary)
+    priority_actions = _build_priority_actions(sites, summary, trend)
     profile = {
         "generated_at": _utc_now_iso(),
         "version": "crawler-capability-profile-v1",
-        "summary": {
-            "sites_total": sites_total,
-            "sites_production_ready": len(usable_sites),
-            "sites_attention_required": len(attention_sites),
-            "authenticated_sites": len(authenticated_sites),
-            "width_score": width_score,
-            "breadth_score": breadth_score,
-            "depth_score": depth_score,
-            "stability_score": stability_score,
-            "primary_attention_reasons": dict(sorted(attention_reasons.items(), key=lambda item: (-item[1], item[0]))),
-        },
+        "summary": summary,
+        "trend": trend,
+        "history_path": str(CRAWLER_CAPABILITY_HISTORY_PATH),
         "recommended_project_actions": [
             "stabilize_sites_marked_attention_required" if attention_sites else "keep_site_profiles_fresh",
             "promote_high_confidence_tool_orders",
             "refresh_first_run_matrix_when_best_status_degrades",
         ],
+        "priority_actions": priority_actions,
         "sites": sites,
     }
-    CRAWLER_CAPABILITY_PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CRAWLER_CAPABILITY_PROFILE_PATH.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_json(CRAWLER_CAPABILITY_PROFILE_PATH, profile)
     return profile
 
 
