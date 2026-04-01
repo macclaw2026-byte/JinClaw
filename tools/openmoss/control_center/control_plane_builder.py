@@ -43,6 +43,7 @@ PROCESS_TARGETS = [
     {"label": "brain_enforcer", "launchd_label": "ai.openclaw.brain-enforcer"},
     {"label": "autonomy_runtime", "launchd_label": "ai.jinclaw.autonomy-runtime"},
     {"label": "cross_market_arbitrage", "launchd_label": "ai.jinclaw.cross-market-arbitrage"},
+    {"label": "crawler_remediation", "launchd_label": "ai.jinclaw.crawler-remediation"},
 ]
 
 
