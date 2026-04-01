@@ -20,6 +20,7 @@ from crawler_capability_profile import build_crawler_capability_profile
 from hook_registry import get_registered_hooks
 from human_checkpoint import build_human_checkpoint
 from memory_pipeline_runtime import build_memory_layers
+from memory_pipeline_store import persist_memory_pipeline
 from permission_decision_runtime import build_permission_decision_bundle
 from paths import MEMORY_ROOT, POLICY_ROOT
 from security_policy import assess_plan_risk, classify_external_action, default_security_policy
@@ -241,12 +242,14 @@ def build_memory_bundle(task_id: str, contract: Dict[str, Any], state: Dict[str,
         plan_history_profile=history_profile,
         state=state,
     )
+    persisted = persist_memory_pipeline(task_id, layers)
     bundle = {
         "task_summary": task_summary,
         "matched_promoted_rules": matched_rules[:5],
         "matched_error_recurrence": matched_recurrence[:5],
         "plan_history_profile": history_profile,
         "layers": layers,
+        "persisted": persisted,
     }
     _write_json(MEMORY_ROOT / f"{task_id}.json", bundle)
     return bundle
