@@ -22,7 +22,7 @@ import uuid
 from pathlib import Path
 from typing import Dict
 
-from manager import advance_execute_milestone, build_args, complete_execute_milestones, complete_stage_internal, find_link_by_task_id, infer_link_session_key, load_contract, load_state, log_event, save_state, task_dir, utc_now_iso, verify_task, write_business_outcome
+from manager import advance_execute_milestone, apply_hook_effects, build_args, complete_execute_milestones, complete_stage_internal, find_link_by_task_id, infer_link_session_key, load_contract, load_state, log_event, save_state, task_dir, utc_now_iso, verify_task, write_business_outcome
 from preflight_engine import run_stage_preflight
 from verifier_registry import run_verifier
 
@@ -180,24 +180,6 @@ def _summarize_preflight_block(preflight: Dict) -> list[str]:
     if not blockers:
         blockers.append(f"preflight_blocked:{preflight.get('guard_type', 'unknown')}")
     return blockers
-
-
-def _collect_hook_attention(preflight: Dict) -> Dict[str, object]:
-    hook_events = preflight.get("hook_event", {}) or {}
-    warnings: list[str] = []
-    next_actions: list[str] = []
-    attention_required = False
-    for event_payload in hook_events.values():
-        for hook_result in (event_payload or {}).get("emitted_hooks", []) or []:
-            if str(hook_result.get("status", "")).strip() in {"attention_required", "failed"}:
-                attention_required = True
-            warnings.extend([str(item) for item in hook_result.get("warnings", []) or [] if str(item).strip()])
-            next_actions.extend([str(item) for item in hook_result.get("next_actions", []) or [] if str(item).strip()])
-    return {
-        "attention_required": attention_required,
-        "warnings": sorted(set(warnings)),
-        "next_actions": next_actions,
-    }
 
 
 def _gateway_call(method: str, params: Dict, timeout_seconds: int = 15) -> Dict:
@@ -709,8 +691,13 @@ def dispatch_stage(task_id: str) -> Dict:
     # preflight 是执行前的总闸门：
     # 这里会综合审批、命令、路径、promoted rule 等信息，判断“现在这一步能不能安全开工”。
     preflight = run_stage_preflight(task_id, stage_name)
+    hook_events = preflight.get("hook_event", {}) or {}
+    hook_effects = {}
+    for hook_source, event_payload in hook_events.items():
+        hook_effects[hook_source] = apply_hook_effects(task_id, event_payload, source=f"preflight:{hook_source}")
     if preflight.get("status") != "no_preflight_needed" and preflight.get("status") != "no_promoted_rule":
-        hook_attention = _collect_hook_attention(preflight)
+        state = load_state(task_id)
+        hook_attention = ((state.metadata.get("last_hook_effects", {}) or {}).get("preflight:pre_execute", {}) or {})
         state.metadata["last_preflight"] = {
             "stage_name": stage_name,
             "ran_at": utc_now_iso(),
@@ -718,6 +705,7 @@ def dispatch_stage(task_id: str) -> Dict:
             "action": preflight.get("action", ""),
             "result": preflight.get("result", {}),
             "hook_attention": hook_attention,
+            "hook_effects": hook_effects,
         }
         stage = state.stages.get(stage_name)
         if stage:
@@ -726,7 +714,8 @@ def dispatch_stage(task_id: str) -> Dict:
         save_state(state)
         log_event(task_id, "stage_preflight_ran", stage=stage_name, preflight=preflight)
     if not preflight.get("ok", True):
-        hook_attention = _collect_hook_attention(preflight)
+        state = load_state(task_id)
+        hook_attention = ((state.metadata.get("last_hook_effects", {}) or {}).get("preflight:pre_execute", {}) or {})
         state.status = "recovering"
         state.next_action = str((hook_attention.get("next_actions", []) or [preflight.get("action") or "run_root_cause_review_before_retry"])[0])
         state.blockers = _summarize_preflight_block(preflight)

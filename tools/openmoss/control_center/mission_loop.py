@@ -45,6 +45,12 @@ from topology_mapper import build_topology
 from fractal_decomposer import build_fractal_loops
 from human_checkpoint import build_human_checkpoint
 
+AUTONOMY_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy")
+if str(AUTONOMY_DIR) not in __import__("sys").path:
+    __import__("sys").path.insert(0, str(AUTONOMY_DIR))
+
+from manager import apply_hook_effects
+
 
 def _load_json(path: Path) -> Dict[str, object]:
     """
@@ -186,10 +192,12 @@ def _force_browser_batch_plan(mission: Dict[str, object]) -> Dict[str, object]:
 
 
 def _hook_next_actions(event_result: Dict[str, object]) -> list[str]:
-    actions: list[str] = []
-    for item in event_result.get("emitted_hooks", []) or []:
-        actions.extend([str(value) for value in item.get("next_actions", []) or [] if str(value).strip()])
-    return actions
+    control_center_dir = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/control_center")
+    if str(control_center_dir) not in __import__("sys").path:
+        __import__("sys").path.insert(0, str(control_center_dir))
+    from event_bus import summarize_hook_effects
+
+    return list((summarize_hook_effects(event_result) or {}).get("next_actions", []) or [])
 
 
 def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str, object]) -> Dict[str, object]:
@@ -215,6 +223,7 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
     challenge_event = {}
     if challenge.get("challenge_type") not in {"", "none"}:
         challenge_event = publish_event("challenge.detected", {"task_id": task_id, "mission": mission, "challenge": challenge})
+        apply_hook_effects(task_id, challenge_event, source="mission:challenge")
     mission["challenge"] = challenge
     if challenge_event:
         mission["challenge_hook"] = challenge_event

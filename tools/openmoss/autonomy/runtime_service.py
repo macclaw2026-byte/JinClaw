@@ -25,7 +25,7 @@ from pathlib import Path
 
 from action_executor import dispatch_stage, poll_active_execution
 from learning_engine import get_error_recurrence
-from manager import TASKS_ROOT, advance_execute_subtask, apply_recovery, build_args, checkpoint_task, complete_stage_internal, contract_path, find_link_by_task_id, infer_link_session_key, load_contract, load_state, log_event, run_once, save_contract, save_state, state_path, verify_task, write_business_outcome, write_link
+from manager import TASKS_ROOT, advance_execute_subtask, apply_hook_effects, apply_recovery, build_args, checkpoint_task, complete_stage_internal, contract_path, find_link_by_task_id, infer_link_session_key, load_contract, load_state, log_event, run_once, save_contract, save_state, state_path, verify_task, write_business_outcome, write_link
 from promotion_engine import promote_recurring_errors
 from verifier_registry import run_verifier
 
@@ -1713,6 +1713,7 @@ def _maybe_take_over_failed_task(task_id: str) -> dict | None:
             "doctor_takeover": state.metadata.get("doctor_takeover", {}) or {},
         },
     )
+    apply_hook_effects(task_id, doctor_event, source="runtime:doctor_escalation")
     state = load_state(task_id)
     state.metadata["doctor_takeover"]["hook_event"] = doctor_event
     state.last_update_at = utc_now_iso()

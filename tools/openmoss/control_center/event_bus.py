@@ -125,6 +125,7 @@ def _execute_hook(hook_spec: Dict[str, object], task_id: str, payload: Dict[str,
                 {
                     "status": "attention_required",
                     "decision": "execution_policy_requires_review",
+                    "state_patch": {"next_action": "await_approval_or_contract_fix"},
                     "warnings": ["critical_or_high_risk_execution_has_pending_approval"],
                     "next_actions": ["await_approval_or_contract_fix"],
                 }
@@ -151,6 +152,38 @@ def _execute_hook(hook_spec: Dict[str, object], task_id: str, payload: Dict[str,
         result.update({"status": "completed", "decision": f"{hook_name}_recorded"})
         return result
     return result
+
+
+def summarize_hook_effects(event_result: Dict[str, object]) -> Dict[str, Any]:
+    emitted_hooks = list(event_result.get("emitted_hooks", []) or [])
+    state_patch: Dict[str, Any] = {}
+    governance_patch: Dict[str, Any] = {}
+    next_actions: List[str] = []
+    warnings: List[str] = []
+    errors: List[str] = []
+    decisions: List[str] = []
+    attention_required = False
+    for item in emitted_hooks:
+        if str(item.get("status", "")).strip() in {"attention_required", "failed"}:
+            attention_required = True
+        for key, value in (item.get("state_patch", {}) or {}).items():
+            state_patch[str(key)] = value
+        for key, value in (item.get("governance_patch", {}) or {}).items():
+            governance_patch[str(key)] = value
+        next_actions.extend([str(value) for value in item.get("next_actions", []) or [] if str(value).strip()])
+        warnings.extend([str(value) for value in item.get("warnings", []) or [] if str(value).strip()])
+        errors.extend([str(value) for value in item.get("errors", []) or [] if str(value).strip()])
+        if str(item.get("decision", "")).strip():
+            decisions.append(str(item.get("decision", "")).strip())
+    return {
+        "attention_required": attention_required,
+        "state_patch": state_patch,
+        "governance_patch": governance_patch,
+        "next_actions": next_actions,
+        "warnings": sorted(set(warnings)),
+        "errors": sorted(set(errors)),
+        "decisions": decisions,
+    }
 
 
 def publish_event(event_type: str, payload: Dict[str, object]) -> Dict[str, object]:

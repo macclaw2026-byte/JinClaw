@@ -925,6 +925,73 @@ def _set_nested_dict_value(payload: Dict[str, Any], field: str, value: Any) -> N
     current[parts[-1]] = value
 
 
+def _set_taskstate_field(state: TaskState, field: str, value: Any) -> None:
+    parts = [part for part in str(field).split(".") if part]
+    if not parts:
+        return
+    head = parts[0]
+    if head == "metadata":
+        _set_nested_dict_value(state.metadata, ".".join(parts[1:]), value)
+        return
+    if head == "stages" and len(parts) >= 3:
+        stage = state.stages.get(parts[1])
+        if not stage:
+            return
+        setattr(stage, parts[2], value)
+        stage.updated_at = utc_now_iso()
+        return
+    if hasattr(state, head):
+        setattr(state, head, value)
+
+
+def apply_hook_effects(task_id: str, hook_event: Dict[str, Any] | None, *, source: str = "") -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：把 hook 总线产出的标准补丁统一落到 task state。
+    - 支持：`state_patch`、`governance_patch`、`next_actions`、`warnings`。
+    - 设计意图：避免 action_executor / runtime / doctor 各自手写一套 hook 结果翻译逻辑。
+    """
+    if not hook_event:
+        return {"applied": False, "reason": "no_hook_event"}
+    control_center_dir = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/control_center")
+    if str(control_center_dir) not in sys.path:
+        sys.path.insert(0, str(control_center_dir))
+    from event_bus import summarize_hook_effects
+
+    summary = summarize_hook_effects(hook_event)
+    if not any(
+        [
+            summary.get("state_patch"),
+            summary.get("governance_patch"),
+            summary.get("next_actions"),
+            summary.get("warnings"),
+            summary.get("errors"),
+        ]
+    ):
+        return {"applied": False, "reason": "no_patch_content", "summary": summary}
+    state = load_state(task_id)
+    for field, value in (summary.get("state_patch", {}) or {}).items():
+        _set_taskstate_field(state, str(field), value)
+    if summary.get("governance_patch"):
+        state.metadata.setdefault("governance_runtime", {})
+        state.metadata["governance_runtime"].update(summary.get("governance_patch", {}) or {})
+    if summary.get("warnings"):
+        existing = [str(item) for item in state.metadata.get("hook_warnings", []) or [] if str(item).strip()]
+        state.metadata["hook_warnings"] = sorted(set([*existing, *summary.get("warnings", [])]))
+    if summary.get("errors"):
+        existing = [str(item) for item in state.metadata.get("hook_errors", []) or [] if str(item).strip()]
+        state.metadata["hook_errors"] = sorted(set([*existing, *summary.get("errors", [])]))
+    if summary.get("next_actions"):
+        state.metadata["hook_next_actions"] = list(summary.get("next_actions", []))
+    if source:
+        state.metadata.setdefault("last_hook_effects", {})
+        state.metadata["last_hook_effects"][source] = summary
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    log_event(task_id, "hook_effects_applied", source=source or "unknown", summary=summary)
+    return {"applied": True, "summary": summary}
+
+
 def advance_execute_subtask(task_id: str, subtask_id: str, summary: str = "") -> Dict[str, object]:
     """
     中文注解：
