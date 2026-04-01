@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 from typing import Dict, List
 
+from crawler_capability_profile import build_crawler_capability_profile
 from crawler_stack_registry import build_crawler_stack_registry
 from paths import CONTROL_CENTER_RUNTIME_ROOT
 
@@ -65,6 +66,24 @@ def _requested_sites(goal: str) -> List[str]:
     return sites
 
 
+def _project_site_constraints(requested_sites: List[str]) -> Dict[str, object]:
+    profile = build_crawler_capability_profile()
+    sites = profile.get("sites", []) or []
+    site_map = {
+        str(site.get("site", "")).strip().lower(): site
+        for site in sites
+        if str(site.get("site", "")).strip()
+    }
+    relevant = [site_map[site] for site in requested_sites if site in site_map]
+    attention_sites = [site for site in relevant if site.get("readiness") != "production_ready"]
+    return {
+        "summary": profile.get("summary", {}) or {},
+        "relevant_sites": relevant,
+        "attention_sites": attention_sites,
+        "recommended_project_actions": profile.get("recommended_project_actions", []) or [],
+    }
+
+
 def _requested_tools(goal: str) -> List[str]:
     goal_lower = str(goal or "").lower()
     requested: List[str] = []
@@ -80,7 +99,7 @@ def _requested_tools(goal: str) -> List[str]:
     }.items():
         if any(alias in goal_lower for alias in aliases):
             requested.append(tool_id)
-    if not requested and any(token in goal_lower for token in ["7个工具", "7 tools", "七个工具"]):
+    if not requested and any(token in goal_lower for token in ["7个工具", "7 tools", "七个工具", "all known tools", "all tools", "所有已知工具", "全部工具", "首次", "第一次"]):
         return [
             "crawl4ai",
             "direct_http",
@@ -102,7 +121,7 @@ def _execution_mode(goal: str, requirements: Dict[str, object], requested_sites:
     return "adaptive_fetch"
 
 
-def _score_stack(stack: Dict[str, object], requirements: Dict[str, object]) -> Dict[str, object]:
+def _score_stack(stack: Dict[str, object], requirements: Dict[str, object], site_constraints: Dict[str, object]) -> Dict[str, object]:
     """
     中文注解：
     - 功能：对候选抓取栈做启发式评分，优先选择“成本最低但足够完成目标”的路线。
@@ -110,6 +129,7 @@ def _score_stack(stack: Dict[str, object], requirements: Dict[str, object]) -> D
     score = 0.0
     rationale: List[str] = []
     stack_id = str(stack.get("stack_id", ""))
+    stack_tools = {str(item).strip().lower() for item in stack.get("tools", []) if str(item).strip()}
 
     if stack_id == "official_api":
         if requirements.get("requires_external_information"):
@@ -159,6 +179,45 @@ def _score_stack(stack: Dict[str, object], requirements: Dict[str, object]) -> D
         score -= 4
         rationale.append("强 JS 场景下纯 HTTP 栈成功率较低")
 
+    relevant_sites = site_constraints.get("relevant_sites", []) or []
+    for site in relevant_sites:
+        selected_tool = str(site.get("selected_tool", "")).strip().lower()
+        readiness = str(site.get("readiness", "")).strip()
+        blocked = {
+            str(item).strip().lower()
+            for item in site.get("primary_limitations", [])
+            if str(item).strip().startswith("blocked_tools:")
+        }
+        selected_matches = selected_tool and (
+            selected_tool in stack_tools or
+            (selected_tool == "local-agent-browser-cli" and stack_id == "authorized_session")
+        )
+        if readiness == "production_ready" and selected_matches:
+            score += 8
+            rationale.append(f"{site.get('site', '')} 当前生产可用，优先沿已验证工具路线")
+        if readiness == "attention_required" and site.get("authenticated_supported") and stack_id == "authorized_session":
+            score += 6
+            rationale.append(f"{site.get('site', '')} 当前更适合升级到授权态链路")
+        blocked_text = " ".join(blocked)
+        if blocked_text:
+            if stack_id == "http_static" and any(token in blocked_text for token in ["curl-cffi", "direct-http-html"]):
+                score -= 5
+                rationale.append(f"{site.get('site', '')} 的轻量 HTTP 路线当前已知不稳")
+            if stack_id == "crawl4ai_extract" and "crawl4ai-cli" in blocked_text:
+                score -= 4
+                rationale.append(f"{site.get('site', '')} 的 crawl4ai 路线当前已知受阻")
+            if stack_id == "playwright_stealth" and "playwright" in blocked_text:
+                score -= 4
+                rationale.append(f"{site.get('site', '')} 的 Playwright 路线当前已知受阻")
+
+    summary = site_constraints.get("summary", {}) or {}
+    if float(summary.get("width_score", 0) or 0) < 60 and stack_id == "official_api":
+        score += 1
+        rationale.append("全局抓取宽度偏低时，先保守尝试官方/结构化入口")
+    if float(summary.get("depth_score", 0) or 0) < 50 and stack_id == "authorized_session":
+        score += 2
+        rationale.append("全局抓取深度偏低时，授权态更可能补齐关键字段")
+
     return {
         "stack_id": stack_id,
         "score": round(score, 2),
@@ -185,8 +244,9 @@ def build_crawler_plan(
     requirements = _goal_requirements(intent, challenge, selected_plan)
     requested_sites = _requested_sites(requirements.get("goal", ""))
     requested_tools = _requested_tools(requirements.get("goal", ""))
+    site_constraints = _project_site_constraints(requested_sites)
     registry = build_crawler_stack_registry()
-    scores = [_score_stack(stack, requirements) for stack in registry.get("stacks", [])]
+    scores = [_score_stack(stack, requirements, site_constraints) for stack in registry.get("stacks", [])]
     ranked = sorted(scores, key=lambda item: (item.get("score", 0.0), item.get("stack_id", "")), reverse=True)
     selected = ranked[0] if ranked else {}
     payload = {
@@ -196,6 +256,7 @@ def build_crawler_plan(
         "requirements": requirements,
         "requested_sites": requested_sites,
         "requested_tools": requested_tools,
+        "project_site_constraints": site_constraints,
         "selected_stack": selected,
         "fallback_stacks": [item.get("stack_id", "") for item in ranked[1:4]],
         "scores": ranked,
