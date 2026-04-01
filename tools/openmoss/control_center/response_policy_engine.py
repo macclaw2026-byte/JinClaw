@@ -49,6 +49,7 @@ def _governance_fragment(snapshot: Dict[str, Any]) -> str:
     approval = governance.get("approval", {}) or {}
     authorized_session = governance.get("authorized_session", {}) or {}
     human_checkpoint = governance.get("human_checkpoint", {}) or {}
+    crawler_project = governance.get("crawler_project", {}) or {}
     policy = governance.get("policy", {}) or {}
     memory = governance.get("memory", {}) or snapshot.get("memory", {}) or {}
     risk = str(policy.get("risk", "")).strip()
@@ -68,6 +69,24 @@ def _governance_fragment(snapshot: Dict[str, Any]) -> str:
         parts.append(f"命中 durable rule {len(matched_rules)} 条")
     elif recurrence:
         parts.append(f"命中历史复发模式 {len(recurrence)} 条")
+    crawler_health = str(crawler_project.get("health_status", "")).strip()
+    crawler_summary = crawler_project.get("summary", {}) or {}
+    if crawler_health in {"degraded", "critical"}:
+        attention_sites = int(crawler_summary.get("sites_attention_required", 0) or 0)
+        width_score = crawler_summary.get("width_score")
+        depth_score = crawler_summary.get("depth_score")
+        breadth_score = crawler_summary.get("breadth_score")
+        stats = []
+        if attention_sites:
+            stats.append(f"{attention_sites} 个站点待加固")
+        if width_score is not None:
+            stats.append(f"宽度 {width_score}")
+        if breadth_score is not None:
+            stats.append(f"广度 {breadth_score}")
+        if depth_score is not None:
+            stats.append(f"深度 {depth_score}")
+        suffix = f"（{'，'.join(stats)}）" if stats else ""
+        parts.append(f"项目抓取能力 {crawler_health}{suffix}")
     if not parts and security.get("overall_risk"):
         parts.append(f"治理风险级别 {security.get('overall_risk')}")
     if not parts:

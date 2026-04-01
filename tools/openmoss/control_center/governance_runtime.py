@@ -16,6 +16,7 @@ from typing import Any, Dict, List
 
 from approval_gate import review_plan
 from authorized_session_manager import build_authorized_session_plan
+from crawler_capability_profile import build_crawler_capability_profile
 from hook_registry import get_registered_hooks
 from human_checkpoint import build_human_checkpoint
 from paths import MEMORY_ROOT, POLICY_ROOT
@@ -239,6 +240,60 @@ def build_memory_bundle(task_id: str, contract: Dict[str, Any], state: Dict[str,
     return bundle
 
 
+def build_crawler_project_bundle(task_id: str, contract: Dict[str, Any], mission: Dict[str, Any]) -> Dict[str, Any]:
+    profile = build_crawler_capability_profile()
+    summary = profile.get("summary", {}) or {}
+    sites = profile.get("sites", []) or []
+    goal_parts = [
+        str(contract.get("user_goal", "")).strip().lower(),
+        json.dumps(mission.get("crawler", {}) or {}, ensure_ascii=False).lower(),
+        json.dumps(mission.get("intent", {}) or {}, ensure_ascii=False).lower(),
+    ]
+    goal_blob = " ".join(part for part in goal_parts if part)
+    attention_sites = [site for site in sites if site.get("readiness") == "attention_required"]
+    relevant_sites = [
+        site
+        for site in sites
+        if str(site.get("site", "")).strip().lower() and str(site.get("site", "")).strip().lower() in goal_blob
+    ]
+    relevant_attention = [site for site in attention_sites if site in relevant_sites]
+    if not relevant_attention and relevant_sites:
+        relevant_attention = [
+            site for site in relevant_sites if site.get("readiness") != "production_ready"
+        ]
+    if not relevant_attention and not relevant_sites:
+        relevant_attention = attention_sites[:3]
+    recommended_actions = profile.get("recommended_project_actions", []) or []
+    health_status = "healthy"
+    if float(summary.get("width_score", 0) or 0) < 60 or float(summary.get("stability_score", 0) or 0) < 60:
+        health_status = "degraded"
+    if float(summary.get("width_score", 0) or 0) < 40 or float(summary.get("depth_score", 0) or 0) < 40:
+        health_status = "critical"
+    return {
+        "task_id": task_id,
+        "health_status": health_status,
+        "summary": summary,
+        "relevant_sites": [
+            {
+                "site": site.get("site", ""),
+                "readiness": site.get("readiness", ""),
+                "selected_tool": site.get("selected_tool", ""),
+                "primary_limitations": site.get("primary_limitations", []),
+            }
+            for site in relevant_sites[:5]
+        ],
+        "attention_sites": [
+            {
+                "site": site.get("site", ""),
+                "readiness": site.get("readiness", ""),
+                "primary_limitations": site.get("primary_limitations", []),
+            }
+            for site in relevant_attention[:5]
+        ],
+        "recommended_project_actions": recommended_actions[:5],
+    }
+
+
 def build_governance_bundle(task_id: str, stage_name: str, contract: Dict[str, Any], state: Dict[str, Any], mission: Dict[str, Any]) -> Dict[str, Any]:
     bundle = {
         "security": build_security_bundle(task_id, contract, mission),
@@ -246,6 +301,7 @@ def build_governance_bundle(task_id: str, stage_name: str, contract: Dict[str, A
         "approval": build_approval_bundle(task_id, mission),
         "authorized_session": build_authorized_session_bundle(task_id, mission),
         "human_checkpoint": build_human_checkpoint_bundle(task_id, mission),
+        "crawler_project": build_crawler_project_bundle(task_id, contract, mission),
         "hooks": build_hook_bundle(task_id, stage_name, state),
         "memory": build_memory_bundle(task_id, contract, state, mission),
     }

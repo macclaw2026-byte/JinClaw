@@ -340,12 +340,28 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
         stale_after_seconds=max(120, idle_after_seconds),
         escalation_after_seconds=max(300, escalation_after_seconds),
     )
+    crawler_profile = control_plane.get("crawler_capability_profile", {}) or {}
+    crawler_summary = crawler_profile.get("summary", {}) or {}
+    crawler_attention_sites = [
+        {
+            "site": site.get("site", ""),
+            "readiness": site.get("readiness", ""),
+            "primary_limitations": site.get("primary_limitations", []),
+        }
+        for site in (crawler_profile.get("sites", []) or [])
+        if site.get("readiness") != "production_ready"
+    ][:5]
     result = {
         "checked_at": _utc_now_iso(),
         "control_plane": {
             "system_snapshot": control_plane.get("system_snapshot", {}),
             "doctor_queue_count": len(control_plane.get("doctor_queue", {}).get("items", [])),
             "alerts_count": len(control_plane.get("alerts", {}).get("items", [])),
+        },
+        "crawler_health": {
+            "summary": crawler_summary,
+            "attention_sites": crawler_attention_sites,
+            "recommended_project_actions": (crawler_profile.get("recommended_project_actions", []) or [])[:5],
         },
         "reports": reports,
         "mission_supervisor": supervisor,
