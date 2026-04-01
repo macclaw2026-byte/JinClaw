@@ -58,6 +58,8 @@ def _normalize_hook_specs(registered: Dict[str, object]) -> List[Dict[str, objec
             "failure_policy": "record_and_continue",
             "required_inputs": ["task_id"],
             "emits": [],
+            "memory_targets": [],
+            "memory_reason": "",
         }
         for name in registered.get("hooks", []) or []
         if str(name).strip()
@@ -80,6 +82,8 @@ def _execute_hook(hook_spec: Dict[str, object], task_id: str, payload: Dict[str,
         "next_actions": [],
         "warnings": [],
         "errors": [],
+        "memory_targets": [str(item) for item in hook_spec.get("memory_targets", []) or [] if str(item).strip()],
+        "memory_reason": str(hook_spec.get("memory_reason", "") or ""),
     }
     if hook_name == "run_capability_clone_pipeline":
         mission = payload.get("mission", {})
@@ -162,6 +166,8 @@ def summarize_hook_effects(event_result: Dict[str, object]) -> Dict[str, Any]:
     warnings: List[str] = []
     errors: List[str] = []
     decisions: List[str] = []
+    memory_targets: List[str] = []
+    memory_reasons: List[str] = []
     attention_required = False
     for item in emitted_hooks:
         if str(item.get("status", "")).strip() in {"attention_required", "failed"}:
@@ -175,6 +181,9 @@ def summarize_hook_effects(event_result: Dict[str, object]) -> Dict[str, Any]:
         errors.extend([str(value) for value in item.get("errors", []) or [] if str(value).strip()])
         if str(item.get("decision", "")).strip():
             decisions.append(str(item.get("decision", "")).strip())
+        memory_targets.extend([str(value) for value in item.get("memory_targets", []) or [] if str(value).strip()])
+        if str(item.get("memory_reason", "")).strip():
+            memory_reasons.append(str(item.get("memory_reason", "")).strip())
     return {
         "attention_required": attention_required,
         "state_patch": state_patch,
@@ -183,6 +192,8 @@ def summarize_hook_effects(event_result: Dict[str, object]) -> Dict[str, Any]:
         "warnings": sorted(set(warnings)),
         "errors": sorted(set(errors)),
         "decisions": decisions,
+        "memory_targets": sorted(set(memory_targets)),
+        "memory_reasons": sorted(set(memory_reasons)),
     }
 
 

@@ -29,6 +29,7 @@ from response_policy_engine import build_supervisor_status_text
 from route_guardrails import persist_route, reroot_route_if_needed
 from task_receipt_engine import emit_route_receipt
 from task_status_snapshot import build_task_status_snapshot
+from memory_writeback_runtime import record_memory_writeback
 
 AUTONOMY_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy")
 if str(AUTONOMY_DIR) not in sys.path:
@@ -307,7 +308,27 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
         seen_task_ids.add(task_id)
         diagnosis = diagnose_task(task_id, idle_after_seconds=idle_after_seconds)
         repair = repair_task_if_possible(task_id, diagnosis)
+        writeback_summary = {
+            "attention_required": bool(diagnosis.get("stuck")),
+            "state_patch": {},
+            "governance_patch": {},
+            "next_actions": [str(repair.get("reason", "")).strip()] if str(repair.get("reason", "")).strip() and repair.get("repaired") else [],
+            "warnings": [str(diagnosis.get("reason", "")).strip()] if diagnosis.get("stuck") else [],
+            "errors": [],
+            "decisions": [
+                "doctor_diagnosis_completed",
+                "doctor_repair_applied" if repair.get("repaired") else "doctor_repair_not_applied",
+            ],
+            "memory_targets": ["runtime", "task"] if diagnosis.get("stuck") else ["runtime"],
+            "memory_reasons": ["doctor_diagnosis", "doctor_repair"] if repair.get("repaired") else ["doctor_diagnosis"],
+        }
+        writeback = record_memory_writeback(task_id, source="doctor:diagnosis_cycle", summary=writeback_summary)
+        state = load_state(task_id)
+        state.metadata["memory_writeback"] = writeback
+        state.last_update_at = _utc_now_iso()
+        save_state(state)
         report = {"diagnosis": diagnosis, "repair": repair}
+        report["memory_writeback"] = writeback
         if diagnosis.get("stuck"):
             report["governance"] = (build_task_status_snapshot(task_id).get("governance", {}) or {})
         if diagnosis.get("stuck") and diagnosis.get("idle_seconds", 0) >= escalation_after_seconds:

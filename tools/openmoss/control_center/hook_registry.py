@@ -29,6 +29,8 @@ def _hook(
     failure_policy: str = "record_and_continue",
     required_inputs: list[str] | None = None,
     emits: list[str] | None = None,
+    memory_targets: list[str] | None = None,
+    memory_reason: str = "",
 ) -> Dict[str, object]:
     return {
         "name": name,
@@ -41,61 +43,63 @@ def _hook(
         "failure_policy": failure_policy,
         "required_inputs": required_inputs or ["task_id"],
         "emits": emits or [],
+        "memory_targets": memory_targets or [],
+        "memory_reason": str(memory_reason or ""),
     }
 
 
 DEFAULT_HOOKS: Dict[str, List[Dict[str, object]]] = {
     "mission.built": [
-        _hook("evaluate_clone_need", phase="pre_decision", emits=["capability.clone_requested"]),
+        _hook("evaluate_clone_need", phase="pre_decision", emits=["capability.clone_requested"], memory_targets=["task"], memory_reason="mission_decision_review"),
     ],
     "plan.reselected": [
-        _hook("audit_plan_switch", phase="pre_decision", emits=["plan.audit_recorded"]),
+        _hook("audit_plan_switch", phase="pre_decision", emits=["plan.audit_recorded"], memory_targets=["task"], memory_reason="plan_switch_audit"),
     ],
     "challenge.detected": [
-        _hook("route_challenge_response", phase="recovery", blocking=True, emits=["challenge.route_selected"]),
+        _hook("route_challenge_response", phase="recovery", blocking=True, emits=["challenge.route_selected"], memory_targets=["runtime", "task"], memory_reason="challenge_route_selected"),
     ],
     "capability.clone_requested": [
-        _hook("run_capability_clone_pipeline", phase="post_execute", blocking=True, timeout_ms=5000, emits=["capability.clone_verified"]),
+        _hook("run_capability_clone_pipeline", phase="post_execute", blocking=True, timeout_ms=5000, emits=["capability.clone_verified"], memory_targets=["project", "task"], memory_reason="capability_clone_pipeline"),
     ],
     "capability.clone_verified": [
-        _hook("promote_cloned_capability", phase="post_execute", emits=["capability.promoted"]),
+        _hook("promote_cloned_capability", phase="post_execute", emits=["capability.promoted"], memory_targets=["project"], memory_reason="capability_promoted"),
     ],
     "stage.understand.entered": [
-        _hook("refresh_task_memory_snapshot", phase="pre_execute", emits=["memory.snapshot_refreshed"]),
+        _hook("refresh_task_memory_snapshot", phase="pre_execute", emits=["memory.snapshot_refreshed"], memory_targets=["runtime", "task"], memory_reason="stage_memory_refresh"),
     ],
     "stage.plan.entered": [
-        _hook("refresh_task_memory_snapshot", phase="pre_execute", emits=["memory.snapshot_refreshed"]),
-        _hook("audit_plan_switch", phase="pre_decision", emits=["plan.audit_recorded"]),
+        _hook("refresh_task_memory_snapshot", phase="pre_execute", emits=["memory.snapshot_refreshed"], memory_targets=["runtime", "task"], memory_reason="stage_memory_refresh"),
+        _hook("audit_plan_switch", phase="pre_decision", emits=["plan.audit_recorded"], memory_targets=["task"], memory_reason="plan_switch_audit"),
     ],
     "stage.execute.entered": [
-        _hook("refresh_task_memory_snapshot", phase="pre_execute", emits=["memory.snapshot_refreshed"]),
-        _hook("verify_execution_policy_handoff", phase="pre_execute", blocking=True, emits=["policy.handoff_verified"]),
+        _hook("refresh_task_memory_snapshot", phase="pre_execute", emits=["memory.snapshot_refreshed"], memory_targets=["runtime", "task"], memory_reason="stage_memory_refresh"),
+        _hook("verify_execution_policy_handoff", phase="pre_execute", blocking=True, emits=["policy.handoff_verified"], memory_targets=["runtime"], memory_reason="execution_policy_handoff"),
     ],
     "stage.verify.entered": [
-        _hook("refresh_task_memory_snapshot", phase="pre_execute", emits=["memory.snapshot_refreshed"]),
-        _hook("verify_execution_policy_handoff", phase="pre_execute", blocking=True, emits=["policy.handoff_verified"]),
+        _hook("refresh_task_memory_snapshot", phase="pre_execute", emits=["memory.snapshot_refreshed"], memory_targets=["runtime", "task"], memory_reason="stage_memory_refresh"),
+        _hook("verify_execution_policy_handoff", phase="pre_execute", blocking=True, emits=["policy.handoff_verified"], memory_targets=["runtime"], memory_reason="execution_policy_handoff"),
     ],
     "stage.learn.entered": [
-        _hook("refresh_task_memory_snapshot", phase="post_execute", emits=["memory.snapshot_refreshed"]),
+        _hook("refresh_task_memory_snapshot", phase="post_execute", emits=["memory.snapshot_refreshed"], memory_targets=["task"], memory_reason="post_stage_memory_refresh"),
     ],
     "stage.execute.pre_execute": [
-        _hook("refresh_task_memory_snapshot", phase="pre_execute", emits=["memory.snapshot_refreshed"]),
-        _hook("verify_execution_policy_handoff", phase="pre_execute", blocking=True, emits=["policy.handoff_verified"]),
+        _hook("refresh_task_memory_snapshot", phase="pre_execute", emits=["memory.snapshot_refreshed"], memory_targets=["runtime", "task"], memory_reason="stage_memory_refresh"),
+        _hook("verify_execution_policy_handoff", phase="pre_execute", blocking=True, emits=["policy.handoff_verified"], memory_targets=["runtime"], memory_reason="execution_policy_handoff"),
     ],
     "stage.verify.pre_execute": [
-        _hook("refresh_task_memory_snapshot", phase="pre_execute", emits=["memory.snapshot_refreshed"]),
-        _hook("verify_execution_policy_handoff", phase="pre_execute", blocking=True, emits=["policy.handoff_verified"]),
+        _hook("refresh_task_memory_snapshot", phase="pre_execute", emits=["memory.snapshot_refreshed"], memory_targets=["runtime", "task"], memory_reason="stage_memory_refresh"),
+        _hook("verify_execution_policy_handoff", phase="pre_execute", blocking=True, emits=["policy.handoff_verified"], memory_targets=["runtime"], memory_reason="execution_policy_handoff"),
     ],
     "stage.execute.waiting": [
-        _hook("monitor_liveness_and_retry_path", phase="recovery", emits=["runtime.retry_path_reviewed"]),
+        _hook("monitor_liveness_and_retry_path", phase="recovery", emits=["runtime.retry_path_reviewed"], memory_targets=["runtime"], memory_reason="liveness_retry_review"),
     ],
     "recovery.requested": [
-        _hook("monitor_liveness_and_retry_path", phase="recovery", blocking=True, emits=["runtime.recovery_reviewed"]),
-        _hook("refresh_task_memory_snapshot", phase="recovery", emits=["memory.snapshot_refreshed"]),
+        _hook("monitor_liveness_and_retry_path", phase="recovery", blocking=True, emits=["runtime.recovery_reviewed"], memory_targets=["runtime"], memory_reason="liveness_retry_review"),
+        _hook("refresh_task_memory_snapshot", phase="recovery", emits=["memory.snapshot_refreshed"], memory_targets=["runtime", "task"], memory_reason="recovery_memory_refresh"),
     ],
     "doctor.escalation": [
-        _hook("refresh_task_memory_snapshot", phase="recovery", emits=["memory.snapshot_refreshed"]),
-        _hook("monitor_liveness_and_retry_path", phase="recovery", emits=["runtime.retry_path_reviewed"]),
+        _hook("refresh_task_memory_snapshot", phase="recovery", emits=["memory.snapshot_refreshed"], memory_targets=["runtime", "task"], memory_reason="doctor_memory_refresh"),
+        _hook("monitor_liveness_and_retry_path", phase="recovery", emits=["runtime.retry_path_reviewed"], memory_targets=["runtime"], memory_reason="doctor_retry_review"),
     ],
 }
 

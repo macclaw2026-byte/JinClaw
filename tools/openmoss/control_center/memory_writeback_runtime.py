@@ -80,19 +80,27 @@ def _targets_for_source(source: str) -> List[str]:
     return ["runtime"]
 
 
+def _normalize_targets(summary: Dict[str, Any], source: str) -> List[str]:
+    explicit = [str(item).strip() for item in summary.get("memory_targets", []) or [] if str(item).strip()]
+    if explicit:
+        return sorted(set(explicit))
+    return _targets_for_source(source)
+
+
 def record_memory_writeback(task_id: str, *, source: str, summary: Dict[str, Any]) -> Dict[str, Any]:
     path = MEMORY_WRITEBACK_ROOT / f"{task_id}.json"
     payload = _read_json(path, {"task_id": task_id, "updated_at": "", "entries": []}) or {"task_id": task_id, "updated_at": "", "entries": []}
     entry = {
         "at": _utc_now_iso(),
         "source": source,
-        "targets": _targets_for_source(source),
+        "targets": _normalize_targets(summary, source),
         "state_patch_keys": sorted((summary.get("state_patch", {}) or {}).keys()),
         "governance_patch_keys": sorted((summary.get("governance_patch", {}) or {}).keys()),
         "next_actions": list(summary.get("next_actions", []) or []),
         "warnings": list(summary.get("warnings", []) or []),
         "errors": list(summary.get("errors", []) or []),
         "decisions": list(summary.get("decisions", []) or []),
+        "memory_reasons": list(summary.get("memory_reasons", []) or []),
         "attention_required": bool(summary.get("attention_required")),
     }
     entries = list(payload.get("entries", []) or [])
