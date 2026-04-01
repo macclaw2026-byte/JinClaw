@@ -115,6 +115,25 @@ def _extract_import_failure_labels(raw_row: dict) -> list[str]:
     return labels
 
 
+def _extract_request_failure_labels(raw_row: dict) -> list[str]:
+    labels: list[str] = []
+    for step in ("import", "patch", "readiness", "submit"):
+        error = (raw_row.get(step) or {}).get("error") or {}
+        if not isinstance(error, dict):
+            continue
+        http_status = error.get("http_status")
+        if http_status:
+            labels.append(f"{step.upper()}_HTTP_{http_status}")
+        network_error = str(error.get("network_error") or "").strip()
+        exception = str(error.get("exception") or "").strip()
+        joined = f"{network_error} {exception}".strip().lower()
+        if "timed out" in joined or "timeout" in joined:
+            labels.append(f"{step.upper()}_TIMEOUT")
+        elif joined:
+            labels.append(f"{step.upper()}_REQUEST_ERROR")
+    return labels
+
+
 def _is_auto_repairable_label(label: str) -> bool:
     normalized = str(label or "").strip().lower()
     return normalized in {
@@ -122,7 +141,15 @@ def _is_auto_repairable_label(label: str) -> bool:
         "only_draft_supported",
         "sku_exists_on_non_draft",
         "sku_unique_constraint",
-    } or "unique constraint" in normalized or "draft" in normalized
+        "import_timeout",
+        "patch_timeout",
+        "readiness_timeout",
+        "submit_timeout",
+        "import_request_error",
+        "patch_request_error",
+        "readiness_request_error",
+        "submit_request_error",
+    } or "unique constraint" in normalized or "draft" in normalized or "timeout" in normalized
 
 
 def summarize(state: dict) -> dict:
@@ -131,6 +158,7 @@ def summarize(state: dict) -> dict:
     for raw_row in processed:
         readiness = raw_row.get("readiness", {}).get("resp", {}).get("data", {}).get("submissionReadiness", {})
         import_failure_labels = _extract_import_failure_labels(raw_row)
+        request_failure_labels = _extract_request_failure_labels(raw_row)
         submit_resp = raw_row.get("submit", {}).get("resp", {}).get("data", {})
         rows.append(
             {
@@ -146,6 +174,7 @@ def summarize(state: dict) -> dict:
                 "error": raw_row.get("error"),
                 "exception": raw_row.get("exception"),
                 "import_failure_labels": import_failure_labels,
+                "request_failure_labels": request_failure_labels,
             }
         )
     success = [row for row in rows if row["submitted"]]
@@ -161,6 +190,8 @@ def summarize(state: dict) -> dict:
             labels.extend(str(code).strip() for code in row["blocking_issue_codes"] if str(code).strip())
         if row["import_failure_labels"]:
             labels.extend(str(label).strip() for label in row["import_failure_labels"] if str(label).strip())
+        if row.get("request_failure_labels"):
+            labels.extend(str(label).strip() for label in row["request_failure_labels"] if str(label).strip())
         if row["error"]:
             labels.append(str(row["error"]).strip())
         if row["exception"]:
@@ -282,6 +313,8 @@ def write_report(summary: dict) -> tuple[Path, Path]:
             lines.append(f"  blockers={', '.join(row['blocking_issue_codes'])}")
         if row["import_failure_labels"]:
             lines.append(f"  import_failures={', '.join(row['import_failure_labels'])}")
+        if row.get("request_failure_labels"):
+            lines.append(f"  request_failures={', '.join(row['request_failure_labels'])}")
         if row["error"] or row["exception"]:
             lines.append(f"  error={row['error'] or row['exception']}")
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")

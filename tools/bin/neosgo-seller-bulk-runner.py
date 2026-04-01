@@ -77,6 +77,23 @@ def safe_request(*args, **kwargs):
         return {'ok': False, 'error': {'exception': repr(e)}}
 
 
+def extract_request_error_message(step, result):
+    if not isinstance(result, dict) or result.get('ok'):
+        return None
+    error = result.get('error') or {}
+    if not isinstance(error, dict):
+        return f'{step} request failed'
+    http_status = error.get('http_status')
+    if http_status:
+        return f'{step} http {http_status}'
+    network_error = str(error.get('network_error') or '').strip()
+    exception = str(error.get('exception') or '').strip()
+    joined = f'{network_error} {exception}'.strip()
+    if joined:
+        return f'{step} request failed: {joined}'
+    return f'{step} request failed'
+
+
 def write_state(state):
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -334,6 +351,7 @@ def main():
             imp = safe_request('POST', base, token, '/api/automation/seller/giga/import', {'skus': [sku]}, idempotency=True)
             row['import'] = imp
             if not imp['ok']:
+                row['error'] = extract_request_error_message('import', imp)
                 state['processed'].append(row)
                 write_state(state)
                 continue
@@ -371,17 +389,22 @@ def main():
             patch = safe_request('PATCH', base, token, f'/api/automation/seller/listings/{product_id}', payload, idempotency=True)
             row['patch'] = patch
             if not patch['ok']:
+                row['error'] = extract_request_error_message('patch', patch)
                 state['processed'].append(row)
                 write_state(state)
                 continue
             ready = safe_request('GET', base, token, f'/api/automation/seller/listings/{product_id}/readiness')
             row['readiness'] = ready
+            if not ready['ok']:
+                row['error'] = extract_request_error_message('readiness', ready)
             can_submit = False
             if ready['ok']:
                 can_submit = ready['resp'].get('data', {}).get('submissionReadiness', {}).get('canSubmit', False)
             if can_submit and not args.no_submit:
                 submit = safe_request('POST', base, token, f'/api/automation/seller/listings/{product_id}/submit', {}, idempotency=True)
                 row['submit'] = submit
+                if not submit['ok']:
+                    row['error'] = extract_request_error_message('submit', submit)
         except Exception as exc:
             row['exception'] = repr(exc)
             row['traceback'] = traceback.format_exc()
