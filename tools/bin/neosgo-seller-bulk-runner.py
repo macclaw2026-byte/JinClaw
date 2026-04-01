@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import argparse
-import json, uuid, time, traceback
+import json, uuid, time, traceback, re
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
@@ -49,7 +49,7 @@ def load_env(path):
     return env
 
 
-def request(method, base, token, path, body=None, idempotency=False):
+def request(method, base, token, path, body=None, idempotency=False, timeout=60):
     data = None if body is None else json.dumps(body).encode('utf-8')
     headers = {
         'Authorization': f'Bearer {token}',
@@ -60,7 +60,7 @@ def request(method, base, token, path, body=None, idempotency=False):
     if idempotency:
         headers['Idempotency-Key'] = str(uuid.uuid4())
     req = Request(base.rstrip('/') + path, data=data, headers=headers, method=method)
-    with urlopen(req, timeout=60) as resp:
+    with urlopen(req, timeout=timeout) as resp:
         raw = resp.read().decode('utf-8', 'replace')
         return json.loads(raw)
 
@@ -75,6 +75,30 @@ def safe_request(*args, **kwargs):
         return {'ok': False, 'error': {'network_error': str(e)}}
     except Exception as e:
         return {'ok': False, 'error': {'exception': repr(e)}}
+
+
+def is_timeout_result(result):
+    if not isinstance(result, dict) or result.get('ok'):
+        return False
+    error = result.get('error') or {}
+    joined = f"{error.get('network_error') or ''} {error.get('exception') or ''}".lower()
+    return 'timed out' in joined or 'timeout' in joined
+
+
+def request_with_retry(method, base, token, path, body=None, idempotency=False, attempts=3, sleep_seconds=1.5, timeout=60):
+    last = None
+    for attempt in range(1, attempts + 1):
+        result = safe_request(method, base, token, path, body, idempotency=idempotency, timeout=timeout)
+        if result.get('ok'):
+            result['attempts'] = attempt
+            return result
+        last = result
+        if not is_timeout_result(result) or attempt >= attempts:
+            break
+        time.sleep(sleep_seconds * attempt)
+    if isinstance(last, dict):
+        last['attempts'] = attempts
+    return last
 
 
 def extract_request_error_message(step, result):
@@ -201,16 +225,24 @@ def extract_import_failure_message(imported):
     return None
 
 
-def fetch_candidates(base, token, page_size, max_pages):
+def fetch_candidates(base, token, page_size, max_pages, target_skus=None):
     candidates = []
+    wanted = {str(s).strip() for s in (target_skus or []) if str(s).strip()}
     page = 1
     while page <= max_pages:
-        payload = request('GET', base, token, f'/api/automation/seller/giga/candidates?page={page}&pageSize={page_size}')
+        payload = request_with_retry('GET', base, token, f'/api/automation/seller/giga/candidates?page={page}&pageSize={page_size}', attempts=2, sleep_seconds=0.5, timeout=30)
+        if not payload.get('ok'):
+            break
+        payload = payload['resp']
         data = payload.get('data') or {}
         items = data.get('candidates') or []
         if not items:
             break
         candidates.extend(items)
+        if wanted:
+            found = {str(item.get('sku') or '').strip() for item in candidates}
+            if wanted.issubset(found):
+                break
         if not data.get('hasNextPage'):
             break
         page += 1
@@ -238,7 +270,10 @@ def fetch_draft_listing_skus(base, token, page_size=100, max_pages=20):
     skus = set()
     page = 1
     while page <= max_pages:
-        payload = request('GET', base, token, f'/api/automation/seller/listings?status=DRAFT&page={page}&pageSize={page_size}')
+        payload = request_with_retry('GET', base, token, f'/api/automation/seller/listings?status=DRAFT&page={page}&pageSize={page_size}', attempts=2, sleep_seconds=0.5, timeout=30)
+        if not payload.get('ok'):
+            break
+        payload = payload['resp']
         data = payload.get('data') or {}
         items = data.get('items') or []
         if not items:
@@ -273,6 +308,66 @@ def derive_packing_units(listing):
     }]
 
 
+def _positive_number(value, default):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default
+
+
+def normalize_packing_units(listing):
+    units = listing.get('packingUnits') or []
+    normalized = []
+    if not isinstance(units, list) or not units:
+        return derive_packing_units(listing)
+    for unit in units:
+        if not isinstance(unit, dict):
+            continue
+        normalized.append({
+            'unitType': unit.get('unitType') or 'BOX',
+            'length': round(_positive_number(unit.get('length'), 18), 2),
+            'width': round(_positive_number(unit.get('width'), 18), 2),
+            'height': round(_positive_number(unit.get('height'), 12), 2),
+            'weight': round(_positive_number(unit.get('weight'), 8), 2),
+            'piecesPerUnit': max(1, int(_positive_number(unit.get('piecesPerUnit'), 1))),
+            'unitQuantity': max(1, int(_positive_number(unit.get('unitQuantity'), 1))),
+        })
+    return normalized or derive_packing_units(listing)
+
+
+def fetch_listing_by_sku(base, token, sku, page_size=100, max_pages=20, status=None):
+    page = 1
+    while page <= max_pages:
+        suffix = f'/api/automation/seller/listings?page={page}&pageSize={page_size}'
+        if status:
+            suffix = f'/api/automation/seller/listings?status={status}&page={page}&pageSize={page_size}'
+        payload = request_with_retry('GET', base, token, suffix, attempts=2, sleep_seconds=0.5, timeout=30)
+        if not payload.get('ok'):
+            break
+        payload = payload['resp']
+        data = payload.get('data') or {}
+        items = data.get('items') or []
+        if not items:
+            break
+        for item in items:
+            if str(item.get('sku') or '').strip() == str(sku).strip():
+                return item
+        if not data.get('hasNextPage'):
+            break
+        page += 1
+    return None
+
+
+def patch_requires_packing_unit_fix(result):
+    if not isinstance(result, dict) or result.get('ok'):
+        return False
+    error = result.get('error') or {}
+    body = str(error.get('body') or '')
+    lowered = body.lower()
+    return 'packingunits' in lowered and 'piecesperunit' in lowered and 'too small' in lowered
+
+
 def main():
     args = parse_args()
     env = load_env(SECRET_PATH)
@@ -292,7 +387,7 @@ def main():
     }
     write_state(state)
 
-    candidates = fetch_candidates(base, token, args.page_size, args.max_pages)
+    candidates = fetch_candidates(base, token, args.page_size, args.max_pages, target_skus=args.skus or [])
     draft_listing_skus = fetch_draft_listing_skus(base, token, page_size=args.page_size, max_pages=args.max_pages)
 
     todo = [
@@ -348,7 +443,7 @@ def main():
                 write_state(state)
                 continue
 
-            imp = safe_request('POST', base, token, '/api/automation/seller/giga/import', {'skus': [sku]}, idempotency=True)
+            imp = request_with_retry('POST', base, token, '/api/automation/seller/giga/import', {'skus': [sku]}, idempotency=True)
             row['import'] = imp
             if not imp['ok']:
                 row['error'] = extract_request_error_message('import', imp)
@@ -361,11 +456,11 @@ def main():
                 row['error'] = import_failure_message
             product_ids = extract_product_ids(imported)
             if not product_ids:
-                q = request('GET', base, token, '/api/automation/seller/listings?status=DRAFT&page=1&pageSize=100')
-                items = q['data']['items']
-                matches = [x for x in items if x.get('sku') == sku]
-                if matches:
-                    product_ids = [matches[0]['id']]
+                match = fetch_listing_by_sku(base, token, sku, page_size=args.page_size, max_pages=args.max_pages, status='DRAFT')
+                if not match:
+                    match = fetch_listing_by_sku(base, token, sku, page_size=args.page_size, max_pages=args.max_pages, status=None)
+                if match and match.get('id'):
+                    product_ids = [match['id']]
             if not product_ids:
                 row['error'] = 'imported product id not found'
                 state['processed'].append(row)
@@ -382,18 +477,24 @@ def main():
                 'description': pick_description(listing, c),
                 'shippingTemplateId': listing.get('shippingTemplateId') or SHIPPING_TEMPLATE_ID,
                 'quantityAvailable': pick_quantity_available(listing),
-                'packingUnits': listing.get('packingUnits') or derive_packing_units(listing),
+                'packingUnits': normalize_packing_units(listing),
                 **WAREHOUSE,
             }
             row['payload'] = payload
-            patch = safe_request('PATCH', base, token, f'/api/automation/seller/listings/{product_id}', payload, idempotency=True)
+            patch = request_with_retry('PATCH', base, token, f'/api/automation/seller/listings/{product_id}', payload, idempotency=True)
             row['patch'] = patch
+            if patch_requires_packing_unit_fix(patch):
+                payload['packingUnits'] = derive_packing_units(listing)
+                row['payload_retry'] = payload
+                patch = request_with_retry('PATCH', base, token, f'/api/automation/seller/listings/{product_id}', payload, idempotency=True)
+                row['patch_retry'] = patch
+                row['patch'] = patch
             if not patch['ok']:
                 row['error'] = extract_request_error_message('patch', patch)
                 state['processed'].append(row)
                 write_state(state)
                 continue
-            ready = safe_request('GET', base, token, f'/api/automation/seller/listings/{product_id}/readiness')
+            ready = request_with_retry('GET', base, token, f'/api/automation/seller/listings/{product_id}/readiness')
             row['readiness'] = ready
             if not ready['ok']:
                 row['error'] = extract_request_error_message('readiness', ready)
@@ -401,7 +502,7 @@ def main():
             if ready['ok']:
                 can_submit = ready['resp'].get('data', {}).get('submissionReadiness', {}).get('canSubmit', False)
             if can_submit and not args.no_submit:
-                submit = safe_request('POST', base, token, f'/api/automation/seller/listings/{product_id}/submit', {}, idempotency=True)
+                submit = request_with_retry('POST', base, token, f'/api/automation/seller/listings/{product_id}/submit', {}, idempotency=True)
                 row['submit'] = submit
                 if not submit['ok']:
                     row['error'] = extract_request_error_message('submit', submit)
