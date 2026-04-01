@@ -204,3 +204,72 @@ def should_prefer_governance_status_reply(text: str, intent: Dict[str, object], 
     }:
         return True
     return False
+
+
+def classify_blocked_runtime_state(
+    *,
+    next_action: str,
+    blockers: list[str] | None = None,
+    governance_attention: Dict[str, Any] | None = None,
+) -> Dict[str, str]:
+    next_action = str(next_action or "").strip()
+    blockers = [str(item).strip() for item in (blockers or []) if str(item).strip()]
+    governance_attention = governance_attention or {}
+    mapping = {
+        "bind_session_link": {
+            "category": "session_binding",
+            "response_action": "awaiting_session_binding",
+        },
+        "await_project_crawler_remediation": {
+            "category": "project_crawler_remediation",
+            "response_action": "awaiting_project_crawler_remediation",
+        },
+        "await_approval_or_contract_fix": {
+            "category": "approval_or_contract",
+            "response_action": "awaiting_approval_by_control_center",
+        },
+        "prove_necessity_before_switching": {
+            "category": "necessity_proof",
+            "response_action": "awaiting_necessity_proof",
+        },
+        "request_authorized_session": {
+            "category": "authorized_session",
+            "response_action": "awaiting_authorized_session",
+        },
+        "await_relay_attach_checkpoint": {
+            "category": "relay_attach",
+            "response_action": "awaiting_relay_attach_checkpoint",
+        },
+        "await_human_verification_checkpoint": {
+            "category": "human_checkpoint",
+            "response_action": "awaiting_human_checkpoint",
+        },
+        "inspect_runtime_contract_or_environment": {
+            "category": "runtime_or_contract_fix",
+            "response_action": "awaiting_runtime_or_contract_fix",
+        },
+        "repair_runtime_failure": {
+            "category": "runtime_failure",
+            "response_action": "blocked_waiting_for_targeted_fix",
+        },
+    }
+    details = dict(mapping.get(next_action, {}))
+    if not details:
+        details = {
+            "category": "targeted_fix",
+            "response_action": "blocked_waiting_for_targeted_fix",
+        }
+    permission_status = str((governance_attention or {}).get("permission_overall_status", "")).strip().lower()
+    crawler_health_status = str((governance_attention or {}).get("crawler_health_status", "")).strip().lower()
+    attention_reason = ""
+    if details["category"] == "approval_or_contract" and permission_status == "blocked":
+        attention_reason = "governance_permission_blocked"
+    elif details["category"] == "project_crawler_remediation" and crawler_health_status in {"degraded", "critical"}:
+        attention_reason = f"crawler_health_{crawler_health_status}"
+    elif blockers:
+        attention_reason = blockers[0]
+    return {
+        "category": details["category"],
+        "response_action": details["response_action"],
+        "attention_reason": attention_reason,
+    }

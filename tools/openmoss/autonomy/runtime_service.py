@@ -44,6 +44,7 @@ from progress_evidence import build_progress_evidence
 from system_doctor import run_system_doctor
 from task_receipt_engine import emit_route_receipt
 from task_status_snapshot import build_task_status_snapshot
+from execution_governor import classify_blocked_runtime_state
 
 
 def utc_now_iso() -> str:
@@ -727,15 +728,15 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
     """
     decision = mission_cycle.get("next_decision", {})
     action = str(decision.get("action", ""))
+    governance_attention = mission_cycle.get("governance_attention", {}) or {}
     state.metadata["last_control_center_decision"] = decision
-    state.metadata["last_governance_attention"] = mission_cycle.get("governance_attention", {}) or {}
+    state.metadata["last_governance_attention"] = governance_attention
     state.metadata["last_project_control"] = (((mission_cycle.get("context_packet", {}) or {}).get("governance", {}) or {}).get("project_control", {}) or {})
     if not decision.get("auto_safe", False):
         state.last_update_at = utc_now_iso()
         save_state(state)
         return None
     if action == "await_project_crawler_remediation":
-        governance_attention = mission_cycle.get("governance_attention", {}) or {}
         project_gate = decision.get("project_gate", {}) or {}
         state.status = "blocked"
         state.next_action = "await_project_crawler_remediation"
@@ -753,6 +754,11 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "recommended_project_actions": list(project_gate.get("recommended_project_actions", []) or []),
             "attention_sites": list(project_gate.get("attention_sites", []) or []),
         }
+        state.metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
+            next_action=state.next_action,
+            blockers=state.blockers,
+            governance_attention=governance_attention,
+        )
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(
@@ -774,6 +780,11 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
     if action == "await_or_request_approval":
         state.status = "blocked"
         state.next_action = "await_approval_or_contract_fix"
+        state.metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
+            next_action=state.next_action,
+            blockers=state.blockers,
+            governance_attention=governance_attention,
+        )
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(task_id, "control_center_waiting_for_approval", pending=decision.get("pending_approvals", []))
@@ -783,12 +794,17 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "current_stage": state.current_stage,
             "next_action": state.next_action,
             "action": "awaiting_approval_by_control_center",
-            "governance_attention": mission_cycle.get("governance_attention", {}) or {},
+            "governance_attention": governance_attention,
             "mission_cycle": mission_cycle,
         }
     if action == "bind_session_link":
         state.status = "blocked"
         state.next_action = "bind_session_link"
+        state.metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
+            next_action=state.next_action,
+            blockers=state.blockers,
+            governance_attention=governance_attention,
+        )
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(task_id, "control_center_binding_required")
@@ -798,13 +814,18 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "current_stage": state.current_stage,
             "next_action": state.next_action,
             "action": "awaiting_session_binding",
-            "governance_attention": mission_cycle.get("governance_attention", {}) or {},
+            "governance_attention": governance_attention,
             "mission_cycle": mission_cycle,
         }
     if action == "prove_necessity_before_switching":
         state.status = "blocked"
         state.next_action = "prove_necessity_before_switching"
         state.blockers = ["higher-risk plan not yet justified"]
+        state.metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
+            next_action=state.next_action,
+            blockers=state.blockers,
+            governance_attention=governance_attention,
+        )
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(task_id, "control_center_requires_necessity_proof", necessity=mission_cycle.get("necessity_proof", {}))
@@ -814,13 +835,18 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "current_stage": state.current_stage,
             "next_action": state.next_action,
             "action": "awaiting_necessity_proof",
-            "governance_attention": mission_cycle.get("governance_attention", {}) or {},
+            "governance_attention": governance_attention,
             "mission_cycle": mission_cycle,
         }
     if action == "request_authorized_session":
         state.status = "blocked"
         state.next_action = "request_authorized_session"
         state.blockers = ["authorized session is required before compliant continuation"]
+        state.metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
+            next_action=state.next_action,
+            blockers=state.blockers,
+            governance_attention=governance_attention,
+        )
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(task_id, "control_center_requires_authorized_session", session_plan=mission_cycle.get("authorized_session", {}))
@@ -830,13 +856,18 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "current_stage": state.current_stage,
             "next_action": state.next_action,
             "action": "awaiting_authorized_session",
-            "governance_attention": mission_cycle.get("governance_attention", {}) or {},
+            "governance_attention": governance_attention,
             "mission_cycle": mission_cycle,
         }
     if action == "await_relay_attach_checkpoint":
         state.status = "blocked"
         state.next_action = "await_relay_attach_checkpoint"
         state.blockers = ["chrome-relay has no attached tabs; re-attach the relay badge on the target seller.neosgo tab before continuation"]
+        state.metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
+            next_action=state.next_action,
+            blockers=state.blockers,
+            governance_attention=governance_attention,
+        )
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(task_id, "control_center_requires_relay_attach_checkpoint")
@@ -846,13 +877,18 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "current_stage": state.current_stage,
             "next_action": state.next_action,
             "action": "awaiting_relay_attach_checkpoint",
-            "governance_attention": mission_cycle.get("governance_attention", {}) or {},
+            "governance_attention": governance_attention,
             "mission_cycle": mission_cycle,
         }
     if action == "await_human_verification_checkpoint":
         state.status = "blocked"
         state.next_action = "await_human_verification_checkpoint"
         state.blockers = ["human verification checkpoint must be completed before continuation"]
+        state.metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
+            next_action=state.next_action,
+            blockers=state.blockers,
+            governance_attention=governance_attention,
+        )
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(task_id, "control_center_requires_human_checkpoint", checkpoint=mission_cycle.get("human_checkpoint", {}))
@@ -862,7 +898,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "current_stage": state.current_stage,
             "next_action": state.next_action,
             "action": "awaiting_human_checkpoint",
-            "governance_attention": mission_cycle.get("governance_attention", {}) or {},
+            "governance_attention": governance_attention,
             "mission_cycle": mission_cycle,
         }
     if action in {
@@ -905,6 +941,11 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "repair_form_validation_then_retry_submit": "invalid form fields must be repaired before submit can succeed",
         }
         state.blockers = [blocker_map[action]]
+        state.metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
+            next_action=state.next_action,
+            blockers=state.blockers,
+            governance_attention=governance_attention,
+        )
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(task_id, "control_center_targeted_debug_required", action=action, diagnosis=mission_cycle.get("browser_signals", {}).get("diagnosis", ""))
@@ -1249,6 +1290,14 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
             }
 
     if state.status == "blocked":
+        blocked_runtime_state = classify_blocked_runtime_state(
+            next_action=state.next_action,
+            blockers=state.blockers,
+            governance_attention=state.metadata.get("last_governance_attention", {}) or {},
+        )
+        state.metadata["blocked_runtime_state"] = blocked_runtime_state
+        state.last_update_at = utc_now_iso()
+        save_state(state)
         if state.next_action == "await_project_crawler_remediation":
             return {
                 "task_id": task_id,
@@ -1258,6 +1307,7 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
                 "action": "awaiting_project_crawler_remediation",
                 "governance_attention": state.metadata.get("last_governance_attention", {}) or {},
                 "project_gate": state.metadata.get("project_crawler_gate", {}) or {},
+                "blocked_runtime_state": blocked_runtime_state,
                 "mission_cycle": mission_cycle,
             }
         return {
@@ -1265,7 +1315,8 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
             "status": state.status,
             "current_stage": state.current_stage,
             "next_action": state.next_action,
-            "action": "blocked_waiting_for_targeted_fix",
+            "action": str(blocked_runtime_state.get("response_action", "blocked_waiting_for_targeted_fix")),
+            "blocked_runtime_state": blocked_runtime_state,
             "mission_cycle": mission_cycle,
         }
 
@@ -1287,6 +1338,11 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
             if statuses & {"approval_required", "approval_pending"}:
                 state.status = "blocked"
                 state.next_action = "await_approval_or_contract_fix"
+                state.metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
+                    next_action=state.next_action,
+                    blockers=state.blockers,
+                    governance_attention=state.metadata.get("last_governance_attention", {}) or {},
+                )
                 state.last_update_at = utc_now_iso()
                 save_state(state)
                 log_event(task_id, "preflight_block_requires_review", next_action=state.next_action, pending_ids=details["pending_ids"])
