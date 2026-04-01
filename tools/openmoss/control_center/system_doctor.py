@@ -300,7 +300,20 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
         escalation_after_seconds=max(300, escalation_after_seconds),
     )
     reports = []
-    doctor_items = control_plane.get("doctor_queue", {}).get("items", [])
+    doctor_items = list(control_plane.get("doctor_queue", {}).get("items", []) or [])
+    blocked_summary = ((control_plane.get("system_snapshot", {}) or {}).get("summary", {}) or {}).get("blocked_categories", {}) or {}
+    doctor_strategy = {
+        "top_blocked_category": ((control_plane.get("system_snapshot", {}) or {}).get("summary", {}) or {}).get("top_blocked_category", ""),
+        "blocked_categories": blocked_summary,
+        "priority_focus": "general",
+    }
+    top_blocked_category = str(doctor_strategy.get("top_blocked_category", "")).strip()
+    if top_blocked_category in {"project_crawler_remediation", "approval_or_contract", "authorized_session", "human_checkpoint"}:
+        doctor_strategy["priority_focus"] = "governance_blockers"
+    elif top_blocked_category in {"targeted_fix", "runtime_failure", "runtime_or_contract_fix"}:
+        doctor_strategy["priority_focus"] = "repair_blockers"
+    elif top_blocked_category in {"session_binding", "relay_attach"}:
+        doctor_strategy["priority_focus"] = "linkage_blockers"
     seen_task_ids = set()
     # doctor_queue 是 control plane 给医生的统一待办清单；
     # 医生不再自己到处翻日志，而是集中读这份汇总视图。
@@ -332,6 +345,11 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
         save_state(state)
         report = {"diagnosis": diagnosis, "repair": repair}
         report["memory_writeback"] = writeback
+        report["priority"] = {
+            "score": int(item.get("priority_score", 0) or 0),
+            "bucket": str(item.get("priority_bucket", "")).strip() or "unknown",
+            "reason": str(item.get("priority_reason", "")).strip() or "unknown",
+        }
         if diagnosis.get("stuck"):
             report["governance"] = (build_task_status_snapshot(task_id).get("governance", {}) or {})
         if diagnosis.get("stuck") and diagnosis.get("idle_seconds", 0) >= escalation_after_seconds:
@@ -397,6 +415,7 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
             "remediation_plan": (control_plane.get("crawler_remediation_plan", {}).get("items", []) or [])[:6],
             "remediation_execution": (control_plane.get("crawler_remediation_execution", {}).get("items", []) or [])[:6],
         },
+        "doctor_strategy": doctor_strategy,
         "reports": reports,
         "mission_supervisor": supervisor,
     }

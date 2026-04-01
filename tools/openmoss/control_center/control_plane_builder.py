@@ -223,6 +223,60 @@ def _normalized_blocked_runtime_state(state: Dict[str, Any]) -> Dict[str, Any]:
     return inferred
 
 
+def _doctor_priority_for_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
+    blocked = (entry.get("blocked_runtime_state", {}) or {}) if isinstance(entry, dict) else {}
+    category = str(blocked.get("category", "")).strip() or "unknown"
+    reason = str(entry.get("reason", "")).strip()
+    status = str(entry.get("status", "")).strip()
+    idle_seconds = float(entry.get("idle_seconds", 0) or 0)
+    base_scores = {
+        "project_crawler_remediation": 100,
+        "approval_or_contract": 95,
+        "authorized_session": 90,
+        "human_checkpoint": 88,
+        "runtime_or_contract_fix": 82,
+        "runtime_failure": 80,
+        "targeted_fix": 72,
+        "necessity_proof": 66,
+        "relay_attach": 60,
+        "session_binding": 42,
+        "unknown": 50,
+    }
+    score = int(base_scores.get(category, 50))
+    if reason == "terminal_failure_requires_takeover":
+        score = max(score, 110)
+    elif reason == "latest_user_goal_mismatch_with_bound_task":
+        score = max(score, 105)
+    elif status == "failed":
+        score = max(score, 108)
+    elif status == "blocked" and category in {"project_crawler_remediation", "approval_or_contract"}:
+        score += 6
+    if idle_seconds >= 3600:
+        score += 8
+    elif idle_seconds >= 900:
+        score += 4
+    bucket = "low"
+    if score >= 95:
+        bucket = "critical"
+    elif score >= 80:
+        bucket = "high"
+    elif score >= 60:
+        bucket = "medium"
+    priority_reason = category
+    if category == "unknown" and reason:
+        if reason == "latest_user_goal_mismatch_with_bound_task":
+            priority_reason = "goal_mismatch"
+        elif reason == "terminal_failure_requires_takeover":
+            priority_reason = "terminal_failure"
+        else:
+            priority_reason = reason
+    return {
+        "priority_score": score,
+        "priority_bucket": bucket,
+        "priority_reason": priority_reason or "unknown",
+    }
+
+
 def build_task_registry(*, stale_after_seconds: int = 300, escalation_after_seconds: int = 900) -> Dict[str, Any]:
     """
     中文注解：
@@ -296,9 +350,25 @@ def build_task_registry(*, stale_after_seconds: int = 300, escalation_after_seco
                     "idle_seconds": entry["idle_seconds"],
                     "goal_conformance": entry.get("goal_conformance", {}),
                 }
+                doctor_entry.update(_doctor_priority_for_entry(doctor_entry))
                 doctor_queue.append(doctor_entry)
                 if entry["idle_seconds"] >= escalation_after_seconds:
                     alerts.append({**doctor_entry, "severity": "high", "escalated": True})
+
+    doctor_queue.sort(
+        key=lambda item: (
+            -int(item.get("priority_score", 0) or 0),
+            -float(item.get("idle_seconds", 0) or 0),
+            str(item.get("task_id", "")),
+        )
+    )
+    alerts.sort(
+        key=lambda item: (
+            -int(item.get("priority_score", 0) or 0),
+            -float(item.get("idle_seconds", 0) or 0),
+            str(item.get("task_id", "")),
+        )
+    )
 
     task_registry = {
         "generated_at": _utc_now_iso(),
