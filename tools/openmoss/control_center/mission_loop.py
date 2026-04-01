@@ -215,6 +215,85 @@ def _governance_attention(context_packet: Dict[str, object]) -> Dict[str, object
     }
 
 
+def _task_depends_on_external_crawling(mission: Dict[str, object], context_packet: Dict[str, object]) -> bool:
+    intent = mission.get("intent", {}) or {}
+    if any(bool(intent.get(key)) for key in ("requires_external_information", "needs_browser")):
+        return True
+    task_types = {str(item).strip().lower() for item in (intent.get("task_types", []) or []) if str(item).strip()}
+    if task_types & {"marketplace", "web", "research", "crawler", "browser"}:
+        return True
+    allowed_tools = {str(item).strip().lower() for item in (context_packet.get("allowed_tools", []) or []) if str(item).strip()}
+    external_tools = {
+        "web",
+        "search",
+        "crawl4ai",
+        "browser",
+        "agent-browser",
+        "playwright",
+        "playwright_stealth",
+        "httpx",
+        "curl_cffi",
+        "scrapy",
+        "selectolax",
+    }
+    return bool(allowed_tools & external_tools)
+
+
+def _project_crawler_gate_decision(
+    mission: Dict[str, object],
+    context_packet: Dict[str, object],
+    governance_attention: Dict[str, object],
+    current_stage: str,
+) -> Dict[str, object] | None:
+    if current_stage not in {"understand", "execute", "verify"}:
+        return None
+    if not _task_depends_on_external_crawling(mission, context_packet):
+        return None
+    governance = (context_packet.get("governance", {}) or {}) if isinstance(context_packet, dict) else {}
+    crawler_project = (governance.get("crawler_project", {}) or {}) if isinstance(governance, dict) else {}
+    fetch_route = mission.get("fetch_route", {}) or {}
+    route_ladder = [str(item).strip() for item in (fetch_route.get("route_ladder", []) or []) if str(item).strip()]
+    current_route = str(fetch_route.get("current_route", "")).strip()
+    high_risk_route = current_route in {"authorized_session", "human_checkpoint"} or (
+        route_ladder and route_ladder[0] in {"authorized_session", "human_checkpoint"}
+    )
+    health_status = str(governance_attention.get("crawler_health_status", "")).strip().lower()
+    feedback_status = str(governance_attention.get("project_feedback_status", "")).strip().lower()
+    scheduler_modes = governance_attention.get("scheduler_modes", {}) or {}
+    remediation_mode = str(scheduler_modes.get("crawler_remediation", "")).strip().lower()
+    attention_sites = list(crawler_project.get("attention_sites", []) or [])
+    recommended_actions = [str(item) for item in (crawler_project.get("recommended_project_actions", []) or []) if str(item).strip()]
+    if health_status == "critical" and attention_sites:
+        return {
+            "action": "await_project_crawler_remediation",
+            "reason": "project-level crawler health is critical for an externally dependent task, so execution should wait for remediation instead of forcing a fragile route",
+            "auto_safe": True,
+            "project_gate": {
+                "health_status": health_status,
+                "feedback_status": feedback_status,
+                "remediation_mode": remediation_mode,
+                "current_route": current_route,
+                "attention_sites": attention_sites[:3],
+                "recommended_project_actions": recommended_actions[:3],
+            },
+        }
+    if feedback_status == "thin" and remediation_mode == "aggressive" and (attention_sites or high_risk_route):
+        return {
+            "action": "await_project_crawler_remediation",
+            "reason": "project feedback coverage is still thin while remediation is in aggressive mode, so the task should pause before spending more effort on a low-confidence external route",
+            "auto_safe": True,
+            "project_gate": {
+                "health_status": health_status or "unknown",
+                "feedback_status": feedback_status,
+                "remediation_mode": remediation_mode,
+                "current_route": current_route,
+                "attention_sites": attention_sites[:3],
+                "recommended_project_actions": recommended_actions[:3],
+            },
+        }
+    return None
+
+
 def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str, object]) -> Dict[str, object]:
     """
     中文注解：
@@ -270,6 +349,7 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
     necessity_proof = mission.get("arbitration", {}).get("necessity_proof", {})
     governance_attention = _governance_attention(context_packet)
     permission_status = str(governance_attention.get("permission_overall_status", "")).strip()
+    project_crawler_gate = _project_crawler_gate_decision(mission, context_packet, governance_attention, current_stage)
     # 下面这段分支就是 mission loop 最关键的输出：`next_decision`。
     # 它并不直接改 state，而是先表达“控制中心建议接下来怎么做”，
     # 然后 runtime_service 再依据这个建议去改变状态或触发执行。
@@ -296,6 +376,8 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
             "reason": "this task now requires an isolated approved authorized session",
             "auto_safe": True,
         }
+    elif project_crawler_gate:
+        next_decision = project_crawler_gate
     elif current_stage and state.get("status") == "blocked" and state.get("next_action") == "await_approval_or_contract_fix" and not pending_approvals:
         next_decision = {
             "action": f"advance_stage:{current_stage}",

@@ -734,6 +734,43 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
         state.last_update_at = utc_now_iso()
         save_state(state)
         return None
+    if action == "await_project_crawler_remediation":
+        governance_attention = mission_cycle.get("governance_attention", {}) or {}
+        project_gate = decision.get("project_gate", {}) or {}
+        state.status = "blocked"
+        state.next_action = "await_project_crawler_remediation"
+        attention_sites = [str((item or {}).get("site", "")).strip() for item in (project_gate.get("attention_sites", []) or []) if str((item or {}).get("site", "")).strip()]
+        blocker = "project-level crawler remediation is required before this external task can continue safely"
+        if attention_sites:
+            blocker = f"{blocker}: {', '.join(attention_sites[:3])}"
+        state.blockers = [blocker]
+        state.metadata["project_crawler_gate"] = {
+            "reason": str(decision.get("reason", "")).strip(),
+            "health_status": str(project_gate.get("health_status", "")).strip(),
+            "feedback_status": str(project_gate.get("feedback_status", "")).strip(),
+            "remediation_mode": str(project_gate.get("remediation_mode", "")).strip(),
+            "current_route": str(project_gate.get("current_route", "")).strip(),
+            "recommended_project_actions": list(project_gate.get("recommended_project_actions", []) or []),
+            "attention_sites": list(project_gate.get("attention_sites", []) or []),
+        }
+        state.last_update_at = utc_now_iso()
+        save_state(state)
+        log_event(
+            task_id,
+            "control_center_waiting_for_project_crawler_remediation",
+            project_gate=project_gate,
+            governance_attention=governance_attention,
+        )
+        return {
+            "task_id": task_id,
+            "status": state.status,
+            "current_stage": state.current_stage,
+            "next_action": state.next_action,
+            "action": "awaiting_project_crawler_remediation",
+            "governance_attention": governance_attention,
+            "project_gate": project_gate,
+            "mission_cycle": mission_cycle,
+        }
     if action == "await_or_request_approval":
         state.status = "blocked"
         state.next_action = "await_approval_or_contract_fix"
@@ -1212,6 +1249,17 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
             }
 
     if state.status == "blocked":
+        if state.next_action == "await_project_crawler_remediation":
+            return {
+                "task_id": task_id,
+                "status": state.status,
+                "current_stage": state.current_stage,
+                "next_action": state.next_action,
+                "action": "awaiting_project_crawler_remediation",
+                "governance_attention": state.metadata.get("last_governance_attention", {}) or {},
+                "project_gate": state.metadata.get("project_crawler_gate", {}) or {},
+                "mission_cycle": mission_cycle,
+            }
         return {
             "task_id": task_id,
             "status": state.status,
