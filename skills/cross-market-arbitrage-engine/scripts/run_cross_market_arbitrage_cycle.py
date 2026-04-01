@@ -352,6 +352,28 @@ def _write_scheduler_state(payload: dict[str, Any]) -> None:
     _write_json_file(CROSS_MARKET_ARBITRAGE_SCHEDULER_STATE_PATH, payload)
 
 
+def _execution_flags_from_scheduler_policy(scheduler_policy: dict[str, Any] | None) -> dict[str, bool]:
+    scheduler_policy = scheduler_policy or {}
+    repair_mode = str(scheduler_policy.get("repair_mode", "")).strip()
+    start_tasks = bool(scheduler_policy.get("start_tasks", True))
+    flags = {
+        "allow_discovery": start_tasks,
+        "allow_match": start_tasks,
+        "allow_report": True,
+    }
+    if not start_tasks:
+        flags["allow_discovery"] = False
+        flags["allow_match"] = False
+        return flags
+    if repair_mode == "crawler_hold":
+        flags["allow_discovery"] = False
+        flags["allow_match"] = False
+    elif repair_mode == "repair_observe":
+        flags["allow_discovery"] = False
+        flags["allow_match"] = True
+    return flags
+
+
 def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "item"
 
@@ -1771,6 +1793,7 @@ def run_daemon() -> int:
         state = _load_state()
         scheduler_policy = _load_scheduler_policy()
         scheduler_state = _load_scheduler_state()
+        execution_flags = _execution_flags_from_scheduler_policy(scheduler_policy)
         discovery_interval = int(scheduler_policy.get("discovery_interval_seconds", DISCOVERY_INTERVAL_SECONDS) or DISCOVERY_INTERVAL_SECONDS)
         matching_interval = int(scheduler_policy.get("matching_interval_seconds", MATCH_INTERVAL_SECONDS) or MATCH_INTERVAL_SECONDS)
         report_hour = int(scheduler_policy.get("report_hour_new_york", REPORT_HOUR) or REPORT_HOUR)
@@ -1779,17 +1802,17 @@ def run_daemon() -> int:
         effective_discovery = False
         effective_match = False
         effective_report = False
-        if bool(scheduler_policy.get("start_tasks", True)) and _discovery_due(state, interval_seconds=discovery_interval):
+        if execution_flags["allow_discovery"] and _discovery_due(state, interval_seconds=discovery_interval):
             state, _, _ = _discover_cycle(state, test=False)
             changed = True
             effective_discovery = True
-        if bool(scheduler_policy.get("start_tasks", True)) and _match_due(state, interval_seconds=matching_interval):
+        if execution_flags["allow_match"] and _match_due(state, interval_seconds=matching_interval):
             state, _, _ = _match_cycle(state, test=False)
             changed = True
             effective_match = True
         if changed:
             _save_state(state)
-        if _report_due(state, report_hour=report_hour):
+        if execution_flags["allow_report"] and _report_due(state, report_hour=report_hour):
             _report_cycle(
                 state,
                 chat_id=os.environ.get("CROSS_MARKET_TELEGRAM_CHAT", DEFAULT_TELEGRAM_TARGET),
@@ -1800,10 +1823,15 @@ def run_daemon() -> int:
         scheduler_state_after = {
             "updated_at": _utc_now_iso(),
             "last_mode": scheduler_policy.get("recommended_mode", ""),
+            "last_repair_focus": str(scheduler_policy.get("repair_focus", "")).strip(),
+            "last_repair_mode": str(scheduler_policy.get("repair_mode", "")).strip(),
             "loop_sleep_seconds": loop_sleep_seconds,
             "discovery_interval_seconds": discovery_interval,
             "matching_interval_seconds": matching_interval,
             "report_hour_new_york": report_hour,
+            "last_allow_discovery": execution_flags["allow_discovery"],
+            "last_allow_match": execution_flags["allow_match"],
+            "last_allow_report": execution_flags["allow_report"],
             "last_effective_discovery": effective_discovery,
             "last_effective_match": effective_match,
             "last_effective_report": effective_report,
@@ -1827,18 +1855,25 @@ def main() -> int:
         return run_daemon()
     scheduler_policy = _load_scheduler_policy()
     scheduler_state_before = _load_scheduler_state()
+    execution_flags = _execution_flags_from_scheduler_policy(scheduler_policy)
     if not args.force and scheduler_policy and not bool(scheduler_policy.get("start_tasks", True)):
         payload = {
             "ran": False,
             "reason": "scheduler_policy_start_tasks_false",
             "scheduler_policy": scheduler_policy,
+            "execution_flags": execution_flags,
             "scheduler_state_before": scheduler_state_before,
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
     state = _load_state()
-    state, _, discover_log = _discover_cycle(state, test=args.test)
-    state, decisions, match_log = _match_cycle(state, test=args.test)
+    discover_log = []
+    match_log = []
+    decisions = []
+    if execution_flags["allow_discovery"]:
+        state, _, discover_log = _discover_cycle(state, test=args.test)
+    if execution_flags["allow_match"]:
+        state, decisions, match_log = _match_cycle(state, test=args.test)
     _save_state(state)
     payload = _report_cycle(
         state,
@@ -1849,19 +1884,25 @@ def main() -> int:
     payload["fetch_log_count"] = len(discover_log) + len(match_log)
     payload["qualified_preview"] = [asdict(item) for item in decisions if item.qualified][:3]
     payload["scheduler_policy"] = scheduler_policy
+    payload["execution_flags"] = execution_flags
     payload["scheduler_state_before"] = scheduler_state_before
     scheduler_state_after = {
         "updated_at": _utc_now_iso(),
         "last_mode": scheduler_policy.get("recommended_mode", ""),
+        "last_repair_focus": str(scheduler_policy.get("repair_focus", "")).strip(),
+        "last_repair_mode": str(scheduler_policy.get("repair_mode", "")).strip(),
         "loop_sleep_seconds": int(scheduler_policy.get("loop_sleep_seconds", 300) or 300),
         "discovery_interval_seconds": int(scheduler_policy.get("discovery_interval_seconds", DISCOVERY_INTERVAL_SECONDS) or DISCOVERY_INTERVAL_SECONDS),
         "matching_interval_seconds": int(scheduler_policy.get("matching_interval_seconds", MATCH_INTERVAL_SECONDS) or MATCH_INTERVAL_SECONDS),
         "report_hour_new_york": int(scheduler_policy.get("report_hour_new_york", REPORT_HOUR) or REPORT_HOUR),
-        "last_effective_discovery": True,
-        "last_effective_match": True,
+        "last_allow_discovery": execution_flags["allow_discovery"],
+        "last_allow_match": execution_flags["allow_match"],
+        "last_allow_report": execution_flags["allow_report"],
+        "last_effective_discovery": execution_flags["allow_discovery"],
+        "last_effective_match": execution_flags["allow_match"],
         "last_effective_report": True,
-        "last_discovery_started_at": _utc_now_iso(),
-        "last_match_started_at": _utc_now_iso(),
+        "last_discovery_started_at": _utc_now_iso() if execution_flags["allow_discovery"] else scheduler_state_before.get("last_discovery_started_at", ""),
+        "last_match_started_at": _utc_now_iso() if execution_flags["allow_match"] else scheduler_state_before.get("last_match_started_at", ""),
         "last_report_started_at": _utc_now_iso(),
     }
     payload["scheduler_state_after"] = scheduler_state_after

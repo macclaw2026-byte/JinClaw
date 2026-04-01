@@ -26,6 +26,7 @@ from memory_writeback_runtime import summarize_project_memory_writebacks
 from project_scheduler_policy import build_project_scheduler_policy
 from paths import (
     ALERTS_PATH,
+    DOCTOR_LAST_RUN_PATH,
     CROSS_MARKET_ARBITRAGE_SCHEDULER_STATE_PATH,
     CRAWLER_CAPABILITY_PROFILE_PATH,
     CRAWLER_REMEDIATION_EXECUTION_PATH,
@@ -442,6 +443,10 @@ def _blocked_category_counts(task_items: List[Dict[str, Any]]) -> Dict[str, int]
     return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
+def _load_doctor_last_run() -> Dict[str, Any]:
+    return _read_json(DOCTOR_LAST_RUN_PATH, {}) or {}
+
+
 def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seconds: int = 900) -> Dict[str, Any]:
     """
     中文注解：
@@ -458,6 +463,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
     crawler_remediation_scheduler_state = _load_crawler_remediation_scheduler_state()
     seller_bulk_scheduler_state = _load_seller_bulk_scheduler_state()
     cross_market_arbitrage_scheduler_state = _load_cross_market_arbitrage_scheduler_state()
+    doctor_last_run = _load_doctor_last_run()
     task_views = build_task_registry(
         stale_after_seconds=stale_after_seconds,
         escalation_after_seconds=escalation_after_seconds,
@@ -465,6 +471,12 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
     task_items = task_views["task_registry"].get("items", []) or []
     blocked_category_counts = _blocked_category_counts(task_items)
     top_blocked_category = next(iter(blocked_category_counts), "")
+    doctor_cycle_stats = (doctor_last_run.get("doctor_cycle_stats", {}) or {}) if isinstance(doctor_last_run, dict) else {}
+    doctor_strategy = (doctor_last_run.get("doctor_strategy", {}) or {}) if isinstance(doctor_last_run, dict) else {}
+    processed_total = int(doctor_cycle_stats.get("processed_total", 0) or 0)
+    skipped_total = int(doctor_cycle_stats.get("skipped_total", 0) or 0)
+    attempted_total = processed_total + skipped_total
+    recovery_efficiency_ratio = round((processed_total / attempted_total), 4) if attempted_total > 0 else 0.0
     snapshot = {
         "generated_at": _utc_now_iso(),
         "process_registry_path": process_registry.get("path"),
@@ -494,6 +506,11 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
             "seller_bulk_last_mode": seller_bulk_scheduler_state.get("last_mode", ""),
             "cross_market_arbitrage_last_mode": cross_market_arbitrage_scheduler_state.get("last_mode", ""),
             "memory_writeback_tasks_total": memory_writeback_overview.get("tasks_total", 0),
+            "doctor_priority_focus": str(doctor_strategy.get("priority_focus", "")).strip() or "unknown",
+            "doctor_repair_mode": str(doctor_strategy.get("repair_mode", "")).strip() or "unknown",
+            "doctor_processed_total": processed_total,
+            "doctor_skipped_total": skipped_total,
+            "recovery_efficiency_ratio": recovery_efficiency_ratio,
             "tasks_total": len(task_items),
             "blocked_total": sum(1 for item in task_items if item.get("status") == "blocked"),
             "blocked_project_crawler_remediation_total": blocked_category_counts.get("project_crawler_remediation", 0),
@@ -530,6 +547,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
         "crawler_remediation_scheduler_state": crawler_remediation_scheduler_state,
         "seller_bulk_scheduler_state": seller_bulk_scheduler_state,
         "cross_market_arbitrage_scheduler_state": cross_market_arbitrage_scheduler_state,
+        "doctor_last_run": doctor_last_run,
         "project_scheduler_policy": project_scheduler_policy,
         **task_views,
         "system_snapshot": snapshot,
