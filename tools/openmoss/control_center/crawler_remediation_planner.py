@@ -69,10 +69,25 @@ def _priority_from_execution_feedback(priority: str, execution_feedback: Dict[st
     return priority, ""
 
 
+def _priority_from_project_feedback(priority: str, profile_feedback: Dict[str, Any], action: str, site: str) -> tuple[str, str]:
+    coverage_status = str((profile_feedback or {}).get("coverage_status", "")).strip().lower()
+    has_crawler_feedback = bool((profile_feedback or {}).get("has_crawler_feedback"))
+    has_seller_feedback = bool((profile_feedback or {}).get("has_seller_feedback"))
+    recent_sources = {str(item).strip() for item in (profile_feedback or {}).get("recent_project_sources", []) if str(item).strip()}
+    if action == "stabilize_site_profile" and not has_crawler_feedback:
+        return "high", f"{site or 'project'} lacks recent crawler feedback"
+    if action == "improve_structured_field_coverage" and coverage_status in {"thin", "partial"}:
+        return "high", "project feedback coverage is not strong enough for field coverage confidence"
+    if action == "improve_structured_field_coverage" and has_seller_feedback and "seller_bulk_cycle" in recent_sources:
+        return "medium", "seller project feedback is active; keep field coverage upgrade warm"
+    return priority, ""
+
+
 def _plan_for_action(
     item: Dict[str, Any],
     site_map: Dict[str, Dict[str, Any]],
     execution_feedback: Dict[str, Any],
+    profile_feedback: Dict[str, Any],
 ) -> Dict[str, Any]:
     site = str(item.get("site", "")).strip().lower()
     action = str(item.get("action", "")).strip()
@@ -83,6 +98,15 @@ def _plan_for_action(
         str(item.get("priority", "medium")),
         execution_feedback,
     )
+    feedback_priority, feedback_reason = _priority_from_project_feedback(
+        effective_priority,
+        profile_feedback,
+        action,
+        site,
+    )
+    if feedback_priority != effective_priority or feedback_reason:
+        effective_priority = feedback_priority
+        priority_reason = "; ".join([part for part in [priority_reason, feedback_reason] if part]).strip()
     if action == "stabilize_site_profile":
         return {
             "id": item.get("id", ""),
@@ -145,6 +169,7 @@ def build_crawler_remediation_plan() -> Dict[str, Any]:
     profile = _read_json(CRAWLER_CAPABILITY_PROFILE_PATH, {}) or {}
     execution_feedback_map = _execution_feedback_map()
     sites = profile.get("sites", []) or []
+    profile_feedback = profile.get("feedback", {}) or {}
     site_map = {
         str(site.get("site", "")).strip().lower(): site
         for site in sites
@@ -155,6 +180,7 @@ def build_crawler_remediation_plan() -> Dict[str, Any]:
             item,
             site_map,
             execution_feedback_map.get(str(item.get("id", "")).strip(), {}),
+            profile_feedback,
         )
         for item in (queue.get("items", []) or [])
     ]

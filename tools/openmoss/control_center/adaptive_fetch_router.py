@@ -66,6 +66,7 @@ def _tool_to_route(tool_name: str) -> str:
 def _apply_crawler_profile_guidance(ladder: List[str], intent: Dict[str, object]) -> Dict[str, object]:
     profile = build_crawler_capability_profile()
     sites = profile.get("sites", []) or []
+    feedback = profile.get("feedback", {}) or {}
     requested_sites = _requested_sites(intent)
     relevant = [
         site for site in sites if str(site.get("site", "")).strip().lower() in set(requested_sites)
@@ -74,9 +75,17 @@ def _apply_crawler_profile_guidance(ladder: List[str], intent: Dict[str, object]
         "requested_sites": requested_sites,
         "relevant_sites": [],
         "project_summary": profile.get("summary", {}) or {},
+        "project_feedback": feedback,
         "route_overrides": [],
     }
     adjusted = list(ladder)
+    coverage_status = str(feedback.get("coverage_status", "")).strip().lower()
+    if coverage_status == "thin":
+        adjusted = [item for item in ["official_api", "structured_public_endpoint", *adjusted, "human_checkpoint"] if item]
+        guidance["route_overrides"].append("project:feedback_thin:prefer_low_risk_routes")
+    elif coverage_status == "partial" and "structured_public_endpoint" in adjusted:
+        adjusted = ["structured_public_endpoint"] + [item for item in adjusted if item != "structured_public_endpoint"]
+        guidance["route_overrides"].append("project:feedback_partial:prefer_structured_endpoint")
     for site in relevant:
         site_name = str(site.get("site", "")).strip().lower()
         selected_tool = str(site.get("selected_tool", "")).strip()

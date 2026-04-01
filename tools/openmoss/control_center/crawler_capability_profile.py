@@ -228,6 +228,11 @@ def _build_feedback_summary(overview: Dict[str, Any]) -> Dict[str, Any]:
             recent_project_sources.append(source)
     has_crawler_feedback = bool(source_counts.get("crawler_remediation_cycle"))
     has_seller_feedback = bool(source_counts.get("seller_bulk_cycle"))
+    if not recent_project_sources:
+        if has_seller_feedback:
+            recent_project_sources.append("seller_bulk_cycle")
+        if has_crawler_feedback:
+            recent_project_sources.append("crawler_remediation_cycle")
     coverage_status = "strong"
     if not has_crawler_feedback and not has_seller_feedback:
         coverage_status = "thin"

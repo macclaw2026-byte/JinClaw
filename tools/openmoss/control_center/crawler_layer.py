@@ -78,6 +78,7 @@ def _project_site_constraints(requested_sites: List[str]) -> Dict[str, object]:
     attention_sites = [site for site in relevant if site.get("readiness") != "production_ready"]
     return {
         "summary": profile.get("summary", {}) or {},
+        "feedback": profile.get("feedback", {}) or {},
         "relevant_sites": relevant,
         "attention_sites": attention_sites,
         "recommended_project_actions": profile.get("recommended_project_actions", []) or [],
@@ -211,12 +212,25 @@ def _score_stack(stack: Dict[str, object], requirements: Dict[str, object], site
                 rationale.append(f"{site.get('site', '')} 的 Playwright 路线当前已知受阻")
 
     summary = site_constraints.get("summary", {}) or {}
+    feedback = site_constraints.get("feedback", {}) or {}
+    coverage_status = str(feedback.get("coverage_status", "")).strip().lower()
     if float(summary.get("width_score", 0) or 0) < 60 and stack_id == "official_api":
         score += 1
         rationale.append("全局抓取宽度偏低时，先保守尝试官方/结构化入口")
     if float(summary.get("depth_score", 0) or 0) < 50 and stack_id == "authorized_session":
         score += 2
         rationale.append("全局抓取深度偏低时，授权态更可能补齐关键字段")
+    if coverage_status == "thin":
+        if stack_id in {"official_api", "http_static", "crawl4ai_extract"}:
+            score += 2
+            rationale.append("项目反馈覆盖偏薄时，优先保留可验证的低风险抓取链")
+        if stack_id in {"playwright_stealth", "authorized_session"}:
+            score -= 2
+            rationale.append("项目反馈覆盖偏薄时，暂缓过早升级高成本抓取链")
+    elif coverage_status == "strong":
+        if stack_id in {"authorized_session", "playwright_stealth"} and requirements.get("anti_bot_hint"):
+            score += 1
+            rationale.append("项目反馈覆盖稳定，可更积极利用高能力抓取链")
 
     return {
         "stack_id": stack_id,
@@ -257,6 +271,7 @@ def build_crawler_plan(
         "requested_sites": requested_sites,
         "requested_tools": requested_tools,
         "project_site_constraints": site_constraints,
+        "project_feedback": site_constraints.get("feedback", {}) or {},
         "selected_stack": selected,
         "fallback_stacks": [item.get("stack_id", "") for item in ranked[1:4]],
         "scores": ranked,
