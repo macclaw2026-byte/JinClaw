@@ -200,6 +200,21 @@ def _hook_next_actions(event_result: Dict[str, object]) -> list[str]:
     return list((summarize_hook_effects(event_result) or {}).get("next_actions", []) or [])
 
 
+def _governance_attention(context_packet: Dict[str, object]) -> Dict[str, object]:
+    governance = (context_packet.get("governance", {}) or {}) if isinstance(context_packet, dict) else {}
+    permission = (governance.get("permission_decision", {}) or {}) if isinstance(governance, dict) else {}
+    crawler_project = (governance.get("crawler_project", {}) or {}) if isinstance(governance, dict) else {}
+    project_control = (governance.get("project_control", {}) or {}) if isinstance(governance, dict) else {}
+    return {
+        "permission_overall_status": str(permission.get("overall_status", "")).strip() or "unknown",
+        "permission_primary_reason": str(permission.get("primary_reason", "")).strip() or "unknown",
+        "permission_blocked_total": int(permission.get("blocked_total", 0) or 0),
+        "crawler_health_status": str(crawler_project.get("health_status", "")).strip() or "unknown",
+        "project_feedback_status": str(((project_control.get("summary", {}) or {}).get("crawler_feedback_coverage_status", ""))).strip() or "unknown",
+        "scheduler_modes": dict(project_control.get("scheduler_modes", {}) or {}),
+    }
+
+
 def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str, object]) -> Dict[str, object]:
     """
     中文注解：
@@ -253,6 +268,8 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
     forensic = reconstruct_trace(task_id, state)
     pending_approvals = mission.get("approval", {}).get("pending", [])
     necessity_proof = mission.get("arbitration", {}).get("necessity_proof", {})
+    governance_attention = _governance_attention(context_packet)
+    permission_status = str(governance_attention.get("permission_overall_status", "")).strip()
     # 下面这段分支就是 mission loop 最关键的输出：`next_decision`。
     # 它并不直接改 state，而是先表达“控制中心建议接下来怎么做”，
     # 然后 runtime_service 再依据这个建议去改变状态或触发执行。
@@ -260,6 +277,12 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
         next_decision = {
             "action": "bind_session_link",
             "reason": "execution requires a bound session before autonomous continuation can proceed",
+        }
+    elif permission_status == "blocked":
+        next_decision = {
+            "action": "await_approval_or_contract_fix",
+            "reason": "governance permission decision currently blocks execution until contract or policy issues are fixed",
+            "auto_safe": True,
         }
     elif mission.get("human_checkpoint", {}).get("required"):
         next_decision = {
@@ -359,10 +382,12 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
             "reason": "no stronger automated action was inferred in this cycle",
             "auto_safe": True,
         }
+    next_decision["governance_attention"] = governance_attention
     return {
         "task_id": task_id,
         "summary": summary,
         "context_packet": context_packet,
+        "governance_attention": governance_attention,
         "research": research,
         "htn": mission.get("htn", {}),
         "htn_focus": htn_focus,

@@ -728,6 +728,8 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
     decision = mission_cycle.get("next_decision", {})
     action = str(decision.get("action", ""))
     state.metadata["last_control_center_decision"] = decision
+    state.metadata["last_governance_attention"] = mission_cycle.get("governance_attention", {}) or {}
+    state.metadata["last_project_control"] = (((mission_cycle.get("context_packet", {}) or {}).get("governance", {}) or {}).get("project_control", {}) or {})
     if not decision.get("auto_safe", False):
         state.last_update_at = utc_now_iso()
         save_state(state)
@@ -744,6 +746,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "current_stage": state.current_stage,
             "next_action": state.next_action,
             "action": "awaiting_approval_by_control_center",
+            "governance_attention": mission_cycle.get("governance_attention", {}) or {},
             "mission_cycle": mission_cycle,
         }
     if action == "bind_session_link":
@@ -758,6 +761,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "current_stage": state.current_stage,
             "next_action": state.next_action,
             "action": "awaiting_session_binding",
+            "governance_attention": mission_cycle.get("governance_attention", {}) or {},
             "mission_cycle": mission_cycle,
         }
     if action == "prove_necessity_before_switching":
@@ -773,6 +777,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "current_stage": state.current_stage,
             "next_action": state.next_action,
             "action": "awaiting_necessity_proof",
+            "governance_attention": mission_cycle.get("governance_attention", {}) or {},
             "mission_cycle": mission_cycle,
         }
     if action == "request_authorized_session":
@@ -788,6 +793,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "current_stage": state.current_stage,
             "next_action": state.next_action,
             "action": "awaiting_authorized_session",
+            "governance_attention": mission_cycle.get("governance_attention", {}) or {},
             "mission_cycle": mission_cycle,
         }
     if action == "await_relay_attach_checkpoint":
@@ -803,6 +809,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "current_stage": state.current_stage,
             "next_action": state.next_action,
             "action": "awaiting_relay_attach_checkpoint",
+            "governance_attention": mission_cycle.get("governance_attention", {}) or {},
             "mission_cycle": mission_cycle,
         }
     if action == "await_human_verification_checkpoint":
@@ -818,6 +825,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "current_stage": state.current_stage,
             "next_action": state.next_action,
             "action": "awaiting_human_checkpoint",
+            "governance_attention": mission_cycle.get("governance_attention", {}) or {},
             "mission_cycle": mission_cycle,
         }
     if action in {
