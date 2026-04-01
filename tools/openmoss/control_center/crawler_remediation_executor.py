@@ -92,10 +92,11 @@ def _metadata_for_item(item: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def execute_crawler_remediation_plan(*, start_tasks: bool = True) -> Dict[str, Any]:
+def execute_crawler_remediation_plan(*, start_tasks: bool = True, max_start_tasks: int | None = None) -> Dict[str, Any]:
     plan = _read_json(CRAWLER_REMEDIATION_PLAN_PATH, {"items": []}) or {"items": []}
     items = plan.get("items", []) or []
     results: List[Dict[str, Any]] = []
+    started_count = 0
     for item in items:
         task_id = _task_id_for_item(item)
         record: Dict[str, Any] = {
@@ -130,11 +131,18 @@ def execute_crawler_remediation_plan(*, start_tasks: bool = True) -> Dict[str, A
                     )
                 )
             record["status"] = "created"
-        if start_tasks:
+        state = manager_read_json(TASKS_ROOT / task_id / "state.json", {})
+        task_status = str(state.get("status", "")).strip().lower()
+        if start_tasks and task_status in {"running", "planning", "recovering"}:
+            record["start_skipped_reason"] = "already_active"
+        elif start_tasks and max_start_tasks is not None and started_count >= max_start_tasks:
+            record["start_skipped_reason"] = "max_start_tasks_reached"
+        elif start_tasks:
             with contextlib.redirect_stdout(io.StringIO()):
                 run_once(build_args(task_id=task_id))
             record["started"] = True
-        state = manager_read_json(TASKS_ROOT / task_id / "state.json", {})
+            started_count += 1
+            state = manager_read_json(TASKS_ROOT / task_id / "state.json", {})
         record["task_state"] = {
             "status": state.get("status", ""),
             "current_stage": state.get("current_stage", ""),
@@ -146,6 +154,7 @@ def execute_crawler_remediation_plan(*, start_tasks: bool = True) -> Dict[str, A
         "started_total": sum(1 for item in results if item.get("started")),
         "created_total": sum(1 for item in results if item.get("status") == "created"),
         "existing_total": sum(1 for item in results if item.get("status") == "already_exists"),
+        "max_start_tasks": max_start_tasks,
         "items": results,
     }
     _write_json(CRAWLER_REMEDIATION_EXECUTION_PATH, payload)

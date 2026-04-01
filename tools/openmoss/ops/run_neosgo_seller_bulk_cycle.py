@@ -132,6 +132,32 @@ def run_runner(limit: int, page_size: int, max_pages: int) -> subprocess.Complet
     return subprocess.run(cmd, capture_output=True, text=True, check=False)
 
 
+def _effective_runner_settings(
+    scheduler_policy: dict | None,
+    *,
+    requested_limit: int,
+    requested_page_size: int,
+    requested_max_pages: int,
+) -> dict[str, int]:
+    scheduler_policy = scheduler_policy or {}
+
+    def _clamp(name: str, requested: int) -> int:
+        hinted = scheduler_policy.get(name)
+        try:
+            hinted_int = int(hinted)
+        except (TypeError, ValueError):
+            return requested
+        if hinted_int <= 0:
+            return requested
+        return min(requested, hinted_int)
+
+    return {
+        "limit": _clamp("effective_limit", requested_limit),
+        "page_size": _clamp("effective_page_size", requested_page_size),
+        "max_pages": _clamp("effective_max_pages", requested_max_pages),
+    }
+
+
 def load_state() -> dict:
     if not STATE_PATH.exists():
         return {}
@@ -450,6 +476,12 @@ def main():
     args = parse_args()
     scheduler_policy = _load_scheduler_policy()
     scheduler_state_before = _load_scheduler_state()
+    runner_settings = _effective_runner_settings(
+        scheduler_policy,
+        requested_limit=args.limit,
+        requested_page_size=args.page_size,
+        requested_max_pages=args.max_pages,
+    )
     should_run, reason = should_run_now(force=args.force, scheduler_policy=scheduler_policy, scheduler_state=scheduler_state_before)
     if not should_run:
         suggested_interval = int(scheduler_policy.get("suggested_interval_seconds", 0) or 0)
@@ -468,6 +500,9 @@ def main():
             "last_force": args.force,
             "last_requested_start_tasks": True,
             "last_effective_start_tasks": False,
+            "last_effective_limit": runner_settings["limit"],
+            "last_effective_page_size": runner_settings["page_size"],
+            "last_effective_max_pages": runner_settings["max_pages"],
             "last_skip_reason": reason,
             "last_started_at": scheduler_state_before.get("last_started_at", ""),
             "next_eligible_at": next_eligible_at,
@@ -479,6 +514,7 @@ def main():
                     "ran": False,
                     "reason": reason,
                     "scheduler_policy": scheduler_policy,
+                    "runner_settings": runner_settings,
                     "scheduler_state_before": scheduler_state_before,
                     "scheduler_state_after": scheduler_state_after,
                 },
@@ -487,7 +523,11 @@ def main():
             )
         )
         return 0
-    proc = run_runner(limit=args.limit, page_size=args.page_size, max_pages=args.max_pages)
+    proc = run_runner(
+        limit=runner_settings["limit"],
+        page_size=runner_settings["page_size"],
+        max_pages=runner_settings["max_pages"],
+    )
     state = load_state()
     summary = summarize(state)
     summary["runner_returncode"] = proc.returncode
@@ -496,6 +536,12 @@ def main():
     summary["scheduler_policy"] = scheduler_policy
     summary["repair_focus"] = str(scheduler_policy.get("repair_focus", "")).strip()
     summary["repair_mode"] = str(scheduler_policy.get("repair_mode", "")).strip()
+    summary["runner_settings"] = {
+        "requested_limit": args.limit,
+        "requested_page_size": args.page_size,
+        "requested_max_pages": args.max_pages,
+        **runner_settings,
+    }
     summary["scheduler_state_before"] = scheduler_state_before
     summary["memory_writeback"] = record_memory_writeback(
         "project-neosgo-seller-bulk",
@@ -531,6 +577,9 @@ def main():
         "last_force": args.force,
         "last_requested_start_tasks": True,
         "last_effective_start_tasks": True,
+        "last_effective_limit": runner_settings["limit"],
+        "last_effective_page_size": runner_settings["page_size"],
+        "last_effective_max_pages": runner_settings["max_pages"],
         "last_skip_reason": "",
         "last_started_at": _utc_now().isoformat(),
         "next_eligible_at": next_eligible_at,

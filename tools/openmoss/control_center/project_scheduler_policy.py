@@ -50,6 +50,7 @@ def _crawler_remediation_policy(
     recommended_mode = "steady"
     suggested_interval_seconds = 3600
     start_tasks = True
+    max_start_tasks: int | None = None
     repair_focus = _derive_repair_focus(system_summary)
     repair_mode = "steady_balance"
     recovery_efficiency = _recovery_efficiency(system_summary)
@@ -80,11 +81,13 @@ def _crawler_remediation_policy(
         recommended_mode = "aggressive"
         suggested_interval_seconds = min(suggested_interval_seconds, 900)
         start_tasks = True
+        max_start_tasks = 2
         repair_mode = "project_crawler_unblock"
         reasons.append("project_tasks_blocked_by_crawler_remediation")
     if blocked_authorized_session > 0 or blocked_human_checkpoint > 0:
         recommended_mode = "aggressive"
         suggested_interval_seconds = min(suggested_interval_seconds, 1200)
+        max_start_tasks = min(max_start_tasks or 2, 2)
         if repair_mode == "steady_balance":
             repair_mode = "route_gate_unblock"
         reasons.append("crawler_routes_waiting_on_authorized_or_human_gate")
@@ -99,7 +102,8 @@ def _crawler_remediation_policy(
         reasons.append("doctor_focus_linkage_blockers")
     if repair_focus == "repair_blockers" and recovery_efficiency < 0.3:
         suggested_interval_seconds = min(suggested_interval_seconds, 1800)
-        if repair_mode == "steady_balance":
+        max_start_tasks = 1
+        if repair_mode in {"steady_balance", "linkage_first"}:
             repair_mode = "repair_efficiency_watch"
         reasons.append("recovery_efficiency_low")
     if active_items and str(feedback.get("coverage_status", "")).strip().lower() == "strong":
@@ -115,6 +119,7 @@ def _crawler_remediation_policy(
         "repair_mode": repair_mode,
         "suggested_interval_seconds": suggested_interval_seconds,
         "start_tasks": start_tasks,
+        "max_start_tasks": max_start_tasks,
         "active_execution_total": len(active_items),
         "reasons": reasons,
         "summary": {
@@ -139,15 +144,24 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
     recommended_mode = "nightly_window"
     suggested_interval_seconds = 900
     repair_mode = "steady_balance"
+    effective_limit: int | None = None
+    effective_page_size: int | None = None
+    effective_max_pages: int | None = None
     if blocked_approval > 0:
         recommended_mode = "approval_sensitive_nightly"
         suggested_interval_seconds = 1800
         repair_mode = "approval_guarded"
+        effective_limit = 20
+        effective_page_size = 25
+        effective_max_pages = 2
         reasons.append("project_approval_pressure_detected")
     if blocked_targeted_fix >= 3:
         recommended_mode = "repair_sensitive_nightly"
         suggested_interval_seconds = max(suggested_interval_seconds, 1800)
         repair_mode = "targeted_fix_bias"
+        effective_limit = 12
+        effective_page_size = 20
+        effective_max_pages = 2
         reasons.append("multiple_targeted_fix_blockers_detected")
     if repair_focus == "governance_blockers" and repair_mode == "steady_balance":
         repair_mode = "governance_watch"
@@ -158,6 +172,9 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
     if repair_focus == "repair_blockers" and recovery_efficiency < 0.25:
         suggested_interval_seconds = max(suggested_interval_seconds, 2700)
         repair_mode = "repair_backpressure"
+        effective_limit = 8
+        effective_page_size = 15
+        effective_max_pages = 1
         reasons.append("recovery_efficiency_low")
     return {
         "recommended_mode": recommended_mode,
@@ -165,6 +182,9 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
         "repair_mode": repair_mode,
         "suggested_interval_seconds": suggested_interval_seconds,
         "start_tasks": True,
+        "effective_limit": effective_limit,
+        "effective_page_size": effective_page_size,
+        "effective_max_pages": effective_max_pages,
         "reasons": reasons,
         "window_hour_new_york": 23,
         "skip_outside_window": True,

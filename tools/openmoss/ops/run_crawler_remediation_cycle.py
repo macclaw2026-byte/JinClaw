@@ -198,6 +198,12 @@ def run_cycle(*, start_tasks: bool = True, run_doctor: bool = True, force: bool 
     scheduler_policy = (control_plane_before.get("project_scheduler_policy", {}) or {}).get("crawler_remediation", {}) or {}
     scheduler_state = _load_scheduler_state()
     effective_start_tasks = bool(start_tasks)
+    effective_max_start_tasks = scheduler_policy.get("max_start_tasks")
+    if effective_max_start_tasks is not None:
+        try:
+            effective_max_start_tasks = max(0, int(effective_max_start_tasks))
+        except (TypeError, ValueError):
+            effective_max_start_tasks = None
     skip_reason = ""
     if start_tasks and scheduler_policy and not bool(scheduler_policy.get("start_tasks", True)):
         effective_start_tasks = False
@@ -213,7 +219,13 @@ def run_cycle(*, start_tasks: bool = True, run_doctor: bool = True, force: bool 
     ):
         effective_start_tasks = False
         skip_reason = f"scheduler_backoff_active:{suggested_interval}"
-    execution = execute_crawler_remediation_plan(start_tasks=effective_start_tasks)
+    if effective_start_tasks and effective_max_start_tasks == 0:
+        effective_start_tasks = False
+        skip_reason = "scheduler_policy_max_start_tasks_zero"
+    execution = execute_crawler_remediation_plan(
+        start_tasks=effective_start_tasks,
+        max_start_tasks=effective_max_start_tasks if effective_start_tasks else None,
+    )
     doctor = run_system_doctor() if run_doctor and not skip_reason else {}
     control_plane_after = build_control_plane()
     payload = {
@@ -226,6 +238,7 @@ def run_cycle(*, start_tasks: bool = True, run_doctor: bool = True, force: bool 
         "scheduler_policy": scheduler_policy,
         "repair_focus": str(scheduler_policy.get("repair_focus", "")).strip(),
         "repair_mode": str(scheduler_policy.get("repair_mode", "")).strip(),
+        "effective_max_start_tasks": effective_max_start_tasks if effective_start_tasks else None,
         "scheduler_state_before": scheduler_state,
         "before_summary": _extract_summary(control_plane_before),
         "execution": execution,
@@ -269,6 +282,7 @@ def run_cycle(*, start_tasks: bool = True, run_doctor: bool = True, force: bool 
         "last_force": force,
         "last_requested_start_tasks": start_tasks,
         "last_effective_start_tasks": effective_start_tasks,
+        "last_effective_max_start_tasks": effective_max_start_tasks if effective_start_tasks else None,
         "last_skip_reason": skip_reason,
         "last_started_at": payload["generated_at"] if effective_start_tasks else scheduler_state.get("last_started_at", ""),
         "next_eligible_at": next_eligible_at,
