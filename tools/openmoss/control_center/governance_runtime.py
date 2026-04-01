@@ -19,6 +19,7 @@ from authorized_session_manager import build_authorized_session_plan
 from crawler_capability_profile import build_crawler_capability_profile
 from hook_registry import get_registered_hooks
 from human_checkpoint import build_human_checkpoint
+from permission_decision_runtime import build_permission_decision_bundle
 from paths import MEMORY_ROOT, POLICY_ROOT
 from security_policy import assess_plan_risk, classify_external_action, default_security_policy
 
@@ -110,9 +111,10 @@ def build_policy_bundle(task_id: str, contract: Dict[str, Any], state: Dict[str,
         "actions": [
             {
                 **row,
+                "action_id": f"{task_id}:{row.get('type', 'external')}:{index}",
                 **classify_external_action(str(row.get("type", ""))),
             }
-            for row in external_actions
+            for index, row in enumerate(external_actions, start=1)
         ],
         "pending_approvals": approval.get("pending", []),
         "approved_actions": approval.get("approved", []),
@@ -295,14 +297,31 @@ def build_crawler_project_bundle(task_id: str, contract: Dict[str, Any], mission
 
 
 def build_governance_bundle(task_id: str, stage_name: str, contract: Dict[str, Any], state: Dict[str, Any], mission: Dict[str, Any]) -> Dict[str, Any]:
+    security = build_security_bundle(task_id, contract, mission)
+    policy = build_policy_bundle(task_id, contract, state, mission)
+    approval = build_approval_bundle(task_id, mission)
+    authorized_session = build_authorized_session_bundle(task_id, mission)
+    human_checkpoint = build_human_checkpoint_bundle(task_id, mission)
+    crawler_project = build_crawler_project_bundle(task_id, contract, mission)
+    hooks = build_hook_bundle(task_id, stage_name, state)
     bundle = {
-        "security": build_security_bundle(task_id, contract, mission),
-        "policy": build_policy_bundle(task_id, contract, state, mission),
-        "approval": build_approval_bundle(task_id, mission),
-        "authorized_session": build_authorized_session_bundle(task_id, mission),
-        "human_checkpoint": build_human_checkpoint_bundle(task_id, mission),
-        "crawler_project": build_crawler_project_bundle(task_id, contract, mission),
-        "hooks": build_hook_bundle(task_id, stage_name, state),
+        "security": security,
+        "policy": policy,
+        "approval": approval,
+        "authorized_session": authorized_session,
+        "human_checkpoint": human_checkpoint,
+        "permission_decision": build_permission_decision_bundle(
+            task_id=task_id,
+            stage_name=stage_name,
+            security=security,
+            policy=policy,
+            approval=approval,
+            authorized_session=authorized_session,
+            human_checkpoint=human_checkpoint,
+            hooks=hooks,
+        ),
+        "crawler_project": crawler_project,
+        "hooks": hooks,
         "memory": build_memory_bundle(task_id, contract, state, mission),
     }
     runtime_patch = ((state.get("metadata", {}) or {}).get("governance_runtime", {}) or {})

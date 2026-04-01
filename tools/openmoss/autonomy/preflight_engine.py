@@ -383,6 +383,24 @@ def run_stage_preflight(task_id: str, stage_name: str) -> Dict[str, object]:
         "pre_execute",
         {"mission": mission, "governance": governance},
     )
+    permission_decision = governance.get("permission_decision", {}) or {}
+    permission_status = str(permission_decision.get("overall_status", "ready")).strip()
+    if permission_status != "ready":
+        response = {
+            "ok": False,
+            "status": "preflight_blocked",
+            "guard_type": "permission_decision",
+            "action": permission_status,
+            "result": permission_decision,
+        }
+        blocked_event = _emit_preflight_event(
+            task_id,
+            stage_name,
+            "preflight_blocked",
+            {"mission": mission, "governance": governance, "preflight": response},
+        )
+        response["hook_event"] = {"pre_execute": pre_execute_event, "terminal": blocked_event}
+        return response
     contract_preflight = _run_contract_guards(task_id, stage_name)
     contract_applied = contract_preflight.get("status") not in {"no_stage_contract", "no_contract_preflight_rules"}
     if contract_applied and not contract_preflight.get("ok", False):
