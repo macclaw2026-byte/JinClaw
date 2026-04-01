@@ -957,6 +957,7 @@ def apply_hook_effects(task_id: str, hook_event: Dict[str, Any] | None, *, sourc
     if str(control_center_dir) not in sys.path:
         sys.path.insert(0, str(control_center_dir))
     from event_bus import summarize_hook_effects
+    from memory_writeback_runtime import record_memory_writeback
 
     summary = summarize_hook_effects(hook_event)
     if not any(
@@ -986,6 +987,8 @@ def apply_hook_effects(task_id: str, hook_event: Dict[str, Any] | None, *, sourc
     if source:
         state.metadata.setdefault("last_hook_effects", {})
         state.metadata["last_hook_effects"][source] = summary
+    writeback = record_memory_writeback(task_id, source=source or "hook_effects", summary=summary)
+    state.metadata["memory_writeback"] = writeback
     state.last_update_at = utc_now_iso()
     save_state(state)
     log_event(task_id, "hook_effects_applied", source=source or "unknown", summary=summary)
