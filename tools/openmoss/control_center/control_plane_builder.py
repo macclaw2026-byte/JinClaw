@@ -401,6 +401,12 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
         remediation_execution=crawler_remediation_execution,
         system_summary=snapshot.get("summary", {}) or {},
     )
+    snapshot["project_scheduler_policy"] = project_scheduler_policy
+    snapshot["scheduler_states"] = {
+        "crawler_remediation": crawler_remediation_scheduler_state,
+        "seller_bulk": seller_bulk_scheduler_state,
+        "cross_market_arbitrage": cross_market_arbitrage_scheduler_state,
+    }
     snapshot["path"] = _write_json(SYSTEM_SNAPSHOT_PATH, snapshot)
     return {
         "process_registry": process_registry,

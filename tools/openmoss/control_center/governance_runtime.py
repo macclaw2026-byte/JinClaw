@@ -23,7 +23,7 @@ from memory_pipeline_runtime import build_memory_layers
 from memory_pipeline_store import persist_memory_pipeline
 from memory_writeback_runtime import build_memory_writeback_policy, load_memory_writeback
 from permission_decision_runtime import build_permission_decision_bundle
-from paths import MEMORY_ROOT, POLICY_ROOT
+from paths import MEMORY_ROOT, POLICY_ROOT, SYSTEM_SNAPSHOT_PATH
 from security_policy import assess_plan_risk, classify_external_action, default_security_policy
 
 
@@ -319,6 +319,36 @@ def build_crawler_project_bundle(task_id: str, contract: Dict[str, Any], mission
     }
 
 
+def build_project_control_bundle() -> Dict[str, Any]:
+    snapshot = _read_json(SYSTEM_SNAPSHOT_PATH, {}) or {}
+    summary = (snapshot.get("summary", {}) or {}) if isinstance(snapshot, dict) else {}
+    scheduler_policy = (snapshot.get("project_scheduler_policy", {}) or {}) if isinstance(snapshot, dict) else {}
+    scheduler_states = (snapshot.get("scheduler_states", {}) or {}) if isinstance(snapshot, dict) else {}
+    return {
+        "generated_at": snapshot.get("generated_at", ""),
+        "summary": {
+            "processes_running": summary.get("processes_running", 0),
+            "processes_total": summary.get("processes_total", 0),
+            "crawler_sites_total": summary.get("crawler_sites_total", 0),
+            "crawler_sites_ready": summary.get("crawler_sites_ready", 0),
+            "crawler_width_score": summary.get("crawler_width_score", 0),
+            "crawler_breadth_score": summary.get("crawler_breadth_score", 0),
+            "crawler_depth_score": summary.get("crawler_depth_score", 0),
+            "crawler_stability_score": summary.get("crawler_stability_score", 0),
+            "crawler_trend_direction": summary.get("crawler_trend_direction", "unknown"),
+            "crawler_feedback_coverage_status": summary.get("crawler_feedback_coverage_status", "unknown"),
+            "memory_writeback_tasks_total": summary.get("memory_writeback_tasks_total", 0),
+        },
+        "scheduler_policy": scheduler_policy,
+        "scheduler_modes": {
+            "crawler_remediation": ((scheduler_policy.get("crawler_remediation", {}) or {}).get("recommended_mode", "")),
+            "seller_bulk": ((scheduler_policy.get("seller_bulk", {}) or {}).get("recommended_mode", "")),
+            "cross_market_arbitrage": ((scheduler_policy.get("cross_market_arbitrage", {}) or {}).get("recommended_mode", "")),
+        },
+        "scheduler_states": scheduler_states,
+    }
+
+
 def build_governance_bundle(task_id: str, stage_name: str, contract: Dict[str, Any], state: Dict[str, Any], mission: Dict[str, Any]) -> Dict[str, Any]:
     security = build_security_bundle(task_id, contract, mission)
     policy = build_policy_bundle(task_id, contract, state, mission)
@@ -344,6 +374,7 @@ def build_governance_bundle(task_id: str, stage_name: str, contract: Dict[str, A
             hooks=hooks,
         ),
         "crawler_project": crawler_project,
+        "project_control": build_project_control_bundle(),
         "hooks": hooks,
         "memory": build_memory_bundle(task_id, contract, state, mission),
     }
