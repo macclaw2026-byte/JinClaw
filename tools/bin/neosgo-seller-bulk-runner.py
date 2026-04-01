@@ -18,6 +18,7 @@ CATEGORY_MAP = {
 SHIPPING_TEMPLATE_ID = 'cmmu2i7uw0001yp5x1s8i1x0g'
 DEFAULT_QTY = 24
 DEFAULT_BRAND = 'NEOSGO'
+PRICE_MARKUP_USD = 25
 WAREHOUSE = {
     'warehouseType': 'SELLER_WAREHOUSE',
     'warehouseZip': '02865',
@@ -91,6 +92,21 @@ def pick_quantity_available(listing):
     if isinstance(inventory, dict) and inventory.get('quantityAvailable'):
         return inventory['quantityAvailable']
     return DEFAULT_QTY
+
+
+def pick_submission_price(listing):
+    pricing = listing.get('pricing') or {}
+    raw_price = (
+        listing.get('basePrice')
+        or listing.get('price')
+        or (pricing.get('retailUnitPrice') if isinstance(pricing, dict) else None)
+        or (pricing.get('platformUnitCost') if isinstance(pricing, dict) else None)
+    )
+    try:
+        base = float(raw_price)
+    except (TypeError, ValueError):
+        base = 0.0
+    return round(base + PRICE_MARKUP_USD, 2)
 
 
 def extract_product_ids(imported):
@@ -189,6 +205,7 @@ def main():
             payload = {
                 'brand': listing.get('brand') or DEFAULT_BRAND,
                 'categoryId': pick_category_id(listing, c),
+                'basePrice': pick_submission_price(listing),
                 'shippingTemplateId': listing.get('shippingTemplateId') or SHIPPING_TEMPLATE_ID,
                 'quantityAvailable': pick_quantity_available(listing),
                 'packingUnits': listing.get('packingUnits') or derive_packing_units(listing),
