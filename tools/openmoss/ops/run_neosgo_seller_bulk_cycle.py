@@ -111,6 +111,36 @@ def summarize(state: dict) -> dict:
         )
     success = [row for row in rows if row["submitted"]]
     failed = [row for row in rows if not row["submitted"]]
+    failure_categories: dict[str, int] = {}
+    for row in failed:
+        labels: list[str] = []
+        if row["blocking_issue_codes"]:
+            labels.extend(str(code).strip() for code in row["blocking_issue_codes"] if str(code).strip())
+        if row["error"]:
+            labels.append(str(row["error"]).strip())
+        if row["exception"]:
+            labels.append(str(row["exception"]).strip())
+        if not labels:
+            labels.append(str(row["status"] or "unknown_failure").strip())
+        for label in labels:
+            failure_categories[label] = failure_categories.get(label, 0) + 1
+    primary_blocker = ""
+    if failure_categories:
+        primary_blocker = sorted(failure_categories.items(), key=lambda item: (-item[1], item[0]))[0][0]
+    governance_status = "healthy"
+    if failed and not success:
+        governance_status = "blocked"
+    elif failed:
+        governance_status = "degraded"
+    next_actions = []
+    if primary_blocker:
+        next_actions.append(f"resolve:{primary_blocker}")
+    if failure_categories.get("ONLY_DRAFT_SUPPORTED"):
+        next_actions.append("rebuild_or_skip_non_draft_listings")
+    if any("unique constraint" in key.lower() for key in failure_categories):
+        next_actions.append("deduplicate_listing_import_targets")
+    if any("product id not found" in key.lower() for key in failure_categories):
+        next_actions.append("backfill_imported_product_ids_before_submit")
     return {
         "generated_at_utc": _utc_now().isoformat(),
         "generated_at_ny": _ny_now().isoformat(),
@@ -120,6 +150,12 @@ def summarize(state: dict) -> dict:
         "state_processed_count": state.get("processedCount"),
         "state_success_count": state.get("successCount"),
         "state_failure_count": state.get("failureCount"),
+        "governance": {
+            "status": governance_status,
+            "primary_blocker": primary_blocker,
+            "failure_categories": failure_categories,
+            "next_actions": next_actions,
+        },
         "rows": rows,
     }
 
@@ -138,9 +174,26 @@ def write_report(summary: dict) -> tuple[Path, Path]:
         f"- Success: {summary['success_count']}",
         f"- Failed: {summary['failure_count']}",
         "",
+        "## Governance",
+        "",
+        f"- Status: {summary.get('governance', {}).get('status', 'unknown')}",
+        f"- Primary blocker: {summary.get('governance', {}).get('primary_blocker') or 'none'}",
+    ]
+    next_actions = summary.get("governance", {}).get("next_actions") or []
+    failure_categories = summary.get("governance", {}).get("failure_categories") or {}
+    if next_actions:
+        lines.append(f"- Next actions: {', '.join(next_actions)}")
+    if failure_categories:
+        lines.append("- Failure categories:")
+        for label, count in sorted(failure_categories.items(), key=lambda item: (-item[1], item[0])):
+            lines.append(f"  - {label}: {count}")
+    lines.extend(
+        [
+            "",
         "## Processed Listings",
         "",
-    ]
+        ]
+    )
     for row in summary["rows"]:
         lines.append(f"- SKU `{row['sku']}` | {row['product_name']} | submit_price=${row['submission_price_usd']} | submitted={row['submitted']} | status={row['status']} | review={row['review_status']}")
         if row["blocking_issue_codes"]:
@@ -153,12 +206,20 @@ def write_report(summary: dict) -> tuple[Path, Path]:
 
 
 def send_to_telegram(chat_id: str, summary: dict, attachments: list[Path]) -> list[dict]:
+    governance = summary.get("governance", {}) or {}
+    governance_line = f"Governance: {governance.get('status', 'unknown')}"
+    if governance.get("primary_blocker"):
+        governance_line += f" | blocker={governance['primary_blocker']}"
+    next_actions = governance.get("next_actions") or []
     text = (
         f"Neosgo seller bulk run finished.\n"
         f"Processed: {summary['processed_count']}\n"
         f"Success: {summary['success_count']}\n"
-        f"Failed: {summary['failure_count']}"
+        f"Failed: {summary['failure_count']}\n"
+        f"{governance_line}"
     )
+    if next_actions:
+        text += f"\nNext: {', '.join(next_actions)}"
     deliveries = []
     for idx, attachment in enumerate(attachments):
         cmd = [

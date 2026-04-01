@@ -1317,6 +1317,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
 
 
 def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: dict[str, Any]) -> Path:
+    governance = summary.get("governance") or {}
     lines = [
         "# Cross-market arbitrage run",
         "",
@@ -1324,6 +1325,13 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         f"- Generated at: `{summary['generated_at']}`",
         f"- Qualified count: `{summary['qualified_count']}`",
         f"- Discovery candidates: `{summary['discovery_candidate_count']}`",
+        f"- Governance status: `{governance.get('status', 'unknown')}`",
+        "",
+        "## Governance",
+        "",
+        f"- Primary blocker: `{governance.get('primary_blocker', 'none')}`",
+        f"- Next actions: `{', '.join(governance.get('next_actions', []) or ['none'])}`",
+        f"- Failure categories: `{json.dumps(governance.get('failure_categories', {}), ensure_ascii=False)}`",
         "",
         "## Qualified",
         "",
@@ -1394,13 +1402,18 @@ def _send_to_telegram(*, chat_id: str, text: str, media_paths: list[Path]) -> li
 
 
 def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -> str:
+    governance = summary.get("governance") or {}
     qualified = [item for item in decisions if item.qualified]
     lines = [
         f"Cross-market arbitrage run completed.",
         f"Run ID: {summary['run_id']}",
         f"过去24小时候选数: {summary['discovery_candidate_count']}",
         f"通过强规则候选数: {summary['qualified_count']}",
+        f"治理状态: {governance.get('status', 'unknown')}",
     ]
+    next_actions = governance.get("next_actions", []) or []
+    if next_actions:
+        lines.append(f"下一步: {', '.join(next_actions[:3])}")
     if qualified:
         top = qualified[:3]
         for item in top:
@@ -1410,6 +1423,44 @@ def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -
     else:
         lines.append("- 本轮没有候选通过强阈值；请看附件里的审计和证据。")
     return "\n".join(lines)
+
+
+def _decision_failure_categories(decisions: list[ArbitrageDecision]) -> dict[str, int]:
+    categories: dict[str, int] = {}
+    for item in decisions:
+        if item.qualified:
+            continue
+        reason = "unknown_failure"
+        for candidate in item.reasons or []:
+            normalized = str(candidate or "").strip()
+            if normalized:
+                reason = normalized
+                break
+        categories[reason] = categories.get(reason, 0) + 1
+    return dict(sorted(categories.items(), key=lambda row: (-row[1], row[0])))
+
+
+def _build_governance_summary(rows: list[dict[str, Any]], decisions: list[ArbitrageDecision]) -> dict[str, Any]:
+    failure_categories = _decision_failure_categories(decisions)
+    primary_blocker = next(iter(failure_categories.keys()), "none")
+    if any(item.qualified for item in decisions):
+        status = "healthy"
+        next_actions = ["continue_discovery_cadence", "continue_matching_cadence"]
+    elif rows and primary_blocker == "no_usable_source_match":
+        status = "attention_required"
+        next_actions = ["strengthen_source_matching", "increase_source_detail_extraction", "review_source_site_health"]
+    elif rows and primary_blocker in {"listing_age_unknown", "estimated_daily_orders_below_threshold"}:
+        status = "attention_required"
+        next_actions = ["strengthen_demand_signal_extraction", "improve_listing_age_capture", "improve_order_estimation"]
+    else:
+        status = "watching"
+        next_actions = ["continue_discovery_cadence", "continue_matching_cadence", "inspect_recent_failures"]
+    return {
+        "status": status,
+        "primary_blocker": primary_blocker,
+        "failure_categories": failure_categories,
+        "next_actions": next_actions,
+    }
 
 
 def run_once(*, test: bool = False) -> dict[str, Any]:
@@ -1573,6 +1624,7 @@ def _report_cycle(state: dict[str, Any], *, chat_id: str | None, force_send: boo
             "matching_interval_seconds": MATCH_INTERVAL_SECONDS,
             "report_hour_new_york": REPORT_HOUR,
         },
+        "governance": _build_governance_summary(rows, decisions),
     }
     excel_path = _write_excel(run_id, decisions, summary)
     md_path = _write_markdown(run_id, decisions, summary)
