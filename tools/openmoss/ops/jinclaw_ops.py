@@ -435,6 +435,8 @@ def status_payload() -> Dict[str, Any]:
         control_plane = build_control_plane()
         control_plane_summary = (control_plane.get("system_snapshot", {}) or {}).get("summary", {}) or {}
         scheduler_policy = control_plane.get("project_scheduler_policy", {}) or {}
+        if control_plane.get("crawler_remediation_scheduler_state"):
+            scheduler_policy["crawler_remediation_state"] = control_plane.get("crawler_remediation_scheduler_state", {}) or {}
     except Exception as exc:
         scheduler_policy = {"error": str(exc)}
     return {

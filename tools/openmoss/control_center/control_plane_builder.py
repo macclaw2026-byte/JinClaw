@@ -29,6 +29,7 @@ from paths import (
     CRAWLER_REMEDIATION_EXECUTION_PATH,
     CRAWLER_REMEDIATION_PLAN_PATH,
     CRAWLER_REMEDIATION_QUEUE_PATH,
+    CRAWLER_REMEDIATION_SCHEDULER_STATE_PATH,
     DOCTOR_QUEUE_PATH,
     PROCESS_REGISTRY_PATH,
     SYSTEM_SNAPSHOT_PATH,
@@ -326,6 +327,10 @@ def _load_crawler_remediation_execution() -> Dict[str, Any]:
     return _read_json(CRAWLER_REMEDIATION_EXECUTION_PATH, {"items": []}) or {"items": []}
 
 
+def _load_crawler_remediation_scheduler_state() -> Dict[str, Any]:
+    return _read_json(CRAWLER_REMEDIATION_SCHEDULER_STATE_PATH, {}) or {}
+
+
 def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seconds: int = 900) -> Dict[str, Any]:
     """
     中文注解：
@@ -339,6 +344,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
     crawler_remediation_queue = build_crawler_remediation_queue(crawler_capability_profile)
     crawler_remediation_plan = build_crawler_remediation_plan()
     crawler_remediation_execution = _load_crawler_remediation_execution()
+    crawler_remediation_scheduler_state = _load_crawler_remediation_scheduler_state()
     task_views = build_task_registry(
         stale_after_seconds=stale_after_seconds,
         escalation_after_seconds=escalation_after_seconds,
@@ -368,6 +374,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
             "crawler_remediation_total": len(crawler_remediation_queue.get("items", [])),
             "crawler_remediation_plan_total": len(crawler_remediation_plan.get("items", [])),
             "crawler_remediation_execution_total": len(crawler_remediation_execution.get("items", [])),
+            "crawler_remediation_last_mode": crawler_remediation_scheduler_state.get("last_mode", ""),
             "memory_writeback_tasks_total": memory_writeback_overview.get("tasks_total", 0),
             "tasks_total": len(task_views["task_registry"].get("items", [])),
             "waiting_total": len(task_views["waiting_registry"].get("items", [])),
@@ -388,6 +395,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
         "crawler_remediation_queue": crawler_remediation_queue,
         "crawler_remediation_plan": crawler_remediation_plan,
         "crawler_remediation_execution": crawler_remediation_execution,
+        "crawler_remediation_scheduler_state": crawler_remediation_scheduler_state,
         "project_scheduler_policy": project_scheduler_policy,
         **task_views,
         "system_snapshot": snapshot,

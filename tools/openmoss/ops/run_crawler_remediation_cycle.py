@@ -24,6 +24,7 @@ if str(CONTROL_CENTER_ROOT) not in sys.path:
 from control_plane_builder import build_control_plane
 from crawler_remediation_executor import execute_crawler_remediation_plan
 from memory_writeback_runtime import record_memory_writeback
+from paths import CRAWLER_REMEDIATION_SCHEDULER_STATE_PATH
 from system_doctor import run_system_doctor
 
 
@@ -33,6 +34,7 @@ def _utc_now_iso() -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run project-level crawler remediation cycle.")
+    parser.add_argument("--force", action="store_true", help="Ignore scheduler backoff and run immediately.")
     parser.add_argument("--no-start", action="store_true", help="Refresh remediation plan but do not run remediation tasks.")
     parser.add_argument("--skip-doctor", action="store_true", help="Skip doctor refresh after execution.")
     parser.add_argument("--no-telegram", action="store_true", help="Do not send remediation summary to Telegram.")
@@ -43,6 +45,40 @@ def parse_args() -> argparse.Namespace:
 def _write_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _read_json(path: Path, default: dict) -> dict:
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def _parse_iso(value: str) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _seconds_since(value: str) -> int | None:
+    dt = _parse_iso(value)
+    if not dt:
+        return None
+    return max(0, int((datetime.now(timezone.utc) - dt).total_seconds()))
+
+
+def _load_scheduler_state() -> dict:
+    return _read_json(CRAWLER_REMEDIATION_SCHEDULER_STATE_PATH, {})
+
+
+def _write_scheduler_state(payload: dict) -> None:
+    _write_json(CRAWLER_REMEDIATION_SCHEDULER_STATE_PATH, payload)
 
 
 def _extract_summary(control_plane: dict) -> dict:
@@ -157,21 +193,38 @@ def send_to_telegram(chat_id: str, payload: dict, attachments: list[Path]) -> li
     return deliveries
 
 
-def run_cycle(*, start_tasks: bool = True, run_doctor: bool = True) -> dict:
+def run_cycle(*, start_tasks: bool = True, run_doctor: bool = True, force: bool = False) -> dict:
     control_plane_before = build_control_plane()
     scheduler_policy = (control_plane_before.get("project_scheduler_policy", {}) or {}).get("crawler_remediation", {}) or {}
+    scheduler_state = _load_scheduler_state()
     effective_start_tasks = bool(start_tasks)
+    skip_reason = ""
     if start_tasks and scheduler_policy and not bool(scheduler_policy.get("start_tasks", True)):
         effective_start_tasks = False
+        skip_reason = "scheduler_policy_start_tasks_false"
+    suggested_interval = int(scheduler_policy.get("suggested_interval_seconds", 0) or 0)
+    since_last_started = _seconds_since(str(scheduler_state.get("last_started_at", "")))
+    if (
+        not force
+        and effective_start_tasks
+        and suggested_interval > 0
+        and since_last_started is not None
+        and since_last_started < suggested_interval
+    ):
+        effective_start_tasks = False
+        skip_reason = f"scheduler_backoff_active:{suggested_interval}"
     execution = execute_crawler_remediation_plan(start_tasks=effective_start_tasks)
-    doctor = run_system_doctor() if run_doctor else {}
+    doctor = run_system_doctor() if run_doctor and not skip_reason else {}
     control_plane_after = build_control_plane()
     payload = {
         "generated_at": _utc_now_iso(),
+        "force": force,
         "start_tasks": start_tasks,
         "effective_start_tasks": effective_start_tasks,
+        "skip_reason": skip_reason,
         "doctor_ran": run_doctor,
         "scheduler_policy": scheduler_policy,
+        "scheduler_state_before": scheduler_state,
         "before_summary": _extract_summary(control_plane_before),
         "execution": execution,
         "after_summary": _extract_summary(control_plane_after),
@@ -199,13 +252,32 @@ def run_cycle(*, start_tasks: bool = True, run_doctor: bool = True) -> dict:
             "memory_reasons": ["crawler_remediation_cycle", "project_crawler_feedback"],
         },
     )
+    next_eligible_at = ""
+    if suggested_interval > 0:
+        next_eligible_at = datetime.fromtimestamp(
+            datetime.now(timezone.utc).timestamp() + suggested_interval,
+            tz=timezone.utc,
+        ).isoformat()
+    scheduler_state_after = {
+        "updated_at": payload["generated_at"],
+        "last_mode": scheduler_policy.get("recommended_mode", ""),
+        "last_interval_seconds": suggested_interval,
+        "last_force": force,
+        "last_requested_start_tasks": start_tasks,
+        "last_effective_start_tasks": effective_start_tasks,
+        "last_skip_reason": skip_reason,
+        "last_started_at": payload["generated_at"] if effective_start_tasks else scheduler_state.get("last_started_at", ""),
+        "next_eligible_at": next_eligible_at,
+    }
+    payload["scheduler_state_after"] = scheduler_state_after
+    _write_scheduler_state(scheduler_state_after)
     _write_json(LATEST_REPORT_PATH, payload)
     return payload
 
 
 def main() -> int:
     args = parse_args()
-    payload = run_cycle(start_tasks=not args.no_start, run_doctor=not args.skip_doctor)
+    payload = run_cycle(start_tasks=not args.no_start, run_doctor=not args.skip_doctor, force=args.force)
     md_path, json_path = write_report(payload)
     if not args.no_telegram:
         payload["telegram_deliveries"] = send_to_telegram(args.chat_id, payload, [md_path, json_path])
