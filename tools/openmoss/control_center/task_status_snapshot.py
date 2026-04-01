@@ -407,6 +407,7 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
         "current_stage": state.get("current_stage", ""),
         "next_action": state.get("next_action", ""),
         "blockers": state.get("blockers", []),
+        "blocked_runtime_state": (state.get("metadata", {}) or {}).get("blocked_runtime_state", {}) or {},
         "business_outcome": business,
         "milestone_progress": milestone_progress,
         "run_liveness": build_run_liveness(canonical_task_id),

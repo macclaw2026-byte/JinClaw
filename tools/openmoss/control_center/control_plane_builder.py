@@ -237,6 +237,7 @@ def build_task_registry(*, stale_after_seconds: int = 300, escalation_after_seco
                 "status": state.get("status", "unknown"),
                 "current_stage": state.get("current_stage", ""),
                 "next_action": state.get("next_action", ""),
+                "blocked_runtime_state": state.get("metadata", {}).get("blocked_runtime_state", {}) or {},
                 "last_progress_at": state.get("last_progress_at", ""),
                 "last_update_at": state.get("last_update_at", ""),
                 "progress_state": evidence.get("progress_state", "unknown"),
@@ -272,6 +273,7 @@ def build_task_registry(*, stale_after_seconds: int = 300, escalation_after_seco
                     "status": entry["status"],
                     "current_stage": entry["current_stage"],
                     "next_action": entry["next_action"],
+                    "blocked_runtime_state": entry.get("blocked_runtime_state", {}) or {},
                     "idle_seconds": entry["idle_seconds"],
                     "goal_conformance": entry.get("goal_conformance", {}),
                 }
@@ -391,6 +393,17 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
             "cross_market_arbitrage_last_mode": cross_market_arbitrage_scheduler_state.get("last_mode", ""),
             "memory_writeback_tasks_total": memory_writeback_overview.get("tasks_total", 0),
             "tasks_total": len(task_views["task_registry"].get("items", [])),
+            "blocked_total": sum(1 for item in task_views["task_registry"].get("items", []) if item.get("status") == "blocked"),
+            "blocked_project_crawler_remediation_total": sum(
+                1
+                for item in task_views["task_registry"].get("items", [])
+                if str(((item.get("blocked_runtime_state", {}) or {}).get("category", ""))).strip() == "project_crawler_remediation"
+            ),
+            "blocked_approval_or_contract_total": sum(
+                1
+                for item in task_views["task_registry"].get("items", [])
+                if str(((item.get("blocked_runtime_state", {}) or {}).get("category", ""))).strip() == "approval_or_contract"
+            ),
             "waiting_total": len(task_views["waiting_registry"].get("items", [])),
             "doctor_queue_total": len(task_views["doctor_queue"].get("items", [])),
             "alerts_total": len(task_views["alerts"].get("items", [])),

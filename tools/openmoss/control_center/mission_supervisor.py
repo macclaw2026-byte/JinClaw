@@ -156,6 +156,11 @@ def run_mission_supervisor(*, stale_after_seconds: int = 300, escalation_after_s
         "crawler_feedback": (control_plane.get("crawler_capability_profile", {}) or {}).get("feedback", {}) or {},
         "crawler_remediation_queue": (control_plane.get("crawler_remediation_queue", {}) or {}),
         "crawler_remediation_plan": (control_plane.get("crawler_remediation_plan", {}) or {}),
+        "blocked_summary": {
+            "total": ((control_plane.get("system_snapshot", {}) or {}).get("summary", {}) or {}).get("blocked_total", 0),
+            "project_crawler_remediation": ((control_plane.get("system_snapshot", {}) or {}).get("summary", {}) or {}).get("blocked_project_crawler_remediation_total", 0),
+            "approval_or_contract": ((control_plane.get("system_snapshot", {}) or {}).get("summary", {}) or {}).get("blocked_approval_or_contract_total", 0),
+        },
         "reports": reports,
     }
     _write_json(SUPERVISOR_ROOT / "last_run.json", result)

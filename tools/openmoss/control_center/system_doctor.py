@@ -111,11 +111,13 @@ def diagnose_task(task_id: str, *, idle_after_seconds: int = 180) -> Dict[str, o
     active_execution = state.metadata.get("active_execution", {}) or {}
     has_active_execution = bool(active_execution.get("run_id"))
     milestone_stats = state.metadata.get("milestone_stats", {}) or {}
+    blocked_runtime_state = state.metadata.get("blocked_runtime_state", {}) or {}
     diagnosis = {
         "task_id": task_id,
         "status": state.status,
         "current_stage": state.current_stage,
         "next_action": state.next_action,
+        "blocked_runtime_state": blocked_runtime_state,
         "idle_seconds": age,
         "has_active_execution": has_active_execution,
         "milestone_stats": milestone_stats,
@@ -146,7 +148,8 @@ def diagnose_task(task_id: str, *, idle_after_seconds: int = 180) -> Dict[str, o
         diagnosis["reason"] = "waiting_external_without_active_execution"
     elif state.status == "blocked":
         diagnosis["stuck"] = True
-        diagnosis["reason"] = f"blocked:{state.next_action or 'unknown'}"
+        blocked_category = str(blocked_runtime_state.get("category", "")).strip()
+        diagnosis["reason"] = f"blocked:{blocked_category or state.next_action or 'unknown'}"
     elif state.next_action.startswith("poll_run:") and age >= idle_after_seconds:
         diagnosis["stuck"] = True
         diagnosis["reason"] = "stale_waiting_external"

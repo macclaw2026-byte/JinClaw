@@ -50,6 +50,7 @@ def _governance_fragment(snapshot: Dict[str, Any]) -> str:
     authorized_session = governance.get("authorized_session", {}) or {}
     human_checkpoint = governance.get("human_checkpoint", {}) or {}
     crawler_project = governance.get("crawler_project", {}) or {}
+    blocked_runtime_state = snapshot.get("blocked_runtime_state", {}) or {}
     policy = governance.get("policy", {}) or {}
     memory = governance.get("memory", {}) or snapshot.get("memory", {}) or {}
     risk = str(policy.get("risk", "")).strip()
@@ -87,6 +88,13 @@ def _governance_fragment(snapshot: Dict[str, Any]) -> str:
             stats.append(f"深度 {depth_score}")
         suffix = f"（{'，'.join(stats)}）" if stats else ""
         parts.append(f"项目抓取能力 {crawler_health}{suffix}")
+    blocked_category = str(blocked_runtime_state.get("category", "")).strip()
+    blocked_reason = str(blocked_runtime_state.get("attention_reason", "")).strip()
+    if blocked_category:
+        blocked_text = f"运行时阻断 {blocked_category}"
+        if blocked_reason:
+            blocked_text += f"（{blocked_reason}）"
+        parts.append(blocked_text)
     if not parts and security.get("overall_risk"):
         parts.append(f"治理风险级别 {security.get('overall_risk')}")
     if not parts:
