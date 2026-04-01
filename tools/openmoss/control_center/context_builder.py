@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict
 
 from cache_store import cache_get, cache_put
+from crawler_capability_profile import build_crawler_capability_profile
 from governance_runtime import build_governance_bundle
 from htn_planner import build_htn_tree, select_htn_focus_by_cursor
 from topology_mapper import build_topology
@@ -52,6 +53,7 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
     fractal = mission.get("fractal_loops", {}) or build_fractal_loops(mission.get("intent", {}), selected_plan, topology)
     htn = mission.get("htn", {}) or build_htn_tree(mission.get("intent", {}), selected_plan, topology, fractal)
     crawler = mission.get("crawler", {}) or {}
+    crawler_capability_profile = build_crawler_capability_profile()
     crawler_tools = []
     selected_stack = crawler.get("selected_stack", {}) or {}
     crawler_tools.extend([str(item) for item in selected_stack.get("tools", []) if str(item).strip()])
@@ -78,6 +80,7 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
             "done_definition": contract.get("done_definition", ""),
             "selected_plan": selected_plan,
             "crawler": crawler,
+            "crawler_capability_profile": crawler_capability_profile.get("summary", {}),
             "governance": governance,
             "topology": topology,
             "fractal_focus": fractal_focus,
@@ -138,6 +141,11 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
             "last_listings_overview_navigation": state.get("metadata", {}).get("last_listings_overview_navigation", {}),
         },
         "crawler": crawler,
+        "crawler_capability_profile": {
+            "summary": crawler_capability_profile.get("summary", {}),
+            "recommended_project_actions": crawler_capability_profile.get("recommended_project_actions", []),
+            "sites": crawler_capability_profile.get("sites", []),
+        },
         "governance": governance,
         "summary": {
             "current_stage": state.get("current_stage", "") or summary.get("current_stage", ""),

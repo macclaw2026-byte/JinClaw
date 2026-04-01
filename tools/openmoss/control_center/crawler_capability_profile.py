@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/crawler_capability_profile.py`
+- 文件作用：汇总 JinClaw 项目的 crawler 站点画像、工具可用性、抓取宽度/广度/深度/稳定性，并生成项目级抓取能力快照。
+- 顶层函数：build_crawler_capability_profile、main。
+- 顶层类：无顶层类。
+"""
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List
+
+from paths import CRAWLER_CAPABILITY_PROFILE_PATH
+
+
+CRAWLER_ROOT = Path("/Users/mac_claw/.openclaw/workspace/crawler")
+SITE_PROFILES_ROOT = CRAWLER_ROOT / "site-profiles"
+REPORTS_ROOT = CRAWLER_ROOT / "reports"
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _read_json(path: Path, default: Any) -> Any:
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _score_site(profile: Dict[str, Any], latest_run: Dict[str, Any], auth_policy_exists: bool) -> Dict[str, Any]:
+    tested_tools = [str(item).strip() for item in profile.get("tested_tools", []) if str(item).strip()]
+    usable_tools = [str(item).strip() for item in profile.get("usable_tools", []) if str(item).strip()]
+    blocked_tools = [str(item).strip() for item in profile.get("blocked_tools", []) if str(item).strip()]
+    task_output_fields = profile.get("task_output_fields", {}) or {}
+    populated_fields = [name for name, value in task_output_fields.items() if str(value or "").strip()]
+    field_count = len(task_output_fields) or 1
+    field_coverage_ratio = len(populated_fields) / field_count
+    best_status = str(latest_run.get("bestStatus", "") or "").strip().lower()
+    confidence = str(profile.get("confidence", "") or "").strip().lower()
+    authenticated_supported = bool((profile.get("authenticated_mode", {}) or {}).get("supported")) or auth_policy_exists
+    blocked_ratio = min(1.0, len(blocked_tools) / max(1, len(tested_tools)))
+
+    breadth_score = min(100.0, round(35 + len(tested_tools) * 4 + len(usable_tools) * 6 - len(blocked_tools) * 2, 2))
+    depth_score = min(
+        100.0,
+        round(
+            25
+            + field_coverage_ratio * 35
+            + (15 if best_status == "usable" else 0)
+            + (10 if authenticated_supported else 0)
+            + (10 if len(usable_tools) >= 2 else 0),
+            2,
+        ),
+    )
+    stability_score = min(
+        100.0,
+        round(
+            40
+            + (20 if best_status == "usable" else 0)
+            + (10 if confidence == "high" else 5 if confidence == "medium" else 0)
+            + (10 if usable_tools else 0)
+            - blocked_ratio * 25,
+            2,
+        ),
+    )
+    readiness = (
+        "production_ready"
+        if best_status == "usable" and usable_tools
+        else "attention_required"
+        if tested_tools
+        else "unknown"
+    )
+    primary_limitations = []
+    if blocked_tools:
+        primary_limitations.append(f"blocked_tools:{', '.join(blocked_tools[:4])}")
+    if not populated_fields:
+        primary_limitations.append("missing_structured_fields")
+    if not usable_tools:
+        primary_limitations.append("no_usable_tool")
+    if best_status and best_status != "usable":
+        primary_limitations.append(f"best_status:{best_status}")
+
+    return {
+        "site": profile.get("site") or latest_run.get("site") or "",
+        "mode": profile.get("mode", ""),
+        "confidence": profile.get("confidence", ""),
+        "preferred_tool_order": profile.get("preferred_tool_order", []),
+        "selected_tool": profile.get("selected_tool", "") or latest_run.get("bestTool", ""),
+        "best_status": latest_run.get("bestStatus", "") or profile.get("taskReadiness", ""),
+        "tested_tools_count": len(tested_tools),
+        "usable_tools_count": len(usable_tools),
+        "blocked_tools_count": len(blocked_tools),
+        "task_output_field_count": len(task_output_fields),
+        "populated_output_field_count": len(populated_fields),
+        "field_coverage_ratio": round(field_coverage_ratio, 2),
+        "authenticated_supported": authenticated_supported,
+        "breadth_score": breadth_score,
+        "depth_score": depth_score,
+        "stability_score": stability_score,
+        "readiness": readiness,
+        "primary_limitations": primary_limitations,
+        "latest_notes": ((latest_run.get("taskReadySummary", {}) or {}).get("notes", []) or [])[:5],
+    }
+
+
+def build_crawler_capability_profile() -> Dict[str, Any]:
+    sites: List[Dict[str, Any]] = []
+    for profile_path in sorted(SITE_PROFILES_ROOT.glob("*.json")):
+        site_id = profile_path.stem
+        profile = _read_json(profile_path, {})
+        latest_run = _read_json(REPORTS_ROOT / f"{site_id}-latest-run.json", {})
+        auth_policy_exists = (SITE_PROFILES_ROOT / f"{site_id}-auth-policy.md").exists()
+        if not profile and not latest_run:
+            continue
+        sites.append(_score_site(profile, latest_run, auth_policy_exists))
+
+    sites_total = len(sites)
+    usable_sites = [site for site in sites if site.get("readiness") == "production_ready"]
+    attention_sites = [site for site in sites if site.get("readiness") == "attention_required"]
+    authenticated_sites = [site for site in sites if site.get("authenticated_supported")]
+    width_score = round((len(usable_sites) / max(1, sites_total)) * 100, 2)
+    breadth_score = round(sum(site.get("breadth_score", 0.0) for site in sites) / max(1, sites_total), 2)
+    depth_score = round(sum(site.get("depth_score", 0.0) for site in sites) / max(1, sites_total), 2)
+    stability_score = round(sum(site.get("stability_score", 0.0) for site in sites) / max(1, sites_total), 2)
+
+    attention_reasons: Dict[str, int] = {}
+    for site in attention_sites:
+        for item in site.get("primary_limitations", []) or []:
+            attention_reasons[item] = attention_reasons.get(item, 0) + 1
+
+    profile = {
+        "generated_at": _utc_now_iso(),
+        "version": "crawler-capability-profile-v1",
+        "summary": {
+            "sites_total": sites_total,
+            "sites_production_ready": len(usable_sites),
+            "sites_attention_required": len(attention_sites),
+            "authenticated_sites": len(authenticated_sites),
+            "width_score": width_score,
+            "breadth_score": breadth_score,
+            "depth_score": depth_score,
+            "stability_score": stability_score,
+            "primary_attention_reasons": dict(sorted(attention_reasons.items(), key=lambda item: (-item[1], item[0]))),
+        },
+        "recommended_project_actions": [
+            "stabilize_sites_marked_attention_required" if attention_sites else "keep_site_profiles_fresh",
+            "promote_high_confidence_tool_orders",
+            "refresh_first_run_matrix_when_best_status_degrades",
+        ],
+        "sites": sites,
+    }
+    CRAWLER_CAPABILITY_PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CRAWLER_CAPABILITY_PROFILE_PATH.write_text(json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8")
+    return profile
+
+
+def main() -> int:
+    print(json.dumps(build_crawler_capability_profile(), ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

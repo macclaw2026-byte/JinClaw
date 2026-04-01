@@ -15,6 +15,7 @@ import shutil
 from pathlib import Path
 from typing import Dict, List
 
+from crawler_capability_profile import build_crawler_capability_profile
 from paths import GENERATED_CAPABILITIES_ROOT, PROMOTED_CAPABILITIES_ROOT, SKILLS_ROOT, TOOLS_ROOT, WORKSPACE_ROOT
 
 
@@ -214,6 +215,7 @@ def build_capability_registry() -> Dict[str, object]:
     tools = _scan_tools()
     generated_capabilities = _scan_generated_capabilities()
     promoted_capabilities = _scan_promoted_capabilities()
+    crawler_capability_profile = build_crawler_capability_profile()
     tags = sorted({tag for skill in skills for tag in skill.get("tags", [])} | ({"generated-capability"} if generated_capabilities else set()))
     return {
         "workspace_root": str(WORKSPACE_ROOT),
@@ -228,6 +230,7 @@ def build_capability_registry() -> Dict[str, object]:
         "generated_capability_count": len(generated_capabilities),
         "promoted_capability_count": len(promoted_capabilities),
         "capability_tags": tags,
+        "crawler_capability_profile": crawler_capability_profile,
     }
 
 
