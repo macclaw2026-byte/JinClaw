@@ -95,6 +95,8 @@ def _doctor_cycle_strategy(control_plane: Dict[str, object]) -> Dict[str, object
     summary = ((control_plane.get("system_snapshot", {}) or {}).get("summary", {}) or {}) if isinstance(control_plane, dict) else {}
     blocked_categories = summary.get("blocked_categories", {}) or {}
     top_blocked_category = str(summary.get("top_blocked_category", "")).strip()
+    project_result_feedback_status = str(summary.get("project_result_feedback_status", "")).strip().lower()
+    project_result_feedback_attention_total = int(summary.get("project_result_feedback_attention_total", 0) or 0)
     strategy = {
         "top_blocked_category": top_blocked_category,
         "blocked_categories": blocked_categories,
@@ -130,6 +132,18 @@ def _doctor_cycle_strategy(control_plane: Dict[str, object]) -> Dict[str, object
                 "allowed_buckets": ["critical", "high", "medium", "low"],
             }
         )
+    if project_result_feedback_status in {"thin", "partial"} and strategy["priority_focus"] == "general":
+        strategy.update(
+            {
+                "priority_focus": "feedback_rebuild",
+                "repair_mode": "feedback_first",
+                "max_repairs_per_cycle": 14,
+                "allowed_buckets": ["critical", "high", "medium"],
+            }
+        )
+    if project_result_feedback_attention_total > 0:
+        strategy["repair_mode"] = "feedback_attention_first"
+        strategy["max_repairs_per_cycle"] = min(int(strategy.get("max_repairs_per_cycle", 12) or 12), 10)
     return strategy
 
 

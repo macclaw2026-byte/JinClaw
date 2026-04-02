@@ -611,6 +611,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
         crawler_profile=crawler_capability_profile,
         remediation_execution=crawler_remediation_execution,
         system_summary=snapshot.get("summary", {}) or {},
+        project_result_feedback=project_result_feedback,
     )
     snapshot["project_scheduler_policy"] = project_scheduler_policy
     snapshot["scheduler_states"] = {

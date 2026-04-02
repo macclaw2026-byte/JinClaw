@@ -21,6 +21,14 @@ def _recovery_efficiency(system_summary: Dict[str, Any]) -> float:
         return 0.0
 
 
+def _project_result_feedback_status(system_summary: Dict[str, Any]) -> str:
+    return str(system_summary.get("project_result_feedback_status", "")).strip().lower() or "unknown"
+
+
+def _project_result_feedback_attention_total(system_summary: Dict[str, Any]) -> int:
+    return int(system_summary.get("project_result_feedback_attention_total", 0) or 0)
+
+
 def _derive_repair_focus(system_summary: Dict[str, Any]) -> str:
     top_blocked_category = str(system_summary.get("top_blocked_category", "")).strip()
     if top_blocked_category in {"project_crawler_remediation", "approval_or_contract", "authorized_session", "human_checkpoint"}:
@@ -58,6 +66,8 @@ def _crawler_remediation_policy(
     blocked_project_crawler = _blocked_count(system_summary, "project_crawler_remediation")
     blocked_authorized_session = _blocked_count(system_summary, "authorized_session")
     blocked_human_checkpoint = _blocked_count(system_summary, "human_checkpoint")
+    project_result_feedback_status = _project_result_feedback_status(system_summary)
+    project_result_feedback_attention = _project_result_feedback_attention_total(system_summary)
     if str(feedback.get("coverage_status", "")).strip().lower() == "thin":
         recommended_mode = "aggressive"
         suggested_interval_seconds = 1800
@@ -110,6 +120,16 @@ def _crawler_remediation_policy(
         if repair_mode in {"steady_balance", "linkage_first"}:
             repair_mode = "repair_efficiency_watch"
         reasons.append("recovery_efficiency_low")
+    if project_result_feedback_status in {"thin", "partial"}:
+        suggested_interval_seconds = min(suggested_interval_seconds, 1500)
+        max_start_tasks = min(max_start_tasks or 2, 2)
+        if repair_mode == "steady_balance":
+            repair_mode = "feedback_rebuild"
+        reasons.append("project_result_feedback_not_strong")
+    if project_result_feedback_attention > 0:
+        suggested_interval_seconds = min(suggested_interval_seconds, 1200)
+        start_bias = "repair_hotspot_first"
+        reasons.append("project_result_feedback_attention_present")
     if active_items and str(feedback.get("coverage_status", "")).strip().lower() == "strong":
         start_tasks = False
         suggested_interval_seconds = max(suggested_interval_seconds, 7200)
@@ -136,6 +156,8 @@ def _crawler_remediation_policy(
             "blocked_project_crawler_remediation_total": blocked_project_crawler,
             "blocked_authorized_session_total": blocked_authorized_session,
             "blocked_human_checkpoint_total": blocked_human_checkpoint,
+            "project_result_feedback_status": project_result_feedback_status,
+            "project_result_feedback_attention_total": project_result_feedback_attention,
         },
     }
 
@@ -145,6 +167,8 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
     blocked_targeted_fix = _blocked_count(system_summary, "targeted_fix")
     repair_focus = _derive_repair_focus(system_summary)
     recovery_efficiency = _recovery_efficiency(system_summary)
+    project_result_feedback_status = _project_result_feedback_status(system_summary)
+    project_result_feedback_attention = _project_result_feedback_attention_total(system_summary)
     reasons = ["seller_bulk_is_time_window_gated_in_script"]
     recommended_mode = "nightly_window"
     suggested_interval_seconds = 900
@@ -185,6 +209,16 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
         effective_max_pages = 1
         batch_bias = "repair_backpressure_batch"
         reasons.append("recovery_efficiency_low")
+    if project_result_feedback_status in {"thin", "partial"} and repair_mode == "steady_balance":
+        repair_mode = "feedback_watch"
+        reasons.append("project_result_feedback_not_strong")
+    if project_result_feedback_attention > 0:
+        suggested_interval_seconds = max(suggested_interval_seconds, 3600)
+        effective_limit = min(effective_limit or 12, 6)
+        effective_page_size = min(effective_page_size or 20, 12)
+        effective_max_pages = min(effective_max_pages or 2, 1)
+        batch_bias = "feedback_attention_batch"
+        reasons.append("project_result_feedback_attention_present")
     return {
         "recommended_mode": recommended_mode,
         "repair_focus": repair_focus,
@@ -203,6 +237,8 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
             "recovery_efficiency_ratio": recovery_efficiency,
             "blocked_approval_or_contract_total": blocked_approval,
             "blocked_targeted_fix_total": blocked_targeted_fix,
+            "project_result_feedback_status": project_result_feedback_status,
+            "project_result_feedback_attention_total": project_result_feedback_attention,
         },
     }
 
@@ -227,6 +263,8 @@ def _cross_market_arbitrage_policy(
     blocked_project_crawler = _blocked_count(system_summary, "project_crawler_remediation")
     blocked_authorized_session = _blocked_count(system_summary, "authorized_session")
     blocked_human_checkpoint = _blocked_count(system_summary, "human_checkpoint")
+    project_result_feedback_status = _project_result_feedback_status(system_summary)
+    project_result_feedback_attention = _project_result_feedback_attention_total(system_summary)
     if coverage_status == "thin":
         recommended_mode = "aggressive"
         loop_sleep_seconds = 180
@@ -280,6 +318,18 @@ def _cross_market_arbitrage_policy(
         matching_interval_seconds = max(matching_interval_seconds, 2 * 60 * 60)
         repair_mode = "repair_backpressure"
         reasons.append("recovery_efficiency_low")
+    if project_result_feedback_status in {"thin", "partial"} and repair_mode == "steady_balance":
+        recommended_mode = "guarded"
+        loop_sleep_seconds = max(loop_sleep_seconds, 900)
+        repair_mode = "feedback_watch"
+        reasons.append("project_result_feedback_not_strong")
+    if project_result_feedback_attention > 0:
+        recommended_mode = "repair_hold"
+        loop_sleep_seconds = max(loop_sleep_seconds, 1200)
+        discovery_interval_seconds = max(discovery_interval_seconds, 60 * 60)
+        matching_interval_seconds = max(matching_interval_seconds, 2 * 60 * 60)
+        repair_mode = "feedback_attention"
+        reasons.append("project_result_feedback_attention_present")
     return {
         "recommended_mode": recommended_mode,
         "repair_focus": repair_focus,
@@ -299,6 +349,8 @@ def _cross_market_arbitrage_policy(
             "blocked_project_crawler_remediation_total": blocked_project_crawler,
             "blocked_authorized_session_total": blocked_authorized_session,
             "blocked_human_checkpoint_total": blocked_human_checkpoint,
+            "project_result_feedback_status": project_result_feedback_status,
+            "project_result_feedback_attention_total": project_result_feedback_attention,
         },
     }
 
@@ -308,10 +360,16 @@ def build_project_scheduler_policy(
     crawler_profile: Dict[str, Any],
     remediation_execution: Dict[str, Any],
     system_summary: Dict[str, Any],
+    project_result_feedback: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
+    effective_summary = {
+        **(system_summary or {}),
+        "project_result_feedback_status": str((project_result_feedback or {}).get("status", system_summary.get("project_result_feedback_status", "unknown"))).strip(),
+        "project_result_feedback_attention_total": int((project_result_feedback or {}).get("attention_total", system_summary.get("project_result_feedback_attention_total", 0)) or 0),
+    }
     return {
         "generated_at": _utc_now_iso(),
-        "crawler_remediation": _crawler_remediation_policy(crawler_profile, remediation_execution, system_summary),
-        "seller_bulk": _seller_bulk_policy(system_summary),
-        "cross_market_arbitrage": _cross_market_arbitrage_policy(crawler_profile, system_summary),
+        "crawler_remediation": _crawler_remediation_policy(crawler_profile, remediation_execution, effective_summary),
+        "seller_bulk": _seller_bulk_policy(effective_summary),
+        "cross_market_arbitrage": _cross_market_arbitrage_policy(crawler_profile, effective_summary),
     }
