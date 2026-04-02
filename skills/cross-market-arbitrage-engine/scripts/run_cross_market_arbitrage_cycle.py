@@ -1944,8 +1944,8 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         + best_source.match_score * 0.35
         + (20.0 if best_source.weight_grade in {"A", "B"} else 0.0)
         + (10.0 if not restricted else 0.0)
-        + (10.0 if margin is not None and margin >= 0.45 else 0.0)
-        + (10.0 if conservative_margin is not None and conservative_margin >= 0.45 else 0.0),
+        + (10.0 if margin is not None and margin >= 0.30 else 0.0)
+        + (10.0 if conservative_margin is not None and conservative_margin >= 0.30 else 0.0),
     )
     supplier_confidence_score = _supplier_confidence_score(best_source)
     selection_score, selection_grade, selection_thesis, selection_components = _selection_scorecard(
@@ -1991,8 +1991,8 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         and listing_age_days <= int(thresholds.get("listing_age_ceiling", 730) or 730)
         and margin is not None
         and conservative_margin is not None
-        and margin >= float(thresholds.get("margin_floor", 0.45) or 0.45)
-        and conservative_margin >= float(thresholds.get("conservative_margin_floor", 0.45) or 0.45)
+        and margin >= float(thresholds.get("margin_floor", 0.30) or 0.30)
+        and conservative_margin >= float(thresholds.get("conservative_margin_floor", 0.30) or 0.30)
         and best_source.weight_grade in {"A", "B"}
         and launchability_score >= float(thresholds.get("launchability_floor", 70.0) or 70.0)
         and confidence >= float(thresholds.get("confidence_floor", 80.0) or 80.0)
@@ -2851,8 +2851,8 @@ def _adaptive_thresholds_from_state(state: dict[str, Any]) -> dict[str, Any]:
     primary_blocker = next(iter(failure_categories.keys()), "none")
     order_floor = 30.0
     listing_age_ceiling = 730
-    margin_floor = 0.45
-    conservative_margin_floor = 0.45
+    margin_floor = 0.30
+    conservative_margin_floor = 0.30
     launchability_floor = 70.0
     confidence_floor = 80.0
     platform_fit_floor = 65.0
@@ -2872,8 +2872,8 @@ def _adaptive_thresholds_from_state(state: dict[str, Any]) -> dict[str, Any]:
         platform_fit_floor = max(platform_fit_floor, 66.0)
     if qualified >= 3:
         order_floor = max(order_floor, 30.0)
-        margin_floor = max(margin_floor, 0.45)
-        conservative_margin_floor = max(conservative_margin_floor, 0.45)
+        margin_floor = max(margin_floor, 0.30)
+        conservative_margin_floor = max(conservative_margin_floor, 0.30)
     return {
         "status": "adaptive" if decisions else "cold_start",
         "decision_samples": total,
@@ -2901,8 +2901,8 @@ def _persist_threshold_history(thresholds: dict[str, Any]) -> dict[str, Any]:
         "near_miss_total": thresholds.get("near_miss_total", 0),
         "order_floor": thresholds.get("order_floor", 30.0),
         "listing_age_ceiling": thresholds.get("listing_age_ceiling", 730),
-        "margin_floor": thresholds.get("margin_floor", 0.45),
-        "conservative_margin_floor": thresholds.get("conservative_margin_floor", 0.45),
+        "margin_floor": thresholds.get("margin_floor", 0.30),
+        "conservative_margin_floor": thresholds.get("conservative_margin_floor", 0.30),
         "launchability_floor": thresholds.get("launchability_floor", 70.0),
         "confidence_floor": thresholds.get("confidence_floor", 80.0),
         "platform_fit_floor": thresholds.get("platform_fit_floor", 65.0),
@@ -3508,7 +3508,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         f"- Primary blocker: `{adaptive_thresholds.get('primary_blocker', 'none')}`",
         f"- Order floor: `{adaptive_thresholds.get('order_floor', 30.0)}`",
         f"- Listing age ceiling: `{adaptive_thresholds.get('listing_age_ceiling', 730)}`",
-        f"- Margin floor: `{adaptive_thresholds.get('margin_floor', 0.45)}` / conservative=`{adaptive_thresholds.get('conservative_margin_floor', 0.45)}`",
+        f"- Margin floor: `{adaptive_thresholds.get('margin_floor', 0.30)}` / conservative=`{adaptive_thresholds.get('conservative_margin_floor', 0.30)}`",
         f"- Launchability / confidence / platform fit: `{adaptive_thresholds.get('launchability_floor', 70.0)}` / `{adaptive_thresholds.get('confidence_floor', 80.0)}` / `{adaptive_thresholds.get('platform_fit_floor', 65.0)}`",
         f"- History trend: `{((threshold_history.get('trend') or {}).get('direction', 'stable'))}` delta=`{((threshold_history.get('trend') or {}).get('delta', 0))}` entries=`{threshold_history.get('entries_total', 0)}`",
         "",
@@ -3742,7 +3742,7 @@ def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -
         )
     if adaptive_thresholds:
         lines.append(
-            f"Adaptive thresholds: order>={adaptive_thresholds.get('order_floor', 30.0)} / age<={adaptive_thresholds.get('listing_age_ceiling', 730)} / margin>={adaptive_thresholds.get('margin_floor', 0.45)} / fit>={adaptive_thresholds.get('platform_fit_floor', 65.0)}"
+            f"Adaptive thresholds: order>={adaptive_thresholds.get('order_floor', 30.0)} / age<={adaptive_thresholds.get('listing_age_ceiling', 730)} / margin>={adaptive_thresholds.get('margin_floor', 0.30)} / fit>={adaptive_thresholds.get('platform_fit_floor', 65.0)}"
         )
     if threshold_history:
         lines.append(
