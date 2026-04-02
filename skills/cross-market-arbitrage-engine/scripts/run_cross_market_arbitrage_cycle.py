@@ -1011,13 +1011,77 @@ def _pain_point_score(text: str) -> float:
     return min(100.0, hits * 12.5)
 
 
-def _competition_score(text: str) -> float:
+def _brand_hint(title: str) -> str:
+    tokens = [token for token in re.findall(r"[A-Za-z0-9]+", title) if len(token) >= 2]
+    cleaned = [token.lower() for token in tokens if token.lower() not in TITLE_STOPWORDS]
+    if not cleaned:
+        return "unknown"
+    return cleaned[0]
+
+
+def _competition_density_hints(candidates: list[DemandCandidate]) -> dict[str, dict[str, Any]]:
+    by_market: dict[tuple[str, str], list[DemandCandidate]] = {}
+    for item in candidates:
+        key = (item.sell_platform.lower(), _query_key(item.query))
+        by_market.setdefault(key, []).append(item)
+    hints: dict[str, dict[str, Any]] = {}
+    for rows in by_market.values():
+        candidate_count = len(rows)
+        review_values = sorted(int(item.review_count or 0) for item in rows if item.review_count is not None)
+        if review_values:
+            median_reviews = review_values[len(review_values) // 2]
+        else:
+            median_reviews = 0
+        brand_counts: dict[str, int] = {}
+        normalized_titles = [_normalize_title(item.title) for item in rows]
+        token_frequency: dict[str, int] = {}
+        for item in rows:
+            brand = _brand_hint(item.title)
+            brand_counts[brand] = int(brand_counts.get(brand, 0) or 0) + 1
+        for title in normalized_titles:
+            for token in set(title.split()):
+                if len(token) < 4:
+                    continue
+                token_frequency[token] = int(token_frequency.get(token, 0) or 0) + 1
+        dominant_brand_share = max(brand_counts.values()) / candidate_count if brand_counts and candidate_count else 0.0
+        repeated_token_share = (
+            max(token_frequency.values()) / candidate_count
+            if token_frequency and candidate_count
+            else 0.0
+        )
+        ad_density = sum(1 for item in rows if "sponsored" in _normalize_title(item.title)) / candidate_count if candidate_count else 0.0
+        for item in rows:
+            hints[item.candidate_id] = {
+                "query_candidate_count": candidate_count,
+                "query_median_reviews": median_reviews,
+                "dominant_brand_share": round(dominant_brand_share, 4),
+                "repeated_token_share": round(repeated_token_share, 4),
+                "ad_density": round(ad_density, 4),
+            }
+    return hints
+
+
+def _competition_score(text: str, *, review_count: int | None = None, raw_signals: dict[str, Any] | None = None) -> float:
     lowered = text.lower()
     ad_hits = len(re.findall(r"sponsored", lowered))
     top_brand_hits = len(re.findall(r"brand", lowered))
     duplicate_hits = len(re.findall(r"best seller", lowered))
-    penalty = min(60, ad_hits * 8 + top_brand_hits * 4 + duplicate_hits * 6)
-    return max(20.0, 100.0 - penalty)
+    base_penalty = min(60.0, ad_hits * 8 + top_brand_hits * 4 + duplicate_hits * 6)
+    raw_signals = raw_signals or {}
+    query_candidate_count = float(raw_signals.get("query_candidate_count", 0) or 0)
+    query_median_reviews = float(raw_signals.get("query_median_reviews", 0) or 0)
+    dominant_brand_share = float(raw_signals.get("dominant_brand_share", 0) or 0)
+    repeated_token_share = float(raw_signals.get("repeated_token_share", 0) or 0)
+    ad_density = float(raw_signals.get("ad_density", 0) or 0)
+    density_penalty = min(22.0, max(0.0, query_candidate_count - 3.0) * 3.0)
+    review_penalty = min(18.0, query_median_reviews / 600.0)
+    if query_candidate_count >= 3:
+        concentration_penalty = min(20.0, dominant_brand_share * 22.0 + repeated_token_share * 12.0 + ad_density * 10.0)
+    else:
+        concentration_penalty = min(8.0, ad_density * 10.0)
+    review_tail_penalty = min(10.0, (float(review_count or 0) / 2500.0)) if review_count is not None else 0.0
+    penalty = min(80.0, base_penalty + density_penalty + review_penalty + concentration_penalty + review_tail_penalty)
+    return max(12.0, 100.0 - penalty)
 
 
 def _price_stability_from_history(history: list[float]) -> float:
@@ -1824,7 +1888,11 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         reasons.append("listing_age_unknown")
     elif listing_age_days > 730:
         reasons.append("listing_age_above_two_years")
-    competition_score = _competition_score(candidate.title)
+    competition_score = _competition_score(
+        candidate.title,
+        review_count=candidate.review_count,
+        raw_signals=candidate.raw_signals or {},
+    )
     differentiation_score = _pain_point_score(candidate.title)
     price_history = (candidate.raw_signals or {}).get("observed_sell_prices", []) or []
     if candidate.sell_price_cny is not None:
@@ -3465,6 +3533,10 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
         if key not in deduped:
             deduped[key] = item
     demand_candidates = list(deduped.values())
+    competition_hints = _competition_density_hints(demand_candidates)
+    for item in demand_candidates:
+        if item.candidate_id in competition_hints:
+            item.raw_signals = {**(item.raw_signals or {}), **competition_hints[item.candidate_id]}
     if test:
         demand_candidates = demand_candidates[:3]
 
@@ -3600,6 +3672,10 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
             updated.demand_confidence = round(min(95.0, updated.demand_confidence + hint_boost), 2)
         enriched.append(updated)
     candidates = enriched
+    competition_hints = _competition_density_hints(candidates)
+    for item in candidates:
+        if item.candidate_id in competition_hints:
+            item.raw_signals = {**(item.raw_signals or {}), **competition_hints[item.candidate_id]}
     bucket = state.setdefault("candidates", {})
     for item in candidates:
         row = bucket.get(item.candidate_id, {})
