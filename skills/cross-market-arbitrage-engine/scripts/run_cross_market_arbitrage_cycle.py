@@ -251,6 +251,36 @@ SOURCE_QUERY_STOPWORDS = {
     "tool",
 }
 
+COLOR_TOKENS = {
+    "black", "white", "gray", "grey", "silver", "gold", "beige", "brown", "pink", "blue", "green",
+    "red", "purple", "orange", "yellow", "clear", "transparent", "wood", "wooden", "natural",
+}
+
+MATERIAL_TOKENS = {
+    "plastic", "acrylic", "metal", "steel", "iron", "wood", "wooden", "bamboo", "silicone", "fabric",
+    "cotton", "linen", "canvas", "polyester", "mesh", "glass", "ceramic", "paper", "leather",
+}
+
+FEATURE_TOKENS = {
+    "wall", "mounted", "hanging", "drawer", "stackable", "foldable", "portable", "magnetic", "adhesive",
+    "waterproof", "desktop", "desk", "under", "sink", "closet", "shelf", "tier", "tray", "basket", "box",
+    "hook", "rack", "holder", "container", "dispenser", "pill", "cable", "bag", "tote", "insert", "bin",
+}
+
+MATCH_TOKEN_STOPWORDS = {
+    *TITLE_STOPWORDS,
+    *SOURCE_QUERY_STOPWORDS,
+    "amazon",
+    "walmart",
+    "temu",
+    "basics",
+    "regular",
+    "conventional",
+    "organic",
+    "premium",
+    "wholesale",
+}
+
 
 @dataclass
 class FetchResult:
@@ -290,6 +320,12 @@ class SourceCandidate:
     weight_grade: str
     fetch_tool: str
     match_score: float
+    keyword_similarity: float = 0.0
+    attribute_similarity: float = 0.0
+    price_band_similarity: float = 0.0
+    supplier_similarity_score: float = 0.0
+    supplier_similarity_grade: str = "none"
+    supplier_similarity_reasons: list[str] = field(default_factory=list)
     blocked: bool = False
     notes: str = ""
 
@@ -328,6 +364,8 @@ class ArbitrageDecision:
     trend_source_score: float = 0.0
     execution_resilience_score: float = 0.0
     supplier_confidence_score: float = 0.0
+    supplier_similarity_score: float = 0.0
+    supplier_similarity_grade: str = "none"
     head_monopoly_score: float = 0.0
     decision_bucket: str = "watchlist"
     priority_reason: str = ""
@@ -356,6 +394,8 @@ DECISION_DEFAULTS: dict[str, Any] = {
     "trend_source_score": 0.0,
     "execution_resilience_score": 0.0,
     "supplier_confidence_score": 0.0,
+    "supplier_similarity_score": 0.0,
+    "supplier_similarity_grade": "none",
     "head_monopoly_score": 0.0,
     "decision_bucket": "watchlist",
     "priority_reason": "",
@@ -1648,6 +1688,167 @@ def _candidate_overlap_score(query: str, text: str) -> float:
     return min(20.0, coverage * 20.0)
 
 
+def _match_tokens(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", str(text or "").lower())
+        if token not in MATCH_TOKEN_STOPWORDS and len(token) >= 2
+    }
+
+
+def _attribute_signature(text: str) -> dict[str, set[str]]:
+    lowered = str(text or "").lower()
+    tokens = _match_tokens(lowered)
+    return {
+        "colors": tokens & COLOR_TOKENS,
+        "materials": tokens & MATERIAL_TOKENS,
+        "features": tokens & FEATURE_TOKENS,
+        "numbers": set(re.findall(r"\b\d+(?:\.\d+)?\b", lowered)),
+        "dimensions": {
+            _clean_text(match.group(0))
+            for match in re.finditer(r"\b\d+(?:\.\d+)?\s*(?:inch|in|cm|mm|oz|ml|lb|lbs|g|kg)\b", lowered)
+        },
+    }
+
+
+def _set_overlap_ratio(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 0.0
+    return len(left & right) / max(1, len(left | right))
+
+
+def _price_band_similarity(sell_price_cny: float | None, source_price_cny: float | None) -> float:
+    if sell_price_cny is None or source_price_cny is None or sell_price_cny <= 0 or source_price_cny <= 0:
+        return 45.0
+    ratio = source_price_cny / sell_price_cny
+    if 0.08 <= ratio <= 0.72:
+        return 100.0
+    if 0.04 <= ratio < 0.08:
+        return 72.0
+    if 0.72 < ratio <= 0.90:
+        return 68.0
+    if 0.02 <= ratio < 0.04:
+        return 42.0
+    if 0.90 < ratio <= 1.15:
+        return 30.0
+    return 12.0
+
+
+def _weight_reasonableness_score(weight_kg: float | None) -> float:
+    if weight_kg is None or weight_kg <= 0:
+        return 35.0
+    if weight_kg <= 1.5:
+        return 100.0
+    if weight_kg <= 3.0:
+        return 82.0
+    if weight_kg <= 6.0:
+        return 58.0
+    return 24.0
+
+
+def _supplier_fuzzy_match(
+    candidate: DemandCandidate,
+    source: SourceCandidate,
+    *,
+    source_text: str = "",
+) -> dict[str, Any]:
+    sell_text = " ".join(part for part in [candidate.title, candidate.query] if part)
+    source_blob = " ".join(part for part in [source.title, source_text] if part)
+    sell_tokens = _match_tokens(sell_text)
+    source_tokens = _match_tokens(source_blob)
+    keyword_coverage = len(sell_tokens & source_tokens) / max(1, len(sell_tokens)) if sell_tokens else 0.0
+    keyword_similarity = round(min(100.0, keyword_coverage * 100.0), 2)
+
+    sell_signature = _attribute_signature(sell_text)
+    source_signature = _attribute_signature(source_blob)
+    attribute_ratios = [
+        _set_overlap_ratio(sell_signature["colors"], source_signature["colors"]),
+        _set_overlap_ratio(sell_signature["materials"], source_signature["materials"]),
+        _set_overlap_ratio(sell_signature["features"], source_signature["features"]),
+        _set_overlap_ratio(sell_signature["numbers"], source_signature["numbers"]),
+        _set_overlap_ratio(sell_signature["dimensions"], source_signature["dimensions"]),
+    ]
+    present_ratios = [ratio for ratio in attribute_ratios if ratio > 0]
+    attribute_similarity = round((sum(present_ratios) / len(present_ratios) if present_ratios else 0.0) * 100.0, 2)
+
+    price_similarity = _price_band_similarity(candidate.sell_price_cny, source.price_cny)
+    weight_reasonableness = _weight_reasonableness_score(source.weight_kg)
+    link_bonus = 100.0 if source.link and source.link.startswith("http") else 35.0
+    similarity_score = round(
+        min(
+            100.0,
+            keyword_similarity * 0.42
+            + attribute_similarity * 0.24
+            + price_similarity * 0.18
+            + weight_reasonableness * 0.10
+            + link_bonus * 0.06,
+        ),
+        2,
+    )
+    if similarity_score >= 74:
+        grade = "high"
+    elif similarity_score >= 58:
+        grade = "medium"
+    elif similarity_score >= 42:
+        grade = "weak"
+    else:
+        grade = "none"
+    reasons: list[str] = []
+    if keyword_similarity >= 68:
+        reasons.append("keyword_overlap_strong")
+    elif keyword_similarity >= 45:
+        reasons.append("keyword_overlap_partial")
+    if _set_overlap_ratio(sell_signature["materials"], source_signature["materials"]) > 0:
+        reasons.append("material_match")
+    if _set_overlap_ratio(sell_signature["features"], source_signature["features"]) > 0:
+        reasons.append("feature_match")
+    if _set_overlap_ratio(sell_signature["dimensions"], source_signature["dimensions"]) > 0 or _set_overlap_ratio(sell_signature["numbers"], source_signature["numbers"]) > 0:
+        reasons.append("size_or_pack_match")
+    if price_similarity >= 68:
+        reasons.append("plausible_price_band")
+    if weight_reasonableness >= 82:
+        reasons.append("weight_reasonable")
+    return {
+        "keyword_similarity": keyword_similarity,
+        "attribute_similarity": attribute_similarity,
+        "price_band_similarity": round(price_similarity, 2),
+        "supplier_similarity_score": similarity_score,
+        "supplier_similarity_grade": grade,
+        "supplier_similarity_reasons": reasons,
+    }
+
+
+def _with_supplier_similarity(
+    candidate: DemandCandidate,
+    source: SourceCandidate,
+    *,
+    source_text: str = "",
+) -> SourceCandidate:
+    fuzzy = _supplier_fuzzy_match(candidate, source, source_text=source_text)
+    similarity_score = float(fuzzy.get("supplier_similarity_score", 0) or 0)
+    grade = str(fuzzy.get("supplier_similarity_grade", "none") or "none")
+    grade_bonus = {"high": 10.0, "medium": 5.0, "weak": 1.5}.get(grade, 0.0)
+    composite_score = round(min(100.0, source.match_score * 0.58 + similarity_score * 0.42 + grade_bonus), 2)
+    return SourceCandidate(
+        platform=source.platform,
+        link=source.link,
+        title=source.title,
+        price_cny=source.price_cny,
+        weight_kg=source.weight_kg,
+        weight_grade=source.weight_grade,
+        fetch_tool=source.fetch_tool,
+        match_score=composite_score,
+        keyword_similarity=float(fuzzy.get("keyword_similarity", 0) or 0),
+        attribute_similarity=float(fuzzy.get("attribute_similarity", 0) or 0),
+        price_band_similarity=float(fuzzy.get("price_band_similarity", 0) or 0),
+        supplier_similarity_score=similarity_score,
+        supplier_similarity_grade=grade,
+        supplier_similarity_reasons=list(fuzzy.get("supplier_similarity_reasons") or []),
+        blocked=source.blocked,
+        notes=source.notes,
+    )
+
+
 def _supplier_confidence_score(source: SourceCandidate) -> float:
     base = float(source.match_score or 0)
     if source.blocked:
@@ -1668,6 +1869,11 @@ def _supplier_confidence_score(source: SourceCandidate) -> float:
         "1688": 2.0,
     }.get(source.platform, 0.0)
     base += platform_bonus
+    base += float(source.supplier_similarity_score or 0) * 0.18
+    if source.supplier_similarity_grade == "high":
+        base += 10.0
+    elif source.supplier_similarity_grade == "medium":
+        base += 4.0
     if source.price_cny is not None:
         base += 6.0
     return round(max(0.0, min(100.0, base)), 2)
@@ -1693,6 +1899,12 @@ def _enrich_source_candidate(platform: str, candidate: SourceCandidate) -> Sourc
         weight_grade=detail_grade if detail_weight is not None else candidate.weight_grade,
         fetch_tool=f"{candidate.fetch_tool}+detail:{detail.tool}",
         match_score=min(100.0, candidate.match_score + (12.0 if detail_weight is not None else 0.0)),
+        keyword_similarity=candidate.keyword_similarity,
+        attribute_similarity=candidate.attribute_similarity,
+        price_band_similarity=candidate.price_band_similarity,
+        supplier_similarity_score=candidate.supplier_similarity_score,
+        supplier_similarity_grade=candidate.supplier_similarity_grade,
+        supplier_similarity_reasons=list(candidate.supplier_similarity_reasons or []),
         blocked=candidate.blocked and detail.status == "blocked",
         notes=notes,
     )
@@ -1724,8 +1936,10 @@ def _best_source_for_platform(
         )
         row = _extract_source_candidate(platform, result.text, query_variant, result.tool)
         row.match_score = min(100.0, row.match_score + platform_bias)
+        row = _with_supplier_similarity(candidate, row, source_text=result.text[:8000])
         if not fast:
             row = _enrich_source_candidate(platform, row)
+            row = _with_supplier_similarity(candidate, row, source_text=result.text[:8000])
         if best is None or row.match_score > best.match_score:
             best = row
         extra_links = _extract_source_links(platform, result.text)
@@ -1763,9 +1977,10 @@ def _best_source_for_platform(
                 blocked=detail_result.status == "blocked",
                 notes="detail_probe",
             )
+            detail_row = _with_supplier_similarity(candidate, detail_row, source_text=detail_result.text[:8000])
             if best is None or detail_row.match_score > best.match_score:
                 best = detail_row
-        if row.match_score >= 75 and row.weight_grade in {"A", "B"} and not row.blocked:
+        if row.match_score >= 75 and row.weight_grade in {"A", "B"} and row.supplier_similarity_grade in {"high", "medium"} and not row.blocked:
             break
     return best or SourceCandidate(platform=platform, link=SOURCE_PLATFORM_SEARCH[platform](candidate.query), title=candidate.title, price_cny=None, weight_kg=None, weight_grade="D", fetch_tool="none", match_score=0.0, blocked=True, notes="no_source_probe"), fetch_log
 
@@ -1881,13 +2096,23 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
     restricted, hits = _is_restricted(candidate.title)
     if restricted:
         reasons.append(f"restricted:{','.join(hits[:4])}")
+
+    def _source_rank(source: SourceCandidate) -> float:
+        return (
+            float(source.match_score or 0) * 0.48
+            + float(source.supplier_similarity_score or 0) * 0.32
+            + (8.0 if source.weight_kg is not None else 0.0)
+            + (6.0 if source.price_cny is not None else 0.0)
+            + {"high": 8.0, "medium": 4.0, "weak": 1.0}.get(source.supplier_similarity_grade, 0.0)
+        )
+
     best_source = None
-    for source in sorted(sources, key=lambda item: item.match_score, reverse=True):
+    for source in sorted(sources, key=_source_rank, reverse=True):
         if source.blocked:
             continue
         if source.price_cny is None:
             continue
-        if best_source is None or source.match_score > best_source.match_score:
+        if best_source is None or _source_rank(source) > _source_rank(best_source):
             best_source = source
     if best_source is None:
         return ArbitrageDecision(
@@ -1945,7 +2170,9 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
             confidence_score=min(79.0, best_source.match_score),
             weight_grade=best_source.weight_grade,
             qualified=False,
-            reasons=["missing_trusted_weight", *reasons],
+            supplier_similarity_score=best_source.supplier_similarity_score,
+            supplier_similarity_grade=best_source.supplier_similarity_grade,
+            reasons=["missing_trusted_weight", f"supplier_similarity:{best_source.supplier_similarity_grade}", *reasons],
         )
     if candidate.sell_price_cny is None:
         return ArbitrageDecision(
@@ -1974,7 +2201,9 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
             confidence_score=min(79.0, best_source.match_score),
             weight_grade=best_source.weight_grade,
             qualified=False,
-            reasons=["missing_sell_price", *reasons],
+            supplier_similarity_score=best_source.supplier_similarity_score,
+            supplier_similarity_grade=best_source.supplier_similarity_grade,
+            reasons=["missing_sell_price", f"supplier_similarity:{best_source.supplier_similarity_grade}", *reasons],
         )
     platform_fee_rate = PLATFORM_FEE_TABLE.get(candidate.sell_platform, DEFAULT_PLATFORM_FEE)
     platform_fee_amount = candidate.sell_price_cny * platform_fee_rate
@@ -2000,6 +2229,10 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         reasons.append("listing_age_above_two_years")
     if head_result_count >= 3 and head_monopoly_score >= 72.0:
         reasons.append("head_links_monopolized")
+    if best_source.supplier_similarity_grade == "weak":
+        reasons.append("supplier_match_weak_similarity")
+    elif best_source.supplier_similarity_grade == "medium":
+        reasons.append("supplier_match_medium_similarity")
     competition_score = _competition_score(
         candidate.title,
         review_count=candidate.review_count,
@@ -2129,10 +2362,17 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         trend_source_score=float(selection_components.get("trend_source_score", 0) or 0),
         execution_resilience_score=float(selection_components.get("execution_resilience_score", 0) or 0),
         supplier_confidence_score=supplier_confidence_score,
+        supplier_similarity_score=best_source.supplier_similarity_score,
+        supplier_similarity_grade=best_source.supplier_similarity_grade,
         head_monopoly_score=round(head_monopoly_score, 2),
         decision_bucket=decision_bucket,
         priority_reason=priority_reason,
-        reasons=[*reasons, f"selection_thesis:{selection_thesis}", f"selection_components:{json.dumps(selection_components, ensure_ascii=False)}"],
+        reasons=[
+            *reasons,
+            f"supplier_similarity_reasons:{','.join(best_source.supplier_similarity_reasons or [])}",
+            f"selection_thesis:{selection_thesis}",
+            f"selection_components:{json.dumps(selection_components, ensure_ascii=False)}",
+        ],
     )
 
 
@@ -3254,7 +3494,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
     autosize(ws)
 
     near_ws = wb.create_sheet("Near_Miss")
-    near_ws.append(["产品名称", "售卖平台", "来源类型", "平台适配分", "精选分", "精选标签", "趋势源分", "执行分", "货源可信分", "头部垄断分", "可做分", "置信度", "优先原因", "原因"])
+    near_ws.append(["产品名称", "售卖平台", "来源类型", "平台适配分", "精选分", "精选标签", "趋势源分", "执行分", "货源可信分", "货源相似分", "货源相似标签", "头部垄断分", "可做分", "置信度", "优先原因", "原因"])
     style_header(near_ws)
     for item in decisions:
         if item.decision_bucket != "near_miss":
@@ -3269,6 +3509,8 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             item.trend_source_score,
             item.execution_resilience_score,
             item.supplier_confidence_score,
+            item.supplier_similarity_score,
+            item.supplier_similarity_grade,
             item.head_monopoly_score,
             item.launchability_score,
             item.confidence_score,
@@ -3278,7 +3520,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
     autosize(near_ws)
 
     watch_ws = wb.create_sheet("Watchlist")
-    watch_ws.append(["产品名称", "售卖平台", "来源类型", "平台适配分", "精选分", "精选标签", "趋势源分", "执行分", "货源可信分", "头部垄断分", "可做分", "置信度", "优先原因", "原因"])
+    watch_ws.append(["产品名称", "售卖平台", "来源类型", "平台适配分", "精选分", "精选标签", "趋势源分", "执行分", "货源可信分", "货源相似分", "货源相似标签", "头部垄断分", "可做分", "置信度", "优先原因", "原因"])
     style_header(watch_ws)
     for item in decisions:
         if item.decision_bucket != "watchlist":
@@ -3293,6 +3535,8 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             item.trend_source_score,
             item.execution_resilience_score,
             item.supplier_confidence_score,
+            item.supplier_similarity_score,
+            item.supplier_similarity_grade,
             item.head_monopoly_score,
             item.launchability_score,
             item.confidence_score,
@@ -3305,7 +3549,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
         platform_ws = wb.create_sheet(_sheet_name_for_platform(platform))
         platform_ws.append([
             "产品名称", "目标采购平台", "采购链接", "目标售卖平台", "售卖链接", "售价(RMB)", "采购成本(RMB)", "毛利率",
-            "保守毛利率", "估算日单量", "上架天数", "精选分", "精选标签", "精选论点", "趋势源分", "执行分", "货源可信分", "头部垄断分", "可做分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "是否入选", "原因"
+            "保守毛利率", "估算日单量", "上架天数", "精选分", "精选标签", "精选论点", "趋势源分", "执行分", "货源可信分", "货源相似分", "货源相似标签", "头部垄断分", "可做分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "是否入选", "原因"
         ])
         style_header(platform_ws)
         platform_rows = _platform_sheet_rows(decisions, platform)
@@ -3330,6 +3574,8 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
                 item.trend_source_score,
                 item.execution_resilience_score,
                 item.supplier_confidence_score,
+                item.supplier_similarity_score,
+                item.supplier_similarity_grade,
                 item.head_monopoly_score,
                 item.launchability_score,
                 item.platform_fit_score,
@@ -3346,7 +3592,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
     headers = [
         "产品名称", "采购平台", "采购链接", "售卖平台", "售卖链接", "售价(RMB)", "采购成本(RMB)", "重量(kg)",
         "毛利额", "毛利率", "保守毛利率", "平台佣金率", "估算日单量", "上架天数", "需求分", "竞争分",
-        "差异化分", "价格稳定分", "精选分", "精选标签", "精选论点", "趋势源分", "执行分", "货源可信分", "头部垄断分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "综合可做分", "置信度", "重量等级", "是否入选", "原因"
+        "差异化分", "价格稳定分", "精选分", "精选标签", "精选论点", "趋势源分", "执行分", "货源可信分", "货源相似分", "货源相似标签", "头部垄断分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "综合可做分", "置信度", "重量等级", "是否入选", "原因"
     ]
     audit.append(headers)
     style_header(audit)
@@ -3376,6 +3622,8 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             item.trend_source_score,
             item.execution_resilience_score,
             item.supplier_confidence_score,
+            item.supplier_similarity_score,
+            item.supplier_similarity_grade,
             item.head_monopoly_score,
             item.platform_fit_score,
             item.platform_fit_label,
@@ -3720,7 +3968,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
             f"- Margin: `{item.gross_margin_rate}`",
             f"- Conservative margin: `{item.conservative_margin_rate}`",
             f"- Selection score: `{item.selection_score}` / `{item.selection_grade}` / `{item.selection_thesis}`",
-            f"- Trend source / execution / supplier / monopoly: `{item.trend_source_score}` / `{item.execution_resilience_score}` / `{item.supplier_confidence_score}` / `{item.head_monopoly_score}`",
+            f"- Trend source / execution / supplier / supplier similarity / monopoly: `{item.trend_source_score}` / `{item.execution_resilience_score}` / `{item.supplier_confidence_score}` / `{item.supplier_similarity_score}` (`{item.supplier_similarity_grade}`) / `{item.head_monopoly_score}`",
             f"- Platform fit: `{item.platform_fit_score}` / `{item.platform_fit_label}` / `{item.platform_recommendation}`",
             f"- Launchability: `{item.launchability_score}`",
             f"- Confidence: `{item.confidence_score}`",
@@ -3735,7 +3983,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
             f"- Platform: `{item.sell_platform}`",
             f"- Priority reason: `{item.priority_reason}`",
             f"- Selection score: `{item.selection_score}` / `{item.selection_grade}` / `{item.selection_thesis}`",
-            f"- Trend source / execution / supplier / monopoly: `{item.trend_source_score}` / `{item.execution_resilience_score}` / `{item.supplier_confidence_score}` / `{item.head_monopoly_score}`",
+            f"- Trend source / execution / supplier / supplier similarity / monopoly: `{item.trend_source_score}` / `{item.execution_resilience_score}` / `{item.supplier_confidence_score}` / `{item.supplier_similarity_score}` (`{item.supplier_similarity_grade}`) / `{item.head_monopoly_score}`",
             f"- Platform fit: `{item.platform_fit_score}` / `{item.platform_fit_label}` / `{item.platform_recommendation}`",
             f"- Launchability: `{item.launchability_score}` / confidence=`{item.confidence_score}`",
             f"- Reasons: `{', '.join(item.reasons or ['none'])}`",
