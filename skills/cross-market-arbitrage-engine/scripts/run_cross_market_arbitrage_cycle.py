@@ -3465,7 +3465,11 @@ def _collect_sellersprite_summary(queries: list[str], *, fast: bool = False) -> 
     if fast:
         page_map = {"keyword_research": SELLERSPRITE_KEYWORD_RESEARCH_URL}
     for label, url in page_map.items():
-        pages[label] = _sellersprite_fetch(save_prefix=f"sellersprite-{label}", url=url)
+        pages[label] = _sellersprite_fetch(
+            save_prefix=f"sellersprite-{label}",
+            url=url,
+            wait_seconds=1.5 if fast else 6.0,
+        )
     available_platforms = sorted(
         {
             str(platform).strip().lower()

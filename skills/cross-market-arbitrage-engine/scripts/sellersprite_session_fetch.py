@@ -218,10 +218,10 @@ def _parse_keyword_research(text: str) -> dict[str, object]:
 
 def _parse_visible_text(url: str, title: str, text: str) -> dict[str, object]:
     title_text = f"{title}\n{text}"
-    if "选产品" in title_text or "/product-research" in url:
-        return _parse_product_research(text)
     if "关键词选品" in title_text or "/keyword-research" in url:
         return _parse_keyword_research(text)
+    if "选产品" in title_text or "/product-research" in url:
+        return _parse_product_research(text)
     return {
         "page_kind": "generic",
         "months": _extract_months(text),
@@ -235,15 +235,18 @@ def fetch_page(*, cdp_url: str, url: str, wait_seconds: float) -> dict[str, obje
         context = browser.contexts[0] if browser.contexts else browser.new_context()
         page = context.new_page()
         Stealth().apply_stealth_sync(page)
-        page.goto(url, wait_until="load", timeout=60000)
+        page.goto(url, wait_until="domcontentloaded", timeout=15000)
         page.wait_for_timeout(max(0, int(wait_seconds * 1000)))
         title = page.title()
         body_text = ""
         try:
-            body_text = page.locator("body").inner_text(timeout=10000)
+            body_text = page.locator("body").inner_text(timeout=3000)
         except Exception:
             body_text = ""
-        html = page.content()
+        try:
+            html = page.content()
+        except Exception:
+            html = ""
         page.close()
     return {
         "url": url,
@@ -261,7 +264,7 @@ def fetch_api(*, cdp_url: str, base_url: str, api_path: str, wait_seconds: float
         context = browser.contexts[0] if browser.contexts else browser.new_context()
         page = context.new_page()
         Stealth().apply_stealth_sync(page)
-        page.goto(base_url, wait_until="load", timeout=60000)
+        page.goto(base_url, wait_until="domcontentloaded", timeout=15000)
         page.wait_for_timeout(max(0, int(wait_seconds * 1000)))
         result = page.evaluate(
             """async (apiPath) => {
