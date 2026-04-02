@@ -243,6 +243,7 @@ class DemandCandidate:
     rating_value: float | None = None
     review_count: int | None = None
     demand_confidence: float = 0.0
+    demand_refresh_priority: float = 0.0
     raw_signals: dict[str, Any] = field(default_factory=dict)
 
 
@@ -1198,6 +1199,7 @@ def _enrich_sell_candidate(candidate: DemandCandidate, *, max_tools: int | None 
         rating_value=best_rating,
         review_count=best_reviews,
         demand_confidence=max(candidate.demand_confidence, best_confidence),
+        demand_refresh_priority=candidate.demand_refresh_priority,
         raw_signals={**candidate.raw_signals, "detail_tool": best_tool, "detail_status": best_status, "detail_monthly_orders": best_monthly_orders},
     )
     return updated, {"stage": "sell_detail", "platform": candidate.sell_platform, "query": candidate.query, "tool": best_tool, "status": best_status, "score": 0}
@@ -1385,6 +1387,34 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
     )
 
 
+def _refresh_priority(row: dict[str, Any]) -> float:
+    monthly_orders = float(((row.get("raw_signals", {}) or {}).get("monthly_orders", 0) or 0) or 0)
+    detail_monthly_orders = float(((row.get("raw_signals", {}) or {}).get("detail_monthly_orders", 0) or 0) or 0)
+    best_monthly_orders = max(monthly_orders, detail_monthly_orders)
+    estimated_daily_orders = float(row.get("estimated_daily_orders", 0) or 0)
+    review_count = float(row.get("review_count", 0) or 0)
+    listing_age_days = row.get("listing_age_days")
+    score = 0.0
+    if best_monthly_orders:
+        score += min(60.0, best_monthly_orders / 20.0)
+    elif estimated_daily_orders:
+        score += min(50.0, estimated_daily_orders * 1.5)
+    score += min(20.0, review_count / 5000.0)
+    if listing_age_days is None:
+        score += 15.0
+    elif listing_age_days <= 730:
+        score += 10.0
+    return round(score, 2)
+
+
+def _ensure_refresh_priority(row: dict[str, Any]) -> float:
+    priority = row.get("demand_refresh_priority")
+    if priority is None:
+        priority = _refresh_priority(row)
+        row["demand_refresh_priority"] = priority
+    return float(priority or 0.0)
+
+
 def _load_state() -> dict[str, Any]:
     default = {"runs": [], "candidates": {}, "last_discovery_at": "", "last_match_at": "", "last_report_date": ""}
     if not STATE_PATH.exists():
@@ -1406,6 +1436,7 @@ def _load_state() -> dict[str, Any]:
         if not isinstance(row, dict):
             continue
         row.setdefault("raw_signals", {})
+        row["demand_refresh_priority"] = _ensure_refresh_priority(row)
         decision = row.get("decision")
         if isinstance(decision, dict):
             row["decision"] = _decision_payload(decision)
@@ -1799,6 +1830,7 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
             row.pop("last_matched_at", None)
             row.pop("decision", None)
             row["source_matches"] = []
+        row["demand_refresh_priority"] = _refresh_priority(row)
         bucket[item.candidate_id] = row
     state["last_discovery_at"] = _utc_now_iso()
     return state, candidates, fetch_log
@@ -1809,7 +1841,11 @@ def _match_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[str
     max_tools = 2 if test else None
     fetch_log: list[dict[str, Any]] = []
     decisions: list[ArbitrageDecision] = []
-    for candidate_id, payload in (state.get("candidates") or {}).items():
+    ordered_candidates = sorted(
+        (state.get("candidates") or {}).items(),
+        key=lambda item: (-_ensure_refresh_priority(item[1] or {}), str(item[0])),
+    )
+    for candidate_id, payload in ordered_candidates:
         if not _needs_rematch(payload):
             continue
         candidate = DemandCandidate(**{k: payload[k] for k in DemandCandidate.__dataclass_fields__.keys() if k in payload})
