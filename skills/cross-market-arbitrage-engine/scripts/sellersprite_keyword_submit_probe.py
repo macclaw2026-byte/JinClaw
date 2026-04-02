@@ -61,11 +61,15 @@ def _parse_keyword_results(text: str) -> dict[str, object]:
             continue
         if not any(ch.isalpha() for ch in keyword_line):
             continue
+        if keyword_line.lower() in {"richard"}:
+            continue
         row = {
             "rank": int(rank_line),
             "keyword": keyword_line,
             "keyword_cn": cn_line if any("\u4e00" <= ch <= "\u9fff" for ch in cn_line) else "",
         }
+        if row["keyword_cn"] in {"高级会员", "会员"}:
+            continue
         numeric_window = lines[idx + 3 : idx + 14]
         monthly_searches = ""
         for candidate in numeric_window:
@@ -76,6 +80,8 @@ def _parse_keyword_results(text: str) -> dict[str, object]:
         if not monthly_searches:
             continue
         row["monthly_searches"] = monthly_searches
+        if len(re.findall(r"[A-Za-z0-9]+", keyword_line)) < 2:
+            continue
         top_keywords.append(row)
         if len(top_keywords) >= 8:
             break

@@ -1896,6 +1896,87 @@ def _sellersprite_probe_status(parsed: dict[str, Any]) -> tuple[str, str]:
     return "unknown", ""
 
 
+def _clean_seed_phrase(value: str) -> str:
+    phrase = re.sub(r"\s+", " ", str(value or "").strip())
+    phrase = phrase.replace("“", '"').replace("”", '"').replace("’", "'")
+    phrase = re.sub(r"[^A-Za-z0-9&+/' -]", " ", phrase)
+    phrase = re.sub(r"\s+", " ", phrase).strip(" -")
+    return phrase
+
+
+def _valid_sellersprite_keyword(row: dict[str, Any]) -> bool:
+    keyword = _clean_seed_phrase(str(row.get("keyword", "") or ""))
+    if not keyword:
+        return False
+    tokens = [token for token in re.split(r"[^A-Za-z0-9]+", keyword.lower()) if token]
+    if len(tokens) < 2:
+        return False
+    if len(keyword) < 8 or len(keyword) > 80:
+        return False
+    if any(token in {"richard", "高级会员", "会员", "seller", "sprite"} for token in tokens):
+        return False
+    monthly = str(row.get("monthly_searches", "") or "").replace(",", "").strip()
+    if monthly and monthly.isdigit() and int(monthly) < 3000:
+        return False
+    return True
+
+
+def _sellersprite_seed_queries(summary: dict[str, Any], limit: int = 6) -> list[str]:
+    seeds: list[str] = []
+    seen: set[str] = set()
+    keyword_probe = summary.get("keyword_result_probe") or {}
+    for row in (keyword_probe.get("top_keywords") or []):
+        if not isinstance(row, dict) or not _valid_sellersprite_keyword(row):
+            continue
+        keyword = _clean_seed_phrase(str(row.get("keyword", "") or ""))
+        normalized = keyword.lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        seeds.append(keyword)
+        if len(seeds) >= limit:
+            break
+    return seeds
+
+
+def _sellersprite_product_watchlist(summary: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
+    watchlist: list[dict[str, Any]] = []
+    product_probe = summary.get("product_result_probe") or {}
+    for row in (product_probe.get("top_products") or []):
+        if not isinstance(row, dict):
+            continue
+        name = _clean_seed_phrase(str(row.get("product_name", "") or ""))
+        if len(name) < 8:
+            continue
+        watchlist.append(
+            {
+                "rank": row.get("rank"),
+                "product_name": name,
+                "price_hint": str(row.get("price_hint", "") or ""),
+            }
+        )
+        if len(watchlist) >= limit:
+            break
+    return watchlist
+
+
+def _merge_queries(base_queries: list[str], sellersprite_queries: list[str], limit: int | None = None) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for query in [*(base_queries or []), *(sellersprite_queries or [])]:
+        cleaned = _clean_seed_phrase(query)
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(cleaned)
+        if limit is not None and len(merged) >= limit:
+            break
+    return merged
+
+
 def _collect_sellersprite_summary(queries: list[str]) -> dict[str, Any]:
     pages: dict[str, Any] = {}
     for label, url in {
@@ -1984,7 +2065,7 @@ def _collect_sellersprite_summary(queries: list[str]) -> dict[str, Any]:
     )
     keyword_metrics = (((pages.get("keyword_research") or {}).get("parsed") or {}).get("filter_metrics") or [])
     product_metrics = (((pages.get("product_research") or {}).get("parsed") or {}).get("filter_metrics") or [])
-    return {
+    summary = {
         "status": status,
         "latest_month": probe_month,
         "available_platforms": available_platforms,
@@ -2010,6 +2091,9 @@ def _collect_sellersprite_summary(queries: list[str]) -> dict[str, Any]:
             "json_path": product_probe.get("json_path", ""),
         },
     }
+    summary["seed_queries"] = _sellersprite_seed_queries(summary)
+    summary["product_watchlist"] = _sellersprite_product_watchlist(summary)
+    return summary
 
 
 def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[str, Any]) -> Path:
@@ -2107,6 +2191,8 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
         ss_ws = wb.create_sheet("SellerSprite")
         ss_ws.append(["类型", "名称", "状态", "细节", "附加信息"])
         style_header(ss_ws)
+        for query in (sellersprite.get("seed_queries") or []):
+            ss_ws.append(["seed_query", query, "ok", "", ""])
         for page_name, payload in (sellersprite.get("pages") or {}).items():
             parsed = payload.get("parsed") or {}
             detail = json.dumps(
@@ -2164,6 +2250,22 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
                     product_result_probe.get("final_url", ""),
                 ]
             )
+        for row in (sellersprite.get("product_watchlist") or []):
+            ss_ws.append(
+                [
+                    "product_watch",
+                    row.get("product_name", ""),
+                    "watch",
+                    json.dumps(
+                        {
+                            "rank": row.get("rank"),
+                            "price_hint": row.get("price_hint", ""),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "",
+                ]
+            )
         autosize(ss_ws)
 
     path = OUT_DIR / f"cross-market-arbitrage-{run_id}.xlsx"
@@ -2204,6 +2306,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         f"- Status: `{sellersprite.get('status', 'unavailable')}`",
         f"- Latest month: `{sellersprite.get('latest_month', '')}`",
         f"- Available platforms: `{', '.join(sellersprite.get('available_platforms', []) or ['none'])}`",
+        f"- Seed queries: `{', '.join((sellersprite.get('seed_queries') or [])[:6]) or 'none'}`",
         f"- Keyword metrics: `{', '.join((sellersprite.get('keyword_metrics_available', []) or [])[:8]) or 'none'}`",
         f"- Product metrics: `{', '.join((sellersprite.get('product_metrics_available', []) or [])[:8]) or 'none'}`",
         f"- Result probe: keyword=`{((sellersprite.get('keyword_result_probe') or {}).get('keyword', ''))}` count=`{((sellersprite.get('keyword_result_probe') or {}).get('result_count', 0))}`",
@@ -2234,6 +2337,16 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         lines.append(
             f"- `#{row.get('rank', '')}` `{row.get('product_name', '')}` / price_hint=`{row.get('price_hint', '')}`"
         )
+    if sellersprite.get("product_watchlist"):
+        lines.extend([
+            "",
+            "### Product Watchlist",
+            "",
+        ])
+        for row in (sellersprite.get("product_watchlist") or [])[:5]:
+            lines.append(
+                f"- `#{row.get('rank', '')}` `{row.get('product_name', '')}` / price_hint=`{row.get('price_hint', '')}`"
+            )
     lines.extend([
         "",
         "## Qualified",
@@ -2334,7 +2447,7 @@ def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -
         lines.append(f"下一步: {', '.join(next_actions[:3])}")
     if sellersprite:
         lines.append(
-            f"SellerSprite: {sellersprite.get('status', 'unavailable')} / month={sellersprite.get('latest_month', '')} / api_ok={sellersprite.get('api_ok_total', 0)} / keyword_results={((sellersprite.get('keyword_result_probe') or {}).get('result_count', 0))} / product_rows={((sellersprite.get('product_result_probe') or {}).get('product_rows_detected', 0))}"
+            f"SellerSprite: {sellersprite.get('status', 'unavailable')} / month={sellersprite.get('latest_month', '')} / api_ok={sellersprite.get('api_ok_total', 0)} / seed_queries={len(sellersprite.get('seed_queries') or [])} / keyword_results={((sellersprite.get('keyword_result_probe') or {}).get('result_count', 0))} / product_rows={((sellersprite.get('product_result_probe') or {}).get('product_rows_detected', 0))}"
         )
     if qualified:
         top = qualified[:3]
@@ -2400,7 +2513,9 @@ def _platform_summary(decisions: list[ArbitrageDecision]) -> dict[str, Any]:
 
 def run_once(*, test: bool = False) -> dict[str, Any]:
     run_id = _utc_now().strftime("%Y%m%dT%H%M%SZ")
-    queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
+    base_queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
+    sellersprite = _collect_sellersprite_summary(base_queries)
+    queries = _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=3 if test else 10)
     sell_platforms = ["temu", "amazon"] if test else ["temu", "amazon", "walmart"]
     source_platforms = ["1688", "yiwugo", "made_in_china"] if test else ["1688", "yiwugo", "made_in_china"]
     max_tools = 2 if test else None
@@ -2441,7 +2556,8 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
         "discovery_candidate_count": len(demand_candidates),
         "qualified_count": sum(1 for item in decisions if item.qualified),
         "platform_summary": _platform_summary(decisions),
-        "sellersprite": _collect_sellersprite_summary(queries),
+        "sellersprite": sellersprite,
+        "base_queries": base_queries,
         "queries": queries,
         "timing": {
             "discovery_interval_seconds": DISCOVERY_INTERVAL_SECONDS,
@@ -2485,7 +2601,9 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
 
 
 def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[str, Any], list[DemandCandidate], list[dict[str, Any]]]:
-    queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
+    base_queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
+    sellersprite = _collect_sellersprite_summary(base_queries)
+    queries = _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=3 if test else 10)
     sell_platforms = ["temu", "amazon"] if test else ["temu", "amazon", "walmart"]
     max_tools = 2 if test else None
     fetch_log: list[dict[str, Any]] = []
@@ -2536,6 +2654,8 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
         row["demand_refresh_priority"] = _refresh_priority(row)
         bucket[item.candidate_id] = row
     state["last_discovery_at"] = _utc_now_iso()
+    state["last_sellersprite_seed_queries"] = list(sellersprite.get("seed_queries") or [])
+    state["last_effective_queries"] = list(queries)
     return state, candidates, fetch_log
 
 
@@ -2590,6 +2710,8 @@ def _report_cycle(
         "qualified_count": sum(1 for item in decisions if item.qualified),
         "platform_summary": _platform_summary(decisions),
         "sellersprite": _collect_sellersprite_summary(DEFAULT_DISCOVERY_QUERIES),
+        "base_queries": DEFAULT_DISCOVERY_QUERIES,
+        "queries": state.get("last_effective_queries") or DEFAULT_DISCOVERY_QUERIES,
         "timing": {
             "discovery_interval_seconds": int(scheduler_policy.get("discovery_interval_seconds", DISCOVERY_INTERVAL_SECONDS) or DISCOVERY_INTERVAL_SECONDS),
             "matching_interval_seconds": int(scheduler_policy.get("matching_interval_seconds", MATCH_INTERVAL_SECONDS) or MATCH_INTERVAL_SECONDS),
