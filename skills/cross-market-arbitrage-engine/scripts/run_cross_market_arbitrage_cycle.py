@@ -28,6 +28,7 @@ STATE_DIR.mkdir(parents=True, exist_ok=True)
 STATE_PATH = STATE_DIR / "cross-market-arbitrage-engine.json"
 ADAPTIVE_HISTORY_PATH = STATE_DIR / "cross-market-arbitrage-adaptive-history.json"
 QUERY_HISTORY_PATH = STATE_DIR / "cross-market-arbitrage-query-history.json"
+MARKET_HISTORY_PATH = STATE_DIR / "cross-market-arbitrage-market-history.json"
 OUT_DIR = ROOT / "output" / "cross-market-arbitrage-engine"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 LATEST_REPORT_PATH = OUT_DIR / "latest-report.json"
@@ -2713,6 +2714,127 @@ def _persist_query_history(query_feedback: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _load_market_history() -> dict[str, Any]:
+    default = {"entries": []}
+    return _read_json(MARKET_HISTORY_PATH, default)
+
+
+def _market_feedback_from_state(state: dict[str, Any]) -> dict[str, Any]:
+    market_map: dict[str, dict[str, Any]] = {}
+    for payload in (state.get("candidates") or {}).values():
+        query = str(payload.get("query", "")).strip()
+        platform = str(payload.get("sell_platform", "")).lower().strip()
+        if not query or not platform:
+            continue
+        market_key = f"{platform}:{_query_key(query)}"
+        row = market_map.setdefault(
+            market_key,
+            {
+                "market_key": market_key,
+                "platform": platform,
+                "query": query,
+                "candidate_count": 0,
+                "competition_scores": [],
+                "review_counts": [],
+                "listing_ages": [],
+                "qualified_count": 0,
+                "near_miss_count": 0,
+            },
+        )
+        row["candidate_count"] += 1
+        signals = payload.get("raw_signals") or {}
+        if signals.get("query_median_reviews") is not None:
+            row["review_counts"].append(float(signals.get("query_median_reviews") or 0))
+        if payload.get("review_count") is not None:
+            row["review_counts"].append(float(payload.get("review_count") or 0))
+        if payload.get("listing_age_days") is not None:
+            row["listing_ages"].append(float(payload.get("listing_age_days") or 0))
+        if payload.get("decision"):
+            decision = _decision_payload(payload.get("decision") or {})
+            row["competition_scores"].append(float(decision.get("competition_score", 0) or 0))
+            if bool(decision.get("qualified")) or str(decision.get("decision_bucket", "")) == "qualified":
+                row["qualified_count"] += 1
+            elif str(decision.get("decision_bucket", "")) == "near_miss":
+                row["near_miss_count"] += 1
+    rows: list[dict[str, Any]] = []
+    for value in market_map.values():
+        competition_avg = round(sum(value["competition_scores"]) / len(value["competition_scores"]), 2) if value["competition_scores"] else 0.0
+        review_median = 0.0
+        if value["review_counts"]:
+            ordered = sorted(value["review_counts"])
+            review_median = round(ordered[len(ordered) // 2], 2)
+        listing_age_avg = round(sum(value["listing_ages"]) / len(value["listing_ages"]), 2) if value["listing_ages"] else 0.0
+        pressure_score = round(
+            min(
+                100.0,
+                max(0.0, 100.0 - competition_avg) * 0.35
+                + min(35.0, review_median / 250.0)
+                + min(20.0, listing_age_avg / 90.0)
+                - value["qualified_count"] * 4.0
+                - value["near_miss_count"] * 2.0,
+            ),
+            2,
+        )
+        rows.append(
+            {
+                "market_key": value["market_key"],
+                "platform": value["platform"],
+                "query": value["query"],
+                "candidate_count": value["candidate_count"],
+                "competition_score_avg": competition_avg,
+                "review_median": review_median,
+                "listing_age_avg": listing_age_avg,
+                "qualified_count": value["qualified_count"],
+                "near_miss_count": value["near_miss_count"],
+                "pressure_score": pressure_score,
+            }
+        )
+    rows.sort(key=lambda item: (-float(item.get("pressure_score", 0) or 0), str(item.get("market_key", ""))))
+    return {
+        "status": "adaptive" if rows else "cold_start",
+        "markets": rows[:20],
+        "primary_market": str((rows[0] if rows else {}).get("market_key", "none")),
+    }
+
+
+def _persist_market_history(market_feedback: dict[str, Any]) -> dict[str, Any]:
+    payload = _load_market_history()
+    entries = list(payload.get("entries") or [])
+    top_markets = list(market_feedback.get("markets") or [])[:5]
+    latest_pressure = float((top_markets[0] if top_markets else {}).get("pressure_score", 0) or 0)
+    entry = {
+        "captured_at": _utc_now_iso(),
+        "primary_market": market_feedback.get("primary_market", "none"),
+        "market_count": len(market_feedback.get("markets") or []),
+        "latest_pressure_score": round(latest_pressure, 2),
+        "top_markets": top_markets,
+    }
+    entries.append(entry)
+    entries = entries[-40:]
+    payload["entries"] = entries
+    _write_json_file(MARKET_HISTORY_PATH, payload)
+    latest = entries[-1] if entries else entry
+    prev = entries[-2] if len(entries) >= 2 else None
+    delta = round(float(latest.get("latest_pressure_score", 0) or 0) - float((prev or {}).get("latest_pressure_score", 0) or 0), 2)
+    if not prev:
+        direction = "new"
+    elif delta > 1.0:
+        direction = "up"
+    elif delta < -1.0:
+        direction = "down"
+    else:
+        direction = "stable"
+    return {
+        "entries_total": len(entries),
+        "latest": latest,
+        "trend": {
+            "direction": direction,
+            "delta": delta,
+        },
+        "path": str(MARKET_HISTORY_PATH),
+    }
+
+
 def _apply_query_adaptive_order(queries: list[str], adaptive_profile: dict[str, Any], *, limit: int | None = None) -> list[str]:
     query_biases = adaptive_profile.get("query_biases") or {}
     query_order = list(adaptive_profile.get("query_order") or [])
@@ -3106,6 +3228,37 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             ])
         autosize(q_ws)
 
+    market_feedback = summary.get("market_feedback") or {}
+    if market_feedback:
+        m_ws = wb.create_sheet("Market_Pressure")
+        m_ws.append([
+            "Market Key",
+            "Platform",
+            "Query",
+            "Pressure Score",
+            "Competition Avg",
+            "Review Median",
+            "Listing Age Avg",
+            "Candidates",
+            "Qualified",
+            "Near Miss",
+        ])
+        style_header(m_ws)
+        for row in (market_feedback.get("markets") or [])[:25]:
+            m_ws.append([
+                row.get("market_key", ""),
+                row.get("platform", ""),
+                row.get("query", ""),
+                row.get("pressure_score", 0),
+                row.get("competition_score_avg", 0),
+                row.get("review_median", 0),
+                row.get("listing_age_avg", 0),
+                row.get("candidate_count", 0),
+                row.get("qualified_count", 0),
+                row.get("near_miss_count", 0),
+            ])
+        autosize(m_ws)
+
     sellersprite = summary.get("sellersprite") or {}
     if sellersprite:
         ss_ws = wb.create_sheet("SellerSprite")
@@ -3207,6 +3360,10 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
     adaptive_history = summary.get("adaptive_history") or {}
     query_feedback = summary.get("query_feedback") or {}
     query_history = summary.get("query_history") or {}
+    market_feedback = summary.get("market_feedback") or {}
+    market_history = summary.get("market_history") or {}
+    market_feedback = summary.get("market_feedback") or {}
+    market_history = summary.get("market_history") or {}
     lines = [
         "# Cross-market arbitrage run",
         "",
@@ -3250,6 +3407,12 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         f"- Status: `{query_feedback.get('status', 'cold_start')}`",
         f"- Primary query: `{query_feedback.get('primary_query', 'none')}`",
         f"- History trend: `{((query_history.get('trend') or {}).get('direction', 'stable'))}` delta=`{((query_history.get('trend') or {}).get('delta', 0))}` entries=`{query_history.get('entries_total', 0)}`",
+        "",
+        "## Market Pressure",
+        "",
+        f"- Status: `{market_feedback.get('status', 'cold_start')}`",
+        f"- Primary market: `{market_feedback.get('primary_market', 'none')}`",
+        f"- History trend: `{((market_history.get('trend') or {}).get('direction', 'stable'))}` delta=`{((market_history.get('trend') or {}).get('delta', 0))}` entries=`{market_history.get('entries_total', 0)}`",
         "",
         "## SellerSprite",
         "",
@@ -3306,6 +3469,16 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         for row in (query_feedback.get("queries") or [])[:8]:
             lines.append(
                 f"- `{row.get('query', '')}` / score=`{row.get('score', 0)}` / bias=`{row.get('query_bias', 0)}` / qualified=`{row.get('qualified_count', 0)}` / near_miss=`{row.get('near_miss_count', 0)}` / top_platform=`{row.get('top_platform', '')}`"
+            )
+    if market_feedback:
+        lines.extend([
+            "",
+            "### Market Pressure",
+            "",
+        ])
+        for row in (market_feedback.get("markets") or [])[:8]:
+            lines.append(
+                f"- `{row.get('market_key', '')}` / pressure=`{row.get('pressure_score', 0)}` / competition_avg=`{row.get('competition_score_avg', 0)}` / review_median=`{row.get('review_median', 0)}` / listing_age_avg=`{row.get('listing_age_avg', 0)}`"
             )
     lines.extend([
         "",
@@ -3421,6 +3594,8 @@ def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -
     adaptive_history = summary.get("adaptive_history") or {}
     query_feedback = summary.get("query_feedback") or {}
     query_history = summary.get("query_history") or {}
+    market_feedback = summary.get("market_feedback") or {}
+    market_history = summary.get("market_history") or {}
     qualified = [item for item in decisions if item.qualified]
     lines = [
         f"Cross-market arbitrage run completed.",
@@ -3460,6 +3635,14 @@ def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -
     if query_history:
         lines.append(
             f"Query trend: {((query_history.get('trend') or {}).get('direction', 'stable'))} / delta={((query_history.get('trend') or {}).get('delta', 0))} / entries={query_history.get('entries_total', 0)}"
+        )
+    if market_feedback:
+        lines.append(
+            f"Market pressure: primary={market_feedback.get('primary_market', 'none')} / tracked={len(market_feedback.get('markets') or [])}"
+        )
+    if market_history:
+        lines.append(
+            f"Market trend: {((market_history.get('trend') or {}).get('direction', 'stable'))} / delta={((market_history.get('trend') or {}).get('delta', 0))} / entries={market_history.get('entries_total', 0)}"
         )
     if qualified:
         top = qualified[:3]
@@ -3534,6 +3717,8 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
     adaptive_history = _persist_adaptive_history(adaptive_profile)
     query_feedback = _query_feedback_from_state(state)
     query_history = _persist_query_history(query_feedback)
+    market_feedback = _market_feedback_from_state(state)
+    market_history = _persist_market_history(market_feedback)
     base_queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
     sellersprite = _collect_sellersprite_summary(base_queries)
     seed_query_keys = {_query_key(item) for item in (sellersprite.get("seed_queries") or []) if _query_key(item)}
@@ -3603,6 +3788,8 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
         "adaptive_history": adaptive_history,
         "query_feedback": query_feedback,
         "query_history": query_history,
+        "market_feedback": market_feedback,
+        "market_history": market_history,
         "sellersprite": sellersprite,
         "base_queries": base_queries,
         "queries": queries,
@@ -3812,6 +3999,8 @@ def _report_cycle(
         "adaptive_history": _persist_adaptive_history(_adaptive_profile_from_state(state)),
         "query_feedback": _query_feedback_from_state(state),
         "query_history": _persist_query_history(_query_feedback_from_state(state)),
+        "market_feedback": _market_feedback_from_state(state),
+        "market_history": _persist_market_history(_market_feedback_from_state(state)),
         "sellersprite": _collect_sellersprite_summary(DEFAULT_DISCOVERY_QUERIES),
         "base_queries": DEFAULT_DISCOVERY_QUERIES,
         "queries": state.get("last_effective_queries") or DEFAULT_DISCOVERY_QUERIES,
