@@ -26,6 +26,7 @@ STATE_DIR.mkdir(parents=True, exist_ok=True)
 STATE_PATH = STATE_DIR / "cross-market-arbitrage-engine.json"
 OUT_DIR = ROOT / "output" / "cross-market-arbitrage-engine"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+LATEST_REPORT_PATH = OUT_DIR / "latest-report.json"
 
 TOOLS_ROOT = ROOT / "tools"
 CRAWL4AI = TOOLS_ROOT / "bin" / "crawl4ai"
@@ -1721,7 +1722,13 @@ def _report_cycle(
     }
     excel_path = _write_excel(run_id, decisions, summary)
     md_path = _write_markdown(run_id, decisions, summary)
-    json_path = _write_json(run_id, {"summary": summary, "decisions": [asdict(item) for item in decisions], "fetch_log": fetch_log})
+    payload = {
+        "summary": summary,
+        "decisions": [asdict(item) for item in decisions],
+        "fetch_log": fetch_log,
+        "deliveries": [],
+    }
+    json_path = _write_json(run_id, payload)
     state.setdefault("runs", []).append(
         {
             "run_id": run_id,
@@ -1754,6 +1761,22 @@ def _report_cycle(
             "decisions": ["cross_market_arbitrage_cycle_completed"],
             "memory_targets": ["project", "runtime"],
             "memory_reasons": ["cross_market_arbitrage_cycle", "project_arbitrage_feedback"],
+        },
+    )
+    payload["summary"] = summary
+    payload["deliveries"] = deliveries
+    _write_json(run_id, payload)
+    _write_json_file(
+        LATEST_REPORT_PATH,
+        {
+            "run_id": run_id,
+            "generated_at": summary["generated_at"],
+            "qualified_count": summary["qualified_count"],
+            "governance": summary.get("governance", {}) or {},
+            "deliveries": deliveries,
+            "excel_path": str(excel_path),
+            "markdown_path": str(md_path),
+            "json_path": str(json_path),
         },
     )
     _save_state(state)
