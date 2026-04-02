@@ -1028,6 +1028,8 @@ def _platform_screen_profile(
     review_count: int | None,
     confidence: float,
     restricted: bool,
+    sellersprite_keyword_signal_score: float = 0.0,
+    sellersprite_product_signal_score: float = 0.0,
 ) -> tuple[float, str, str]:
     margin_score = min(100.0, max(0.0, (margin or 0.0) * 100.0 * 1.5)) if margin is not None else 0.0
     conservative_score = min(100.0, max(0.0, (conservative_margin or 0.0) * 100.0 * 1.5)) if conservative_margin is not None else 0.0
@@ -1043,6 +1045,8 @@ def _platform_screen_profile(
             + confidence * 0.10
             + freshness_score * 0.07
             + min(100.0, estimated_daily_orders * 1.5) * 0.05
+            + sellersprite_keyword_signal_score * 0.08
+            + sellersprite_product_signal_score * 0.10
         )
     elif platform == "walmart":
         fit = (
@@ -1053,6 +1057,8 @@ def _platform_screen_profile(
             + price_stability_score * 0.10
             + confidence * 0.10
             + freshness_score * 0.08
+            + sellersprite_keyword_signal_score * 0.08
+            + sellersprite_product_signal_score * 0.08
         )
     elif platform == "temu":
         fit = (
@@ -1063,6 +1069,8 @@ def _platform_screen_profile(
             + confidence * 0.12
             + review_signal * 0.10
             + freshness_score * 0.08
+            + sellersprite_keyword_signal_score * 0.08
+            + sellersprite_product_signal_score * 0.06
         )
     elif platform == "tiktok":
         virality_proxy = min(100.0, demand_score * 0.8 + differentiation_score * 0.6 + review_signal * 0.3)
@@ -1074,6 +1082,8 @@ def _platform_screen_profile(
             + confidence * 0.10
             + freshness_score * 0.06
             + competition_score * 0.06
+            + sellersprite_keyword_signal_score * 0.18
+            + sellersprite_product_signal_score * 0.08
         )
     else:
         fit = (
@@ -1084,6 +1094,8 @@ def _platform_screen_profile(
             + conservative_score * 0.10
             + confidence * 0.10
             + freshness_score * 0.05
+            + sellersprite_keyword_signal_score * 0.08
+            + sellersprite_product_signal_score * 0.07
         )
     if restricted:
         fit = min(fit, 35.0)
@@ -1524,6 +1536,8 @@ def _is_restricted(text: str) -> tuple[bool, list[str]]:
 
 def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]) -> ArbitrageDecision:
     reasons: list[str] = []
+    sellersprite_keyword_signal_score = float(((candidate.raw_signals or {}).get("sellersprite_keyword_signal_score", 0) or 0))
+    sellersprite_product_signal_score = float(((candidate.raw_signals or {}).get("sellersprite_product_signal_score", 0) or 0))
     restricted, hits = _is_restricted(candidate.title)
     if restricted:
         reasons.append(f"restricted:{','.join(hits[:4])}")
@@ -1678,6 +1692,8 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         review_count=candidate.review_count,
         confidence=confidence,
         restricted=restricted,
+        sellersprite_keyword_signal_score=sellersprite_keyword_signal_score,
+        sellersprite_product_signal_score=sellersprite_product_signal_score,
     )
     qualified = (
         not restricted
@@ -1981,6 +1997,131 @@ def _merge_queries(base_queries: list[str], sellersprite_queries: list[str], lim
         if limit is not None and len(merged) >= limit:
             break
     return merged
+
+
+def _compact_number_to_float(value: str | None) -> float:
+    raw = str(value or "").strip().upper().replace(",", "")
+    if not raw:
+        return 0.0
+    multiplier = 1.0
+    if raw.endswith("K+"):
+        raw = raw[:-2]
+        multiplier = 1000.0
+    elif raw.endswith("M+"):
+        raw = raw[:-2]
+        multiplier = 1000000.0
+    elif raw.endswith("B+"):
+        raw = raw[:-2]
+        multiplier = 1000000000.0
+    elif raw.endswith("K"):
+        raw = raw[:-1]
+        multiplier = 1000.0
+    elif raw.endswith("M"):
+        raw = raw[:-1]
+        multiplier = 1000000.0
+    elif raw.endswith("B"):
+        raw = raw[:-1]
+        multiplier = 1000000000.0
+    try:
+        return float(raw) * multiplier
+    except Exception:
+        return 0.0
+
+
+def _token_set(value: str) -> set[str]:
+    return {token for token in re.split(r"[^a-z0-9]+", _normalize_title(value).lower()) if token}
+
+
+def _overlap_ratio(a: str, b: str) -> float:
+    a_tokens = _token_set(a)
+    b_tokens = _token_set(b)
+    if not a_tokens or not b_tokens:
+        return 0.0
+    overlap = len(a_tokens & b_tokens)
+    return overlap / float(max(len(a_tokens), len(b_tokens)))
+
+
+def _listing_days_from_raw_date(value: str) -> int | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%B %d, %Y"):
+        try:
+            dt = datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+        return max(0, int((_utc_now() - dt).total_seconds() // 86400))
+    return None
+
+
+def _sellersprite_candidate_hints(summary: dict[str, Any], candidate: DemandCandidate) -> dict[str, Any]:
+    keyword_probe = summary.get("keyword_result_probe") or {}
+    product_watchlist = summary.get("product_watchlist") or []
+    query_phrase = candidate.query
+    title_phrase = candidate.title
+    keyword_matches = 0
+    best_keyword_monthly_searches = 0.0
+    best_keyword_overlap = 0.0
+    for row in (keyword_probe.get("top_keywords") or []):
+        if not isinstance(row, dict) or not _valid_sellersprite_keyword(row):
+            continue
+        keyword = str(row.get("keyword", "") or "")
+        overlap = max(_overlap_ratio(query_phrase, keyword), _overlap_ratio(title_phrase, keyword))
+        if overlap < 0.34:
+            continue
+        keyword_matches += 1
+        best_keyword_overlap = max(best_keyword_overlap, overlap)
+        best_keyword_monthly_searches = max(
+            best_keyword_monthly_searches,
+            _compact_number_to_float(str(row.get("monthly_searches", "") or "")),
+        )
+    product_matches = 0
+    best_product_monthly_sales = 0.0
+    best_product_revenue = 0.0
+    best_product_rating = 0.0
+    freshest_listing_days = None
+    for row in product_watchlist:
+        if not isinstance(row, dict):
+            continue
+        product_name = str(row.get("product_name", "") or "")
+        overlap = max(_overlap_ratio(query_phrase, product_name), _overlap_ratio(title_phrase, product_name))
+        if overlap < 0.28:
+            continue
+        product_matches += 1
+        best_product_monthly_sales = max(best_product_monthly_sales, _compact_number_to_float(row.get("monthly_sales_hint")))
+        best_product_revenue = max(best_product_revenue, _compact_number_to_float(row.get("sales_amount_hint")))
+        try:
+            best_product_rating = max(best_product_rating, float(str(row.get("rating_hint", "") or "0")))
+        except Exception:
+            pass
+        listing_date = str(row.get("listing_date_hint", "") or "")
+        listing_days = _listing_days_from_raw_date(listing_date) or _extract_listing_age_days(listing_date)
+        if listing_days is not None:
+            freshest_listing_days = listing_days if freshest_listing_days is None else min(freshest_listing_days, listing_days)
+    keyword_signal_score = min(
+        100.0,
+        keyword_matches * 18.0
+        + min(45.0, best_keyword_monthly_searches / 2500.0)
+        + best_keyword_overlap * 20.0,
+    )
+    product_signal_score = min(
+        100.0,
+        product_matches * 18.0
+        + min(35.0, best_product_monthly_sales / 4000.0)
+        + min(20.0, best_product_revenue / 50000.0),
+    )
+    return {
+        "sellersprite_keyword_matches": keyword_matches,
+        "sellersprite_keyword_monthly_searches": round(best_keyword_monthly_searches, 2),
+        "sellersprite_keyword_overlap": round(best_keyword_overlap, 4),
+        "sellersprite_keyword_signal_score": round(keyword_signal_score, 2),
+        "sellersprite_product_matches": product_matches,
+        "sellersprite_product_monthly_sales": round(best_product_monthly_sales, 2),
+        "sellersprite_product_revenue": round(best_product_revenue, 2),
+        "sellersprite_product_rating": round(best_product_rating, 2),
+        "sellersprite_product_freshest_listing_days": freshest_listing_days,
+        "sellersprite_product_signal_score": round(product_signal_score, 2),
+    }
 
 
 def _collect_sellersprite_summary(queries: list[str]) -> dict[str, Any]:
@@ -2629,6 +2770,16 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
     for item in candidates:
         updated, detail_log = _enrich_sell_candidate(item, max_tools=max_tools)
         fetch_log.append(detail_log)
+        hints = _sellersprite_candidate_hints(sellersprite, updated)
+        updated.raw_signals = {**(updated.raw_signals or {}), **hints}
+        if hints.get("sellersprite_product_freshest_listing_days") is not None and updated.listing_age_days is None:
+            updated.listing_age_days = int(hints["sellersprite_product_freshest_listing_days"])
+        hint_boost = max(
+            float(hints.get("sellersprite_keyword_signal_score", 0) or 0) * 0.12,
+            float(hints.get("sellersprite_product_signal_score", 0) or 0) * 0.16,
+        )
+        if hint_boost:
+            updated.demand_confidence = round(min(95.0, updated.demand_confidence + hint_boost), 2)
         enriched.append(updated)
     candidates = enriched
     bucket = state.setdefault("candidates", {})
