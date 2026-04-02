@@ -326,6 +326,7 @@ class SourceCandidate:
     supplier_similarity_score: float = 0.0
     supplier_similarity_grade: str = "none"
     supplier_similarity_reasons: list[str] = field(default_factory=list)
+    weight_proxy_used: bool = False
     blocked: bool = False
     notes: str = ""
 
@@ -1746,6 +1747,29 @@ def _weight_reasonableness_score(weight_kg: float | None) -> float:
     return 24.0
 
 
+def _estimated_weight_proxy_kg(candidate: DemandCandidate, source: SourceCandidate) -> float | None:
+    text = " ".join(part for part in [candidate.title, candidate.query, source.title] if part).lower()
+    tokens = _match_tokens(text)
+    if not tokens:
+        return None
+    weight = 0.85
+    if tokens & {"hook", "clip", "clips", "pill", "cable", "tray"}:
+        weight = min(weight, 0.38)
+    if tokens & {"bag", "tote", "insert", "box", "bin", "basket", "holder", "container", "organizer"}:
+        weight = max(weight, 0.72)
+    if tokens & {"drawer", "rack", "shelf", "tier", "under", "sink", "wall", "mounted"}:
+        weight = max(weight, 1.15)
+    if tokens & {"metal", "steel", "iron"}:
+        weight += 0.45
+    elif tokens & {"bamboo", "wood", "wooden"}:
+        weight += 0.22
+    elif tokens & {"fabric", "cotton", "linen", "mesh"}:
+        weight -= 0.12
+    if tokens & {"set", "pack", "bundle"}:
+        weight += 0.18
+    return round(max(0.18, min(4.5, weight)), 3)
+
+
 def _supplier_fuzzy_match(
     candidate: DemandCandidate,
     source: SourceCandidate,
@@ -1849,6 +1873,37 @@ def _with_supplier_similarity(
     )
 
 
+def _apply_supplier_weight_proxy(candidate: DemandCandidate, source: SourceCandidate) -> SourceCandidate:
+    if source.weight_kg is not None:
+        return source
+    if source.price_cny is None or source.supplier_similarity_grade not in {"high", "medium"}:
+        return source
+    proxy_weight = _estimated_weight_proxy_kg(candidate, source)
+    if proxy_weight is None:
+        return source
+    proxy_grade = "C" if source.supplier_similarity_grade == "high" else "D"
+    notes = "|".join(part for part in [source.notes, "weight_proxy"] if part)
+    return SourceCandidate(
+        platform=source.platform,
+        link=source.link,
+        title=source.title,
+        price_cny=source.price_cny,
+        weight_kg=proxy_weight,
+        weight_grade=proxy_grade,
+        fetch_tool=source.fetch_tool,
+        match_score=min(100.0, source.match_score + (4.0 if source.supplier_similarity_grade == "high" else 1.5)),
+        keyword_similarity=source.keyword_similarity,
+        attribute_similarity=source.attribute_similarity,
+        price_band_similarity=source.price_band_similarity,
+        supplier_similarity_score=source.supplier_similarity_score,
+        supplier_similarity_grade=source.supplier_similarity_grade,
+        supplier_similarity_reasons=list(source.supplier_similarity_reasons or []),
+        weight_proxy_used=True,
+        blocked=source.blocked,
+        notes=notes,
+    )
+
+
 def _supplier_confidence_score(source: SourceCandidate) -> float:
     base = float(source.match_score or 0)
     if source.blocked:
@@ -1874,6 +1929,8 @@ def _supplier_confidence_score(source: SourceCandidate) -> float:
         base += 10.0
     elif source.supplier_similarity_grade == "medium":
         base += 4.0
+    if source.weight_proxy_used:
+        base -= 8.0
     if source.price_cny is not None:
         base += 6.0
     return round(max(0.0, min(100.0, base)), 2)
@@ -1905,6 +1962,7 @@ def _enrich_source_candidate(platform: str, candidate: SourceCandidate) -> Sourc
         supplier_similarity_score=candidate.supplier_similarity_score,
         supplier_similarity_grade=candidate.supplier_similarity_grade,
         supplier_similarity_reasons=list(candidate.supplier_similarity_reasons or []),
+        weight_proxy_used=candidate.weight_proxy_used,
         blocked=candidate.blocked and detail.status == "blocked",
         notes=notes,
     )
@@ -1940,6 +1998,7 @@ def _best_source_for_platform(
         if not fast:
             row = _enrich_source_candidate(platform, row)
             row = _with_supplier_similarity(candidate, row, source_text=result.text[:8000])
+        row = _apply_supplier_weight_proxy(candidate, row)
         if best is None or row.match_score > best.match_score:
             best = row
         extra_links = _extract_source_links(platform, result.text)
@@ -1978,6 +2037,7 @@ def _best_source_for_platform(
                 notes="detail_probe",
             )
             detail_row = _with_supplier_similarity(candidate, detail_row, source_text=detail_result.text[:8000])
+            detail_row = _apply_supplier_weight_proxy(candidate, detail_row)
             if best is None or detail_row.match_score > best.match_score:
                 best = detail_row
         if row.match_score >= 75 and row.weight_grade in {"A", "B"} and row.supplier_similarity_grade in {"high", "medium"} and not row.blocked:
@@ -2229,6 +2289,8 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         reasons.append("listing_age_above_two_years")
     if head_result_count >= 3 and head_monopoly_score >= 72.0:
         reasons.append("head_links_monopolized")
+    if best_source.weight_proxy_used:
+        reasons.append("supplier_weight_proxy_used")
     if best_source.supplier_similarity_grade == "weak":
         reasons.append("supplier_match_weak_similarity")
     elif best_source.supplier_similarity_grade == "medium":
