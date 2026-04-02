@@ -590,11 +590,17 @@ def _run(cmd: list[str], *, timeout: int = 45) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", "ignore")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", "ignore")
         return subprocess.CompletedProcess(
             cmd,
             124,
-            stdout=(exc.stdout or ""),
-            stderr=((exc.stderr or "") + f"\nTIMEOUT after {timeout}s").strip(),
+            stdout=stdout,
+            stderr=(stderr + f"\nTIMEOUT after {timeout}s").strip(),
         )
 
 
@@ -4300,18 +4306,7 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
         adaptive_thresholds = _adaptive_thresholds_from_state(state)
         threshold_history = _persist_threshold_history(adaptive_thresholds)
         base_queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
-        sellersprite = (
-            {
-                "status": "skipped_fast_test",
-                "seed_queries": [],
-                "available_platforms": [],
-                "keyword_result_probe": {},
-                "product_result_probe": {},
-                "api_probes": [],
-            }
-            if test
-            else _collect_sellersprite_summary(base_queries, fast=False)
-        )
+        sellersprite = _collect_sellersprite_summary(base_queries, fast=test)
         seed_query_keys = {_query_key(item) for item in (sellersprite.get("seed_queries") or []) if _query_key(item)}
         base_query_keys = {_query_key(item) for item in base_queries if _query_key(item)}
         query_limit = 1 if test else 10
