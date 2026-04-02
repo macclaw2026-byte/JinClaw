@@ -625,6 +625,84 @@ def _update_project_repair_value_history(repair_value: Dict[str, Any]) -> Dict[s
     return history
 
 
+def _recommended_project_repair_actions(system_summary: Dict[str, Any]) -> List[Dict[str, Any]]:
+    actions: List[Dict[str, Any]] = []
+    project_repair_value_status = str(system_summary.get("project_repair_value_status", "")).strip().lower()
+    project_repair_value_trend = str(system_summary.get("project_repair_value_trend", "")).strip().lower()
+    top_blocked_category = str(system_summary.get("top_blocked_category", "")).strip()
+    project_result_feedback_status = str(system_summary.get("project_result_feedback_status", "")).strip().lower()
+    feedback_attention_total = int(system_summary.get("project_result_feedback_attention_total", 0) or 0)
+    recovery_efficiency_ratio = float(system_summary.get("recovery_efficiency_ratio", 0) or 0)
+    blocked_targeted_fix_total = int(system_summary.get("blocked_targeted_fix_total", 0) or 0)
+
+    def _add_action(action_id: str, *, priority: str, action: str, reason: str, value: str) -> None:
+        if any(item.get("id") == action_id for item in actions):
+            return
+        actions.append(
+            {
+                "id": action_id,
+                "priority": priority,
+                "action": action,
+                "reason": reason,
+                "value": value,
+            }
+        )
+
+    if project_repair_value_status == "weak":
+        _add_action(
+            "repair-value-rebuild",
+            priority="critical",
+            action="concentrate_repair_capacity_on_high_value_paths",
+            reason="project_repair_value_weak",
+            value=f"score={int(system_summary.get('project_repair_value_score', 0) or 0)}",
+        )
+    elif project_repair_value_trend == "degrading":
+        _add_action(
+            "repair-value-watch",
+            priority="high",
+            action="watch_repair_value_trend_and_reduce_expansion_pressure",
+            reason="project_repair_value_trend_degrading",
+            value=project_repair_value_trend,
+        )
+
+    if top_blocked_category in {"targeted_fix", "runtime_failure", "runtime_or_contract_fix"} and blocked_targeted_fix_total > 0:
+        _add_action(
+            "targeted-fix-hotspot",
+            priority="high",
+            action="bias_repair_cycles_toward_targeted_fix_hotspots",
+            reason="blocked_targeted_fix_pressure",
+            value=str(blocked_targeted_fix_total),
+        )
+    elif top_blocked_category in {"project_crawler_remediation", "authorized_session", "human_checkpoint", "approval_or_contract"}:
+        _add_action(
+            "governance-unblock",
+            priority="high",
+            action="unblock_governance_gated_execution_paths",
+            reason="top_blocked_category",
+            value=top_blocked_category,
+        )
+
+    if project_result_feedback_status in {"thin", "partial"} or feedback_attention_total > 0:
+        _add_action(
+            "feedback-loop-rebuild",
+            priority="high" if feedback_attention_total > 0 else "medium",
+            action="rebuild_project_result_feedback_loop_health",
+            reason="project_result_feedback_pressure",
+            value=f"status={project_result_feedback_status},attention={feedback_attention_total}",
+        )
+
+    if recovery_efficiency_ratio < 0.3:
+        _add_action(
+            "recovery-efficiency-improve",
+            priority="medium",
+            action="reduce_cycle_spread_and_improve_recovery_efficiency",
+            reason="recovery_efficiency_low",
+            value=f"{recovery_efficiency_ratio:.4f}",
+        )
+
+    return actions[:6]
+
+
 def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seconds: int = 900) -> Dict[str, Any]:
     """
     中文注解：
@@ -732,7 +810,9 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
         system_summary=snapshot.get("summary", {}) or {},
         project_result_feedback=project_result_feedback,
     )
+    project_repair_recommendations = _recommended_project_repair_actions(snapshot.get("summary", {}) or {})
     snapshot["project_scheduler_policy"] = project_scheduler_policy
+    snapshot["project_repair_recommendations"] = project_repair_recommendations
     snapshot["scheduler_states"] = {
         "crawler_remediation": crawler_remediation_scheduler_state,
         "seller_bulk": seller_bulk_scheduler_state,
@@ -747,6 +827,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
         "project_result_feedback_history": project_result_feedback_history,
         "project_repair_value": repair_value,
         "project_repair_value_history": project_repair_value_history,
+        "project_repair_recommendations": project_repair_recommendations,
         "crawler_remediation_queue": crawler_remediation_queue,
         "crawler_remediation_plan": crawler_remediation_plan,
         "crawler_remediation_execution": crawler_remediation_execution,

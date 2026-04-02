@@ -516,6 +516,9 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
             "remediation_plan": (control_plane.get("crawler_remediation_plan", {}).get("items", []) or [])[:6],
             "remediation_execution": (control_plane.get("crawler_remediation_execution", {}).get("items", []) or [])[:6],
         },
+        "project_repair_value": control_plane.get("project_repair_value", {}) or {},
+        "project_repair_history": (control_plane.get("project_repair_value_history", {}) or {}).get("trend", {}) or {},
+        "project_repair_recommendations": (control_plane.get("project_repair_recommendations", []) or [])[:6],
         "doctor_strategy": doctor_strategy,
         "doctor_cycle_stats": {
             "processed_total": processed_total,

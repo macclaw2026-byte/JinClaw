@@ -156,6 +156,8 @@ def run_mission_supervisor(*, stale_after_seconds: int = 300, escalation_after_s
         "crawler_feedback": (control_plane.get("crawler_capability_profile", {}) or {}).get("feedback", {}) or {},
         "crawler_remediation_queue": (control_plane.get("crawler_remediation_queue", {}) or {}),
         "crawler_remediation_plan": (control_plane.get("crawler_remediation_plan", {}) or {}),
+        "project_repair_value": control_plane.get("project_repair_value", {}) or {},
+        "project_repair_recommendations": (control_plane.get("project_repair_recommendations", []) or [])[:6],
         "blocked_summary": {
             "total": ((control_plane.get("system_snapshot", {}) or {}).get("summary", {}) or {}).get("blocked_total", 0),
             "project_crawler_remediation": ((control_plane.get("system_snapshot", {}) or {}).get("summary", {}) or {}).get("blocked_project_crawler_remediation_total", 0),
