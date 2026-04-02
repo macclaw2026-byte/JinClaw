@@ -295,6 +295,58 @@ SOURCE_QUERY_BANNED_TOKENS = {
     "shtml",
 }
 
+SOURCE_QUERY_TRANSLATIONS = {
+    "drawer": "抽屉",
+    "organizer": "收纳盒",
+    "organizers": "收纳盒",
+    "storage": "收纳",
+    "basket": "收纳篮",
+    "bin": "收纳盒",
+    "bins": "收纳盒",
+    "box": "收纳盒",
+    "boxes": "收纳盒",
+    "tray": "托盘",
+    "shelf": "置物架",
+    "rack": "置物架",
+    "holder": "支架",
+    "hook": "挂钩",
+    "hooks": "挂钩",
+    "wall": "墙面",
+    "mounted": "壁挂",
+    "under": "下方",
+    "sink": "水槽",
+    "desk": "桌面",
+    "desktop": "桌面",
+    "cable": "线缆",
+    "clips": "卡扣",
+    "clip": "卡扣",
+    "pill": "药盒",
+    "plastic": "塑料",
+    "clear": "透明",
+    "acrylic": "亚克力",
+    "bamboo": "竹制",
+    "wood": "木质",
+    "wooden": "木质",
+    "metal": "金属",
+    "steel": "钢制",
+    "black": "黑色",
+    "white": "白色",
+    "gray": "灰色",
+    "grey": "灰色",
+    "bag": "包",
+    "tote": "托特包",
+    "insert": "内胆",
+    "container": "容器",
+    "dispenser": "分配器",
+    "kitchen": "厨房",
+    "closet": "衣柜",
+    "tier": "分层",
+    "stackable": "可叠加",
+    "foldable": "可折叠",
+    "magnetic": "磁吸",
+    "adhesive": "粘贴",
+}
+
 
 @dataclass
 class FetchResult:
@@ -684,6 +736,40 @@ def _source_query_variants(candidate: DemandCandidate) -> list[str]:
         if text and text not in variants:
             variants.append(text)
     return variants[:6]
+
+
+def _to_chinese_source_queries(english_variants: list[str]) -> list[str]:
+    chinese_variants: list[str] = []
+    for variant in english_variants:
+        tokens = [token for token in re.findall(r"[a-z0-9]+", str(variant or "").lower()) if token]
+        translated = [SOURCE_QUERY_TRANSLATIONS.get(token, "") for token in tokens]
+        translated = [token for token in translated if token]
+        if len(translated) < 2:
+            continue
+        compact_translated: list[str] = []
+        for token in translated[:6]:
+            if compact_translated and compact_translated[-1] == token:
+                continue
+            compact_translated.append(token)
+        phrase = "".join(compact_translated).strip()
+        if phrase and phrase not in chinese_variants:
+            chinese_variants.append(phrase)
+    return chinese_variants[:4]
+
+
+def _source_query_variants_for_platform(candidate: DemandCandidate, platform: str) -> list[str]:
+    base_variants = _source_query_variants(candidate)
+    if platform not in {"1688", "yiwugo"}:
+        return base_variants
+    chinese_variants = _to_chinese_source_queries(base_variants)
+    merged: list[str] = []
+    for text in [*chinese_variants, *base_variants]:
+        normalized = re.sub(r"\s+", " ", str(text or "")).strip()
+        if not normalized:
+            continue
+        if normalized not in merged:
+            merged.append(normalized)
+    return merged[:8]
 
 
 def _load_site_preferences() -> dict[str, Any]:
@@ -2016,7 +2102,7 @@ def _best_source_for_platform(
 ) -> tuple[SourceCandidate, list[dict[str, Any]]]:
     fetch_log: list[dict[str, Any]] = []
     best: SourceCandidate | None = None
-    for query_variant in _source_query_variants(candidate):
+    for query_variant in _source_query_variants_for_platform(candidate, platform):
         url = SOURCE_PLATFORM_SEARCH[platform](query_variant)
         result = fetch_best(platform, url, max_tools=max_tools, fast=fast)
         fetch_log.append(
