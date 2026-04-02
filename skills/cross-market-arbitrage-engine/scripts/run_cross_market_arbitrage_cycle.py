@@ -4312,13 +4312,13 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
         )
         seed_query_keys = {_query_key(item) for item in (sellersprite.get("seed_queries") or []) if _query_key(item)}
         base_query_keys = {_query_key(item) for item in base_queries if _query_key(item)}
-        query_limit = 2 if test else 10
+        query_limit = 1 if test else 10
         queries = _apply_query_adaptive_order(
             _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=query_limit),
             adaptive_profile,
             limit=query_limit,
         )
-        sell_platforms = ["amazon", "temu"] if test else ["temu", "amazon", "walmart"]
+        sell_platforms = ["amazon"] if test else ["temu", "amazon", "walmart"]
         source_platforms = list((adaptive_profile.get("source_order") or []) or ["made_in_china", "1688", "yiwugo"])
         if test:
             source_platforms = source_platforms[:1]
@@ -4353,7 +4353,7 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
             if item.candidate_id in competition_hints:
                 item.raw_signals = {**(item.raw_signals or {}), **competition_hints[item.candidate_id]}
         if test:
-            demand_candidates = demand_candidates[:3]
+            demand_candidates = demand_candidates[:1]
 
         source_matches: dict[str, list[SourceCandidate]] = {}
         for candidate in demand_candidates:
@@ -4798,6 +4798,13 @@ def main() -> int:
             "execution_flags": execution_flags,
             "scheduler_state_before": scheduler_state_before,
         }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    if args.test:
+        payload = run_once(test=True)
+        payload["scheduler_policy"] = scheduler_policy
+        payload["execution_flags"] = execution_flags
+        payload["scheduler_state_before"] = scheduler_state_before
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
     state = _load_state()
