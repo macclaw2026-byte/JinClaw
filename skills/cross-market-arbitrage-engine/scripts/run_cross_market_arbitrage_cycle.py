@@ -328,6 +328,7 @@ class ArbitrageDecision:
     trend_source_score: float = 0.0
     execution_resilience_score: float = 0.0
     supplier_confidence_score: float = 0.0
+    head_monopoly_score: float = 0.0
     decision_bucket: str = "watchlist"
     priority_reason: str = ""
     reasons: list[str] = field(default_factory=list)
@@ -355,6 +356,7 @@ DECISION_DEFAULTS: dict[str, Any] = {
     "trend_source_score": 0.0,
     "execution_resilience_score": 0.0,
     "supplier_confidence_score": 0.0,
+    "head_monopoly_score": 0.0,
     "decision_bucket": "watchlist",
     "priority_reason": "",
     "reasons": [],
@@ -1063,6 +1065,8 @@ def _competition_density_hints(candidates: list[DemandCandidate]) -> dict[str, d
     hints: dict[str, dict[str, Any]] = {}
     for rows in by_market.values():
         candidate_count = len(rows)
+        head_rows = rows[: min(5, candidate_count)]
+        head_count = len(head_rows)
         review_values = sorted(int(item.review_count or 0) for item in rows if item.review_count is not None)
         if review_values:
             median_reviews = review_values[len(review_values) // 2]
@@ -1071,9 +1075,19 @@ def _competition_density_hints(candidates: list[DemandCandidate]) -> dict[str, d
         brand_counts: dict[str, int] = {}
         normalized_titles = [_normalize_title(item.title) for item in rows]
         token_frequency: dict[str, int] = {}
+        head_brand_counts: dict[str, int] = {}
+        head_brand_reviews: dict[str, float] = {}
+        head_phrase_counts: dict[str, int] = {}
         for item in rows:
             brand = _brand_hint(item.title)
             brand_counts[brand] = int(brand_counts.get(brand, 0) or 0) + 1
+        for item in head_rows:
+            brand = _brand_hint(item.title)
+            head_brand_counts[brand] = int(head_brand_counts.get(brand, 0) or 0) + 1
+            head_brand_reviews[brand] = float(head_brand_reviews.get(brand, 0.0) or 0.0) + float(item.review_count or 0)
+            phrase = " ".join(_normalize_title(item.title).split()[:3]).strip()
+            if phrase:
+                head_phrase_counts[phrase] = int(head_phrase_counts.get(phrase, 0) or 0) + 1
         for title in normalized_titles:
             for token in set(title.split()):
                 if len(token) < 4:
@@ -1086,6 +1100,21 @@ def _competition_density_hints(candidates: list[DemandCandidate]) -> dict[str, d
             else 0.0
         )
         ad_density = sum(1 for item in rows if "sponsored" in _normalize_title(item.title)) / candidate_count if candidate_count else 0.0
+        head_brand_share = max(head_brand_counts.values()) / head_count if head_brand_counts and head_count else 0.0
+        total_head_reviews = sum(float(item.review_count or 0) for item in head_rows)
+        head_review_share = (
+            max(head_brand_reviews.values()) / total_head_reviews
+            if head_brand_reviews and total_head_reviews > 0
+            else head_brand_share
+        )
+        head_phrase_share = max(head_phrase_counts.values()) / head_count if head_phrase_counts and head_count else 0.0
+        head_monopoly_score = min(
+            100.0,
+            head_brand_share * 42.0
+            + head_review_share * 34.0
+            + head_phrase_share * 16.0
+            + ad_density * 8.0,
+        )
         for item in rows:
             hints[item.candidate_id] = {
                 "query_candidate_count": candidate_count,
@@ -1093,6 +1122,11 @@ def _competition_density_hints(candidates: list[DemandCandidate]) -> dict[str, d
                 "dominant_brand_share": round(dominant_brand_share, 4),
                 "repeated_token_share": round(repeated_token_share, 4),
                 "ad_density": round(ad_density, 4),
+                "head_result_count": head_count,
+                "head_brand_share": round(head_brand_share, 4),
+                "head_review_share": round(head_review_share, 4),
+                "head_phrase_share": round(head_phrase_share, 4),
+                "head_monopoly_score": round(head_monopoly_score, 2),
             }
     return hints
 
@@ -1109,14 +1143,16 @@ def _competition_score(text: str, *, review_count: int | None = None, raw_signal
     dominant_brand_share = float(raw_signals.get("dominant_brand_share", 0) or 0)
     repeated_token_share = float(raw_signals.get("repeated_token_share", 0) or 0)
     ad_density = float(raw_signals.get("ad_density", 0) or 0)
+    head_monopoly_score = float(raw_signals.get("head_monopoly_score", 0) or 0)
     density_penalty = min(22.0, max(0.0, query_candidate_count - 3.0) * 3.0)
     review_penalty = min(18.0, query_median_reviews / 600.0)
     if query_candidate_count >= 3:
         concentration_penalty = min(20.0, dominant_brand_share * 22.0 + repeated_token_share * 12.0 + ad_density * 10.0)
     else:
         concentration_penalty = min(8.0, ad_density * 10.0)
+    monopoly_penalty = min(22.0, head_monopoly_score * 0.22) if query_candidate_count >= 3 else 0.0
     review_tail_penalty = min(10.0, (float(review_count or 0) / 2500.0)) if review_count is not None else 0.0
-    penalty = min(80.0, base_penalty + density_penalty + review_penalty + concentration_penalty + review_tail_penalty)
+    penalty = min(85.0, base_penalty + density_penalty + review_penalty + concentration_penalty + monopoly_penalty + review_tail_penalty)
     return max(12.0, 100.0 - penalty)
 
 
@@ -1953,6 +1989,8 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
     conservative_margin = conservative_profit / conservative_sell if conservative_sell else None
     estimated_daily_orders = candidate.estimated_daily_orders or 0.0
     listing_age_days = candidate.listing_age_days
+    head_monopoly_score = float(((candidate.raw_signals or {}).get("head_monopoly_score", 0) or 0))
+    head_result_count = int(((candidate.raw_signals or {}).get("head_result_count", 0) or 0))
     demand_score = min(100.0, estimated_daily_orders * 2.0) if estimated_daily_orders else min(60.0, candidate.demand_confidence)
     if estimated_daily_orders < 30:
         reasons.append("estimated_daily_orders_below_threshold")
@@ -1960,6 +1998,8 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         reasons.append("listing_age_unknown")
     elif listing_age_days > 730:
         reasons.append("listing_age_above_two_years")
+    if head_result_count >= 3 and head_monopoly_score >= 72.0:
+        reasons.append("head_links_monopolized")
     competition_score = _competition_score(
         candidate.title,
         review_count=candidate.review_count,
@@ -2037,6 +2077,7 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         and launchability_score >= float(thresholds.get("launchability_floor", 70.0) or 70.0)
         and confidence >= float(thresholds.get("confidence_floor", 80.0) or 80.0)
         and platform_fit_score >= float(thresholds.get("platform_fit_floor", 65.0) or 65.0)
+        and (head_result_count < 3 or head_monopoly_score < 72.0)
     )
     decision_bucket, priority_reason = _decision_bucket(
         qualified=qualified,
@@ -2088,6 +2129,7 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         trend_source_score=float(selection_components.get("trend_source_score", 0) or 0),
         execution_resilience_score=float(selection_components.get("execution_resilience_score", 0) or 0),
         supplier_confidence_score=supplier_confidence_score,
+        head_monopoly_score=round(head_monopoly_score, 2),
         decision_bucket=decision_bucket,
         priority_reason=priority_reason,
         reasons=[*reasons, f"selection_thesis:{selection_thesis}", f"selection_components:{json.dumps(selection_components, ensure_ascii=False)}"],
@@ -2632,6 +2674,7 @@ def _query_feedback_from_state(state: dict[str, Any]) -> dict[str, Any]:
                 "refresh_priority_total": 0.0,
                 "sellersprite_keyword_signal_total": 0.0,
                 "sellersprite_product_signal_total": 0.0,
+                "head_monopoly_total": 0.0,
                 "failure_categories": {},
                 "platform_counts": {},
             },
@@ -2641,9 +2684,11 @@ def _query_feedback_from_state(state: dict[str, Any]) -> dict[str, Any]:
         raw_signals = payload.get("raw_signals") or {}
         keyword_signal = float(raw_signals.get("sellersprite_keyword_signal_score", 0) or 0)
         product_signal = float(raw_signals.get("sellersprite_product_signal_score", 0) or 0)
+        head_monopoly_score = float(raw_signals.get("head_monopoly_score", 0) or 0)
         stats["refresh_priority_total"] += refresh_priority
         stats["sellersprite_keyword_signal_total"] += keyword_signal
         stats["sellersprite_product_signal_total"] += product_signal
+        stats["head_monopoly_total"] += head_monopoly_score
         platform = str(payload.get("sell_platform", "")).lower().strip() or "unknown"
         platform_counts = stats["platform_counts"]
         platform_counts[platform] = int(platform_counts.get(platform, 0) or 0) + 1
@@ -2669,6 +2714,7 @@ def _query_feedback_from_state(state: dict[str, Any]) -> dict[str, Any]:
         avg_refresh_priority = float(stats.get("refresh_priority_total", 0) or 0) / candidate_count
         avg_keyword_signal = float(stats.get("sellersprite_keyword_signal_total", 0) or 0) / candidate_count
         avg_product_signal = float(stats.get("sellersprite_product_signal_total", 0) or 0) / candidate_count
+        avg_head_monopoly = float(stats.get("head_monopoly_total", 0) or 0) / candidate_count
         qualified_count = int(stats.get("qualified_count", 0) or 0)
         near_miss_count = int(stats.get("near_miss_count", 0) or 0)
         watchlist_count = int(stats.get("watchlist_count", 0) or 0)
@@ -2678,6 +2724,7 @@ def _query_feedback_from_state(state: dict[str, Any]) -> dict[str, Any]:
             + watchlist_count * 0.5
             + min(2.0, avg_refresh_priority / 30.0)
             + min(2.0, max(avg_keyword_signal, avg_product_signal) / 28.0)
+            - min(2.5, avg_head_monopoly / 35.0)
         )
         query_bias = max(-1.5, min(6.0, score - 1.0))
         top_platform = "unknown"
@@ -2699,6 +2746,7 @@ def _query_feedback_from_state(state: dict[str, Any]) -> dict[str, Any]:
                 "avg_refresh_priority": round(avg_refresh_priority, 2),
                 "avg_sellersprite_keyword_signal": round(avg_keyword_signal, 2),
                 "avg_sellersprite_product_signal": round(avg_product_signal, 2),
+                "avg_head_monopoly_score": round(avg_head_monopoly, 2),
                 "top_platform": top_platform,
                 "top_failure_category": next(iter((stats.get("failure_categories") or {}).keys()), "none"),
             }
@@ -2777,6 +2825,7 @@ def _market_feedback_from_state(state: dict[str, Any]) -> dict[str, Any]:
                 "query": query,
                 "candidate_count": 0,
                 "competition_scores": [],
+                "head_monopoly_scores": [],
                 "review_counts": [],
                 "listing_ages": [],
                 "qualified_count": 0,
@@ -2785,6 +2834,8 @@ def _market_feedback_from_state(state: dict[str, Any]) -> dict[str, Any]:
         )
         row["candidate_count"] += 1
         signals = payload.get("raw_signals") or {}
+        if signals.get("head_monopoly_score") is not None:
+            row["head_monopoly_scores"].append(float(signals.get("head_monopoly_score") or 0))
         if signals.get("query_median_reviews") is not None:
             row["review_counts"].append(float(signals.get("query_median_reviews") or 0))
         if payload.get("review_count") is not None:
@@ -2801,6 +2852,7 @@ def _market_feedback_from_state(state: dict[str, Any]) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     for value in market_map.values():
         competition_avg = round(sum(value["competition_scores"]) / len(value["competition_scores"]), 2) if value["competition_scores"] else 0.0
+        head_monopoly_avg = round(sum(value["head_monopoly_scores"]) / len(value["head_monopoly_scores"]), 2) if value["head_monopoly_scores"] else 0.0
         review_median = 0.0
         if value["review_counts"]:
             ordered = sorted(value["review_counts"])
@@ -2810,6 +2862,7 @@ def _market_feedback_from_state(state: dict[str, Any]) -> dict[str, Any]:
             min(
                 100.0,
                 max(0.0, 100.0 - competition_avg) * 0.35
+                + min(20.0, head_monopoly_avg / 5.0)
                 + min(35.0, review_median / 250.0)
                 + min(20.0, listing_age_avg / 90.0)
                 - value["qualified_count"] * 4.0
@@ -2824,6 +2877,7 @@ def _market_feedback_from_state(state: dict[str, Any]) -> dict[str, Any]:
                 "query": value["query"],
                 "candidate_count": value["candidate_count"],
                 "competition_score_avg": competition_avg,
+                "head_monopoly_avg": head_monopoly_avg,
                 "review_median": review_median,
                 "listing_age_avg": listing_age_avg,
                 "qualified_count": value["qualified_count"],
@@ -3200,7 +3254,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
     autosize(ws)
 
     near_ws = wb.create_sheet("Near_Miss")
-    near_ws.append(["产品名称", "售卖平台", "来源类型", "平台适配分", "精选分", "精选标签", "趋势源分", "执行分", "货源可信分", "可做分", "置信度", "优先原因", "原因"])
+    near_ws.append(["产品名称", "售卖平台", "来源类型", "平台适配分", "精选分", "精选标签", "趋势源分", "执行分", "货源可信分", "头部垄断分", "可做分", "置信度", "优先原因", "原因"])
     style_header(near_ws)
     for item in decisions:
         if item.decision_bucket != "near_miss":
@@ -3215,6 +3269,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             item.trend_source_score,
             item.execution_resilience_score,
             item.supplier_confidence_score,
+            item.head_monopoly_score,
             item.launchability_score,
             item.confidence_score,
             item.priority_reason,
@@ -3223,7 +3278,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
     autosize(near_ws)
 
     watch_ws = wb.create_sheet("Watchlist")
-    watch_ws.append(["产品名称", "售卖平台", "来源类型", "平台适配分", "精选分", "精选标签", "趋势源分", "执行分", "货源可信分", "可做分", "置信度", "优先原因", "原因"])
+    watch_ws.append(["产品名称", "售卖平台", "来源类型", "平台适配分", "精选分", "精选标签", "趋势源分", "执行分", "货源可信分", "头部垄断分", "可做分", "置信度", "优先原因", "原因"])
     style_header(watch_ws)
     for item in decisions:
         if item.decision_bucket != "watchlist":
@@ -3238,6 +3293,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             item.trend_source_score,
             item.execution_resilience_score,
             item.supplier_confidence_score,
+            item.head_monopoly_score,
             item.launchability_score,
             item.confidence_score,
             item.priority_reason,
@@ -3249,7 +3305,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
         platform_ws = wb.create_sheet(_sheet_name_for_platform(platform))
         platform_ws.append([
             "产品名称", "目标采购平台", "采购链接", "目标售卖平台", "售卖链接", "售价(RMB)", "采购成本(RMB)", "毛利率",
-            "保守毛利率", "估算日单量", "上架天数", "精选分", "精选标签", "精选论点", "趋势源分", "执行分", "货源可信分", "可做分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "是否入选", "原因"
+            "保守毛利率", "估算日单量", "上架天数", "精选分", "精选标签", "精选论点", "趋势源分", "执行分", "货源可信分", "头部垄断分", "可做分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "是否入选", "原因"
         ])
         style_header(platform_ws)
         platform_rows = _platform_sheet_rows(decisions, platform)
@@ -3274,6 +3330,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
                 item.trend_source_score,
                 item.execution_resilience_score,
                 item.supplier_confidence_score,
+                item.head_monopoly_score,
                 item.launchability_score,
                 item.platform_fit_score,
                 item.platform_fit_label,
@@ -3289,7 +3346,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
     headers = [
         "产品名称", "采购平台", "采购链接", "售卖平台", "售卖链接", "售价(RMB)", "采购成本(RMB)", "重量(kg)",
         "毛利额", "毛利率", "保守毛利率", "平台佣金率", "估算日单量", "上架天数", "需求分", "竞争分",
-        "差异化分", "价格稳定分", "精选分", "精选标签", "精选论点", "趋势源分", "执行分", "货源可信分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "综合可做分", "置信度", "重量等级", "是否入选", "原因"
+        "差异化分", "价格稳定分", "精选分", "精选标签", "精选论点", "趋势源分", "执行分", "货源可信分", "头部垄断分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "综合可做分", "置信度", "重量等级", "是否入选", "原因"
     ]
     audit.append(headers)
     style_header(audit)
@@ -3319,6 +3376,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             item.trend_source_score,
             item.execution_resilience_score,
             item.supplier_confidence_score,
+            item.head_monopoly_score,
             item.platform_fit_score,
             item.platform_fit_label,
             item.platform_recommendation,
@@ -3353,6 +3411,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             "Avg Refresh Priority",
             "Avg SS Keyword Signal",
             "Avg SS Product Signal",
+            "Avg Head Monopoly",
             "Top Platform",
             "Top Failure Category",
         ])
@@ -3369,6 +3428,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
                 row.get("avg_refresh_priority", 0),
                 row.get("avg_sellersprite_keyword_signal", 0),
                 row.get("avg_sellersprite_product_signal", 0),
+                row.get("avg_head_monopoly_score", 0),
                 row.get("top_platform", ""),
                 row.get("top_failure_category", ""),
             ])
@@ -3383,6 +3443,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             "Query",
             "Pressure Score",
             "Competition Avg",
+            "Head Monopoly Avg",
             "Review Median",
             "Listing Age Avg",
             "Candidates",
@@ -3397,6 +3458,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
                 row.get("query", ""),
                 row.get("pressure_score", 0),
                 row.get("competition_score_avg", 0),
+                row.get("head_monopoly_avg", 0),
                 row.get("review_median", 0),
                 row.get("listing_age_avg", 0),
                 row.get("candidate_count", 0),
@@ -3626,7 +3688,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         ])
         for row in (query_feedback.get("queries") or [])[:8]:
             lines.append(
-                f"- `{row.get('query', '')}` / score=`{row.get('score', 0)}` / bias=`{row.get('query_bias', 0)}` / qualified=`{row.get('qualified_count', 0)}` / near_miss=`{row.get('near_miss_count', 0)}` / top_platform=`{row.get('top_platform', '')}`"
+                f"- `{row.get('query', '')}` / score=`{row.get('score', 0)}` / bias=`{row.get('query_bias', 0)}` / qualified=`{row.get('qualified_count', 0)}` / near_miss=`{row.get('near_miss_count', 0)}` / monopoly_avg=`{row.get('avg_head_monopoly_score', 0)}` / top_platform=`{row.get('top_platform', '')}`"
             )
     if market_feedback:
         lines.extend([
@@ -3636,7 +3698,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         ])
         for row in (market_feedback.get("markets") or [])[:8]:
             lines.append(
-                f"- `{row.get('market_key', '')}` / pressure=`{row.get('pressure_score', 0)}` / competition_avg=`{row.get('competition_score_avg', 0)}` / review_median=`{row.get('review_median', 0)}` / listing_age_avg=`{row.get('listing_age_avg', 0)}`"
+                f"- `{row.get('market_key', '')}` / pressure=`{row.get('pressure_score', 0)}` / competition_avg=`{row.get('competition_score_avg', 0)}` / monopoly_avg=`{row.get('head_monopoly_avg', 0)}` / review_median=`{row.get('review_median', 0)}` / listing_age_avg=`{row.get('listing_age_avg', 0)}`"
             )
     lines.extend([
         "",
@@ -3658,7 +3720,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
             f"- Margin: `{item.gross_margin_rate}`",
             f"- Conservative margin: `{item.conservative_margin_rate}`",
             f"- Selection score: `{item.selection_score}` / `{item.selection_grade}` / `{item.selection_thesis}`",
-            f"- Trend source / execution / supplier: `{item.trend_source_score}` / `{item.execution_resilience_score}` / `{item.supplier_confidence_score}`",
+            f"- Trend source / execution / supplier / monopoly: `{item.trend_source_score}` / `{item.execution_resilience_score}` / `{item.supplier_confidence_score}` / `{item.head_monopoly_score}`",
             f"- Platform fit: `{item.platform_fit_score}` / `{item.platform_fit_label}` / `{item.platform_recommendation}`",
             f"- Launchability: `{item.launchability_score}`",
             f"- Confidence: `{item.confidence_score}`",
@@ -3673,7 +3735,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
             f"- Platform: `{item.sell_platform}`",
             f"- Priority reason: `{item.priority_reason}`",
             f"- Selection score: `{item.selection_score}` / `{item.selection_grade}` / `{item.selection_thesis}`",
-            f"- Trend source / execution / supplier: `{item.trend_source_score}` / `{item.execution_resilience_score}` / `{item.supplier_confidence_score}`",
+            f"- Trend source / execution / supplier / monopoly: `{item.trend_source_score}` / `{item.execution_resilience_score}` / `{item.supplier_confidence_score}` / `{item.head_monopoly_score}`",
             f"- Platform fit: `{item.platform_fit_score}` / `{item.platform_fit_label}` / `{item.platform_recommendation}`",
             f"- Launchability: `{item.launchability_score}` / confidence=`{item.confidence_score}`",
             f"- Reasons: `{', '.join(item.reasons or ['none'])}`",
@@ -3798,7 +3860,7 @@ def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -
         )
     if query_feedback:
         lines.append(
-            f"Query feedback: primary={query_feedback.get('primary_query', 'none')} / tracked={len(query_feedback.get('queries') or [])}"
+            f"Query feedback: primary={query_feedback.get('primary_query', 'none')} / tracked={len(query_feedback.get('queries') or [])} / monopoly_focus={round(float(((query_feedback.get('queries') or [{}])[0] or {}).get('avg_head_monopoly_score', 0) or 0), 2) if (query_feedback.get('queries') or []) else 0}"
         )
     if query_history:
         lines.append(
@@ -3806,7 +3868,7 @@ def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -
         )
     if market_feedback:
         lines.append(
-            f"Market pressure: primary={market_feedback.get('primary_market', 'none')} / tracked={len(market_feedback.get('markets') or [])}"
+            f"Market pressure: primary={market_feedback.get('primary_market', 'none')} / tracked={len(market_feedback.get('markets') or [])} / monopoly={round(float(((market_feedback.get('markets') or [{}])[0] or {}).get('head_monopoly_avg', 0) or 0), 2) if (market_feedback.get('markets') or []) else 0}"
         )
     if market_history:
         lines.append(
