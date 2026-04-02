@@ -298,6 +298,9 @@ class ArbitrageDecision:
     competition_score: float
     differentiation_score: float
     price_stability_score: float
+    platform_fit_score: float
+    platform_fit_label: str
+    platform_recommendation: str
     launchability_score: float
     confidence_score: float
     weight_grade: str
@@ -313,6 +316,9 @@ DECISION_DEFAULTS: dict[str, Any] = {
     "competition_score": 0.0,
     "differentiation_score": 0.0,
     "price_stability_score": 0.0,
+    "platform_fit_score": 0.0,
+    "platform_fit_label": "watch",
+    "platform_recommendation": "watchlist_only",
     "launchability_score": 0.0,
     "confidence_score": 0.0,
     "weight_grade": "D",
@@ -1003,6 +1009,87 @@ def _price_stability_from_history(history: list[float]) -> float:
     return max(0.0, min(100.0, 100.0 - cv * 200.0))
 
 
+def _platform_screen_profile(
+    *,
+    platform: str,
+    estimated_daily_orders: float,
+    demand_score: float,
+    competition_score: float,
+    differentiation_score: float,
+    price_stability_score: float,
+    margin: float | None,
+    conservative_margin: float | None,
+    listing_age_days: int | None,
+    review_count: int | None,
+    confidence: float,
+    restricted: bool,
+) -> tuple[float, str, str]:
+    margin_score = min(100.0, max(0.0, (margin or 0.0) * 100.0 * 1.5)) if margin is not None else 0.0
+    conservative_score = min(100.0, max(0.0, (conservative_margin or 0.0) * 100.0 * 1.5)) if conservative_margin is not None else 0.0
+    review_signal = min(100.0, (review_count or 0) / 250.0)
+    freshness_score = 0.0 if listing_age_days is None else (100.0 if listing_age_days <= 365 else (75.0 if listing_age_days <= 730 else 20.0))
+    platform = platform.lower()
+    if platform == "amazon":
+        fit = (
+            demand_score * 0.28
+            + competition_score * 0.20
+            + margin_score * 0.18
+            + conservative_score * 0.12
+            + confidence * 0.10
+            + freshness_score * 0.07
+            + min(100.0, estimated_daily_orders * 1.5) * 0.05
+        )
+    elif platform == "walmart":
+        fit = (
+            demand_score * 0.24
+            + competition_score * 0.18
+            + margin_score * 0.18
+            + conservative_score * 0.12
+            + price_stability_score * 0.10
+            + confidence * 0.10
+            + freshness_score * 0.08
+        )
+    elif platform == "temu":
+        fit = (
+            demand_score * 0.18
+            + differentiation_score * 0.22
+            + margin_score * 0.18
+            + conservative_score * 0.12
+            + confidence * 0.12
+            + review_signal * 0.10
+            + freshness_score * 0.08
+        )
+    elif platform == "tiktok":
+        virality_proxy = min(100.0, demand_score * 0.8 + differentiation_score * 0.6 + review_signal * 0.3)
+        fit = (
+            virality_proxy * 0.30
+            + differentiation_score * 0.22
+            + margin_score * 0.16
+            + conservative_score * 0.10
+            + confidence * 0.10
+            + freshness_score * 0.06
+            + competition_score * 0.06
+        )
+    else:
+        fit = (
+            demand_score * 0.25
+            + competition_score * 0.20
+            + differentiation_score * 0.15
+            + margin_score * 0.15
+            + conservative_score * 0.10
+            + confidence * 0.10
+            + freshness_score * 0.05
+        )
+    if restricted:
+        fit = min(fit, 35.0)
+    fit = round(max(0.0, min(100.0, fit)), 2)
+    if fit >= 80.0:
+        return fit, "strong", "priority_test"
+    if fit >= 65.0:
+        return fit, "medium", "watch_and_validate"
+    return fit, "watch", "watchlist_only"
+
+
 def _unit_to_kg(value: float, unit: str) -> float:
     unit = unit.lower()
     if unit in {"g", "克"}:
@@ -1459,13 +1546,16 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
             platform_fee_rate=None,
             estimated_daily_orders=candidate.estimated_daily_orders,
             listing_age_days=candidate.listing_age_days,
-            demand_score=0.0,
-            competition_score=0.0,
-            differentiation_score=0.0,
-            price_stability_score=0.0,
-            launchability_score=0.0,
-            confidence_score=0.0,
-            weight_grade="D",
+        demand_score=0.0,
+        competition_score=0.0,
+        differentiation_score=0.0,
+        price_stability_score=0.0,
+        platform_fit_score=0.0,
+        platform_fit_label="watch",
+        platform_recommendation="watchlist_only",
+        launchability_score=0.0,
+        confidence_score=0.0,
+        weight_grade="D",
             qualified=False,
             reasons=["no_usable_source_match", *reasons],
         )
@@ -1489,6 +1579,9 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
             competition_score=0.0,
             differentiation_score=0.0,
             price_stability_score=0.0,
+            platform_fit_score=0.0,
+            platform_fit_label="watch",
+            platform_recommendation="watchlist_only",
             launchability_score=0.0,
             confidence_score=min(79.0, best_source.match_score),
             weight_grade=best_source.weight_grade,
@@ -1515,6 +1608,9 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
             competition_score=0.0,
             differentiation_score=0.0,
             price_stability_score=0.0,
+            platform_fit_score=0.0,
+            platform_fit_label="watch",
+            platform_recommendation="watchlist_only",
             launchability_score=0.0,
             confidence_score=min(79.0, best_source.match_score),
             weight_grade=best_source.weight_grade,
@@ -1564,6 +1660,20 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         + (10.0 if margin is not None and margin >= 0.45 else 0.0)
         + (10.0 if conservative_margin is not None and conservative_margin >= 0.45 else 0.0),
     )
+    platform_fit_score, platform_fit_label, platform_recommendation = _platform_screen_profile(
+        platform=candidate.sell_platform,
+        estimated_daily_orders=estimated_daily_orders,
+        demand_score=demand_score,
+        competition_score=competition_score,
+        differentiation_score=differentiation_score,
+        price_stability_score=price_stability_score,
+        margin=margin,
+        conservative_margin=conservative_margin,
+        listing_age_days=listing_age_days,
+        review_count=candidate.review_count,
+        confidence=confidence,
+        restricted=restricted,
+    )
     qualified = (
         not restricted
         and estimated_daily_orders >= 30
@@ -1576,6 +1686,7 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         and best_source.weight_grade in {"A", "B"}
         and launchability_score >= 70.0
         and confidence >= 80.0
+        and platform_fit_score >= 65.0
     )
     if not qualified and not reasons:
         reasons.append("below_threshold_or_low_confidence")
@@ -1598,6 +1709,9 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         competition_score=round(competition_score, 2),
         differentiation_score=round(differentiation_score, 2),
         price_stability_score=round(price_stability_score, 2),
+        platform_fit_score=platform_fit_score,
+        platform_fit_label=platform_fit_label,
+        platform_recommendation=platform_recommendation,
         launchability_score=launchability_score,
         confidence_score=round(confidence, 2),
         weight_grade=best_source.weight_grade,
@@ -1699,23 +1813,69 @@ def style_header(ws, row: int = 1) -> None:
         cell.font = font
 
 
+def _sheet_name_for_platform(platform: str) -> str:
+    mapping = {
+        "amazon": "Amazon",
+        "walmart": "Walmart",
+        "temu": "Temu",
+        "tiktok": "TikTok",
+    }
+    return mapping.get(platform.lower(), platform.title()[:31])
+
+
+def _platform_sheet_rows(decisions: list[ArbitrageDecision], platform: str) -> list[ArbitrageDecision]:
+    return [item for item in decisions if item.sell_platform.lower() == platform.lower()]
+
+
 def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[str, Any]) -> Path:
     wb = Workbook()
     ws = wb.active
-    ws.title = "Qualified"
-    ws.append(["产品名称", "目标采购平台", "采购链接", "目标售卖平台", "售卖链接"])
+    ws.title = "Qualified_All"
+    ws.append(["产品名称", "目标采购平台", "采购链接", "目标售卖平台", "售卖链接", "平台适配分", "平台建议"])
     style_header(ws)
     for item in decisions:
         if not item.qualified:
             continue
-        ws.append([item.product_name, item.buy_platform, item.buy_link, item.sell_platform, item.sell_link])
+        ws.append([item.product_name, item.buy_platform, item.buy_link, item.sell_platform, item.sell_link, item.platform_fit_score, item.platform_recommendation])
     autosize(ws)
+
+    for platform in ["amazon", "walmart", "temu", "tiktok"]:
+        platform_ws = wb.create_sheet(_sheet_name_for_platform(platform))
+        platform_ws.append([
+            "产品名称", "目标采购平台", "采购链接", "目标售卖平台", "售卖链接", "售价(RMB)", "采购成本(RMB)", "毛利率",
+            "保守毛利率", "估算日单量", "上架天数", "可做分", "平台适配分", "平台适配标签", "平台建议", "是否入选", "原因"
+        ])
+        style_header(platform_ws)
+        platform_rows = _platform_sheet_rows(decisions, platform)
+        if platform == "tiktok" and not platform_rows:
+            platform_ws.append(["", "", "", "tiktok", "", "", "", "", "", "", "", "", "", "", "watchlist_only", "no_current_tiktok_candidates", "trend intake pending"])
+        for item in platform_rows:
+            platform_ws.append([
+                item.product_name,
+                item.buy_platform,
+                item.buy_link,
+                item.sell_platform,
+                item.sell_link,
+                item.sell_price_cny,
+                item.purchase_cost_cny,
+                item.gross_margin_rate,
+                item.conservative_margin_rate,
+                item.estimated_daily_orders,
+                item.listing_age_days,
+                item.launchability_score,
+                item.platform_fit_score,
+                item.platform_fit_label,
+                item.platform_recommendation,
+                "yes" if item.qualified else "no",
+                " | ".join(item.reasons),
+            ])
+        autosize(platform_ws)
 
     audit = wb.create_sheet("Audit")
     headers = [
         "产品名称", "采购平台", "采购链接", "售卖平台", "售卖链接", "售价(RMB)", "采购成本(RMB)", "重量(kg)",
         "毛利额", "毛利率", "保守毛利率", "平台佣金率", "估算日单量", "上架天数", "需求分", "竞争分",
-        "差异化分", "价格稳定分", "综合可做分", "置信度", "重量等级", "是否入选", "原因"
+        "差异化分", "价格稳定分", "平台适配分", "平台适配标签", "平台建议", "综合可做分", "置信度", "重量等级", "是否入选", "原因"
     ]
     audit.append(headers)
     style_header(audit)
@@ -1739,6 +1899,9 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             item.competition_score,
             item.differentiation_score,
             item.price_stability_score,
+            item.platform_fit_score,
+            item.platform_fit_label,
+            item.platform_recommendation,
             item.launchability_score,
             item.confidence_score,
             item.weight_grade,
@@ -1761,6 +1924,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
 
 def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: dict[str, Any]) -> Path:
     governance = summary.get("governance") or {}
+    platform_summary = summary.get("platform_summary") or {}
     lines = [
         "# Cross-market arbitrage run",
         "",
@@ -1770,6 +1934,15 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         f"- Discovery candidates: `{summary['discovery_candidate_count']}`",
         f"- Governance status: `{governance.get('status', 'unknown')}`",
         "",
+        "## Platform Summary",
+        "",
+    ]
+    for platform, payload in platform_summary.items():
+        lines.append(
+            f"- `{platform}`: candidates=`{payload.get('candidate_count', 0)}`, qualified=`{payload.get('qualified_count', 0)}`, strong_fit=`{payload.get('strong_fit_count', 0)}`, watch=`{payload.get('watch_count', 0)}`"
+        )
+    lines.extend([
+        "",
         "## Governance",
         "",
         f"- Primary blocker: `{governance.get('primary_blocker', 'none')}`",
@@ -1778,7 +1951,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         "",
         "## Qualified",
         "",
-    ]
+    ])
     qualified = [item for item in decisions if item.qualified]
     if not qualified:
         lines.append("- No candidates passed the current strong thresholds.")
@@ -1791,6 +1964,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
             f"- Listing age days: `{item.listing_age_days}`",
             f"- Margin: `{item.gross_margin_rate}`",
             f"- Conservative margin: `{item.conservative_margin_rate}`",
+            f"- Platform fit: `{item.platform_fit_score}` / `{item.platform_fit_label}` / `{item.platform_recommendation}`",
             f"- Launchability: `{item.launchability_score}`",
             f"- Confidence: `{item.confidence_score}`",
             "",
@@ -1919,6 +2093,19 @@ def _build_governance_summary(rows: list[dict[str, Any]], decisions: list[Arbitr
     }
 
 
+def _platform_summary(decisions: list[ArbitrageDecision]) -> dict[str, Any]:
+    summary: dict[str, Any] = {}
+    for platform in ["amazon", "walmart", "temu", "tiktok"]:
+        rows = [item for item in decisions if item.sell_platform.lower() == platform]
+        summary[platform] = {
+            "candidate_count": len(rows),
+            "qualified_count": sum(1 for item in rows if item.qualified),
+            "strong_fit_count": sum(1 for item in rows if item.platform_fit_label == "strong"),
+            "watch_count": sum(1 for item in rows if item.platform_recommendation == "watchlist_only"),
+        }
+    return summary
+
+
 def run_once(*, test: bool = False) -> dict[str, Any]:
     run_id = _utc_now().strftime("%Y%m%dT%H%M%SZ")
     queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
@@ -1961,6 +2148,7 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
         "mode": "test" if test else "normal",
         "discovery_candidate_count": len(demand_candidates),
         "qualified_count": sum(1 for item in decisions if item.qualified),
+        "platform_summary": _platform_summary(decisions),
         "queries": queries,
         "timing": {
             "discovery_interval_seconds": DISCOVERY_INTERVAL_SECONDS,
@@ -2107,6 +2295,7 @@ def _report_cycle(
         "mode": "scheduled",
         "discovery_candidate_count": len(rows),
         "qualified_count": sum(1 for item in decisions if item.qualified),
+        "platform_summary": _platform_summary(decisions),
         "timing": {
             "discovery_interval_seconds": int(scheduler_policy.get("discovery_interval_seconds", DISCOVERY_INTERVAL_SECONDS) or DISCOVERY_INTERVAL_SECONDS),
             "matching_interval_seconds": int(scheduler_policy.get("matching_interval_seconds", MATCH_INTERVAL_SECONDS) or MATCH_INTERVAL_SECONDS),
