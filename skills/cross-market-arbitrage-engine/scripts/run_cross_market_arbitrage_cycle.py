@@ -318,6 +318,7 @@ class ArbitrageDecision:
     query_source_kind: str = "base"
     trend_source_score: float = 0.0
     execution_resilience_score: float = 0.0
+    supplier_confidence_score: float = 0.0
     decision_bucket: str = "watchlist"
     priority_reason: str = ""
     reasons: list[str] = field(default_factory=list)
@@ -344,6 +345,7 @@ DECISION_DEFAULTS: dict[str, Any] = {
     "query_source_kind": "base",
     "trend_source_score": 0.0,
     "execution_resilience_score": 0.0,
+    "supplier_confidence_score": 0.0,
     "decision_bucket": "watchlist",
     "priority_reason": "",
     "reasons": [],
@@ -1111,6 +1113,7 @@ def _selection_scorecard(
     price_stability_score: float,
     restricted: bool,
     source_match_score: float,
+    supplier_confidence_score: float,
     query_source_kind: str = "base",
     adaptive_query_bias: float = 0.0,
 ) -> tuple[float, str, str, dict[str, float]]:
@@ -1176,9 +1179,10 @@ def _selection_scorecard(
     execution_resilience_score = round(
         min(
             100.0,
-            source_match_score * 0.48
-            + weight_score * 0.28
-            + price_stability_score * 0.14
+            source_match_score * 0.34
+            + supplier_confidence_score * 0.30
+            + weight_score * 0.24
+            + price_stability_score * 0.08
             + (10.0 if query_source_kind in {"seed", "shared"} else 0.0),
         ),
         2,
@@ -1569,6 +1573,31 @@ def _candidate_overlap_score(query: str, text: str) -> float:
     return min(20.0, coverage * 20.0)
 
 
+def _supplier_confidence_score(source: SourceCandidate) -> float:
+    base = float(source.match_score or 0)
+    if source.blocked:
+        base -= 28.0
+    if source.link and source.link.startswith("http"):
+        base += 8.0
+    if source.weight_grade == "A":
+        base += 18.0
+    elif source.weight_grade == "B":
+        base += 10.0
+    elif source.weight_grade == "C":
+        base += 2.0
+    else:
+        base -= 18.0
+    platform_bonus = {
+        "made_in_china": 12.0,
+        "yiwugo": 6.0,
+        "1688": 2.0,
+    }.get(source.platform, 0.0)
+    base += platform_bonus
+    if source.price_cny is not None:
+        base += 6.0
+    return round(max(0.0, min(100.0, base)), 2)
+
+
 def _enrich_source_candidate(platform: str, candidate: SourceCandidate) -> SourceCandidate:
     if not candidate.link or (candidate.weight_kg is not None and candidate.price_cny is not None):
         return candidate
@@ -1915,6 +1944,7 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         + (10.0 if margin is not None and margin >= 0.45 else 0.0)
         + (10.0 if conservative_margin is not None and conservative_margin >= 0.45 else 0.0),
     )
+    supplier_confidence_score = _supplier_confidence_score(best_source)
     selection_score, selection_grade, selection_thesis, selection_components = _selection_scorecard(
         estimated_daily_orders=estimated_daily_orders,
         demand_confidence=candidate.demand_confidence,
@@ -1929,6 +1959,7 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         price_stability_score=price_stability_score,
         restricted=restricted,
         source_match_score=best_source.match_score,
+        supplier_confidence_score=supplier_confidence_score,
         query_source_kind=query_source_kind,
         adaptive_query_bias=adaptive_query_bias,
     )
@@ -2013,6 +2044,7 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         query_source_kind=query_source_kind,
         trend_source_score=float(selection_components.get("trend_source_score", 0) or 0),
         execution_resilience_score=float(selection_components.get("execution_resilience_score", 0) or 0),
+        supplier_confidence_score=supplier_confidence_score,
         decision_bucket=decision_bucket,
         priority_reason=priority_reason,
         reasons=[*reasons, f"selection_thesis:{selection_thesis}", f"selection_components:{json.dumps(selection_components, ensure_ascii=False)}"],
@@ -2900,7 +2932,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
     autosize(ws)
 
     near_ws = wb.create_sheet("Near_Miss")
-    near_ws.append(["产品名称", "售卖平台", "来源类型", "平台适配分", "精选分", "精选标签", "趋势源分", "执行分", "可做分", "置信度", "优先原因", "原因"])
+    near_ws.append(["产品名称", "售卖平台", "来源类型", "平台适配分", "精选分", "精选标签", "趋势源分", "执行分", "货源可信分", "可做分", "置信度", "优先原因", "原因"])
     style_header(near_ws)
     for item in decisions:
         if item.decision_bucket != "near_miss":
@@ -2914,6 +2946,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             item.selection_grade,
             item.trend_source_score,
             item.execution_resilience_score,
+            item.supplier_confidence_score,
             item.launchability_score,
             item.confidence_score,
             item.priority_reason,
@@ -2922,7 +2955,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
     autosize(near_ws)
 
     watch_ws = wb.create_sheet("Watchlist")
-    watch_ws.append(["产品名称", "售卖平台", "来源类型", "平台适配分", "精选分", "精选标签", "趋势源分", "执行分", "可做分", "置信度", "优先原因", "原因"])
+    watch_ws.append(["产品名称", "售卖平台", "来源类型", "平台适配分", "精选分", "精选标签", "趋势源分", "执行分", "货源可信分", "可做分", "置信度", "优先原因", "原因"])
     style_header(watch_ws)
     for item in decisions:
         if item.decision_bucket != "watchlist":
@@ -2936,6 +2969,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             item.selection_grade,
             item.trend_source_score,
             item.execution_resilience_score,
+            item.supplier_confidence_score,
             item.launchability_score,
             item.confidence_score,
             item.priority_reason,
@@ -2947,7 +2981,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
         platform_ws = wb.create_sheet(_sheet_name_for_platform(platform))
         platform_ws.append([
             "产品名称", "目标采购平台", "采购链接", "目标售卖平台", "售卖链接", "售价(RMB)", "采购成本(RMB)", "毛利率",
-            "保守毛利率", "估算日单量", "上架天数", "精选分", "精选标签", "精选论点", "趋势源分", "执行分", "可做分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "是否入选", "原因"
+            "保守毛利率", "估算日单量", "上架天数", "精选分", "精选标签", "精选论点", "趋势源分", "执行分", "货源可信分", "可做分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "是否入选", "原因"
         ])
         style_header(platform_ws)
         platform_rows = _platform_sheet_rows(decisions, platform)
@@ -2971,6 +3005,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
                 item.selection_thesis,
                 item.trend_source_score,
                 item.execution_resilience_score,
+                item.supplier_confidence_score,
                 item.launchability_score,
                 item.platform_fit_score,
                 item.platform_fit_label,
@@ -2986,7 +3021,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
     headers = [
         "产品名称", "采购平台", "采购链接", "售卖平台", "售卖链接", "售价(RMB)", "采购成本(RMB)", "重量(kg)",
         "毛利额", "毛利率", "保守毛利率", "平台佣金率", "估算日单量", "上架天数", "需求分", "竞争分",
-        "差异化分", "价格稳定分", "精选分", "精选标签", "精选论点", "趋势源分", "执行分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "综合可做分", "置信度", "重量等级", "是否入选", "原因"
+        "差异化分", "价格稳定分", "精选分", "精选标签", "精选论点", "趋势源分", "执行分", "货源可信分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "综合可做分", "置信度", "重量等级", "是否入选", "原因"
     ]
     audit.append(headers)
     style_header(audit)
@@ -3015,6 +3050,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             item.selection_thesis,
             item.trend_source_score,
             item.execution_resilience_score,
+            item.supplier_confidence_score,
             item.platform_fit_score,
             item.platform_fit_label,
             item.platform_recommendation,
@@ -3291,6 +3327,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
             f"- Margin: `{item.gross_margin_rate}`",
             f"- Conservative margin: `{item.conservative_margin_rate}`",
             f"- Selection score: `{item.selection_score}` / `{item.selection_grade}` / `{item.selection_thesis}`",
+            f"- Trend source / execution / supplier: `{item.trend_source_score}` / `{item.execution_resilience_score}` / `{item.supplier_confidence_score}`",
             f"- Platform fit: `{item.platform_fit_score}` / `{item.platform_fit_label}` / `{item.platform_recommendation}`",
             f"- Launchability: `{item.launchability_score}`",
             f"- Confidence: `{item.confidence_score}`",
@@ -3305,6 +3342,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
             f"- Platform: `{item.sell_platform}`",
             f"- Priority reason: `{item.priority_reason}`",
             f"- Selection score: `{item.selection_score}` / `{item.selection_grade}` / `{item.selection_thesis}`",
+            f"- Trend source / execution / supplier: `{item.trend_source_score}` / `{item.execution_resilience_score}` / `{item.supplier_confidence_score}`",
             f"- Platform fit: `{item.platform_fit_score}` / `{item.platform_fit_label}` / `{item.platform_recommendation}`",
             f"- Launchability: `{item.launchability_score}` / confidence=`{item.confidence_score}`",
             f"- Reasons: `{', '.join(item.reasons or ['none'])}`",
