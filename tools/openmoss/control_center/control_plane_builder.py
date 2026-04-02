@@ -35,6 +35,7 @@ from paths import (
     CRAWLER_REMEDIATION_SCHEDULER_STATE_PATH,
     DOCTOR_QUEUE_PATH,
     PROCESS_REGISTRY_PATH,
+    PROJECT_REPAIR_VALUE_HISTORY_PATH,
     PROJECT_RESULT_FEEDBACK_HISTORY_PATH,
     SELLER_BULK_SCHEDULER_STATE_PATH,
     SYSTEM_SNAPSHOT_PATH,
@@ -568,6 +569,62 @@ def _update_project_result_feedback_history(feedback: Dict[str, Any]) -> Dict[st
     return history
 
 
+def _project_repair_value_summary(system_summary: Dict[str, Any], project_result_feedback_history: Dict[str, Any]) -> Dict[str, Any]:
+    blocked_targeted_fix_total = int(system_summary.get("blocked_targeted_fix_total", 0) or 0)
+    blocked_total = int(system_summary.get("blocked_total", 0) or 0)
+    recovery_efficiency_ratio = float(system_summary.get("recovery_efficiency_ratio", 0.0) or 0.0)
+    feedback_score = int((project_result_feedback_history.get("trend", {}) or {}).get("latest_score", 0) or 0)
+    feedback_trend = str((project_result_feedback_history.get("trend", {}) or {}).get("direction", "unknown")).strip() or "unknown"
+    blocked_penalty = min(35, blocked_targeted_fix_total // 3) + min(15, blocked_total // 20)
+    score = max(0, min(100, int(feedback_score * 0.45 + recovery_efficiency_ratio * 100 * 0.4 + 25 - blocked_penalty)))
+    status = "weak"
+    if score >= 75:
+        status = "strong"
+    elif score >= 50:
+        status = "watch"
+    return {
+        "status": status,
+        "score": score,
+        "inputs": {
+            "feedback_score": feedback_score,
+            "feedback_trend": feedback_trend,
+            "recovery_efficiency_ratio": recovery_efficiency_ratio,
+            "blocked_targeted_fix_total": blocked_targeted_fix_total,
+            "blocked_total": blocked_total,
+        },
+    }
+
+
+def _update_project_repair_value_history(repair_value: Dict[str, Any]) -> Dict[str, Any]:
+    history = _read_json(PROJECT_REPAIR_VALUE_HISTORY_PATH, {"items": []}) or {"items": []}
+    items = list(history.get("items", []) or [])
+    current = {
+        "at": _utc_now_iso(),
+        "status": str(repair_value.get("status", "")).strip() or "unknown",
+        "score": int(repair_value.get("score", 0) or 0),
+    }
+    items.append(current)
+    items = items[-24:]
+    history["items"] = items
+    history["updated_at"] = current["at"]
+    trend = "stable"
+    delta = 0
+    if len(items) >= 2:
+        delta = int(items[-1].get("score", 0) or 0) - int(items[-2].get("score", 0) or 0)
+        if delta >= 8:
+            trend = "improving"
+        elif delta <= -8:
+            trend = "degrading"
+    history["trend"] = {
+        "direction": trend,
+        "delta": delta,
+        "latest_score": current["score"],
+        "previous_score": int(items[-2].get("score", 0) or 0) if len(items) >= 2 else current["score"],
+    }
+    _write_json(PROJECT_REPAIR_VALUE_HISTORY_PATH, history)
+    return history
+
+
 def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seconds: int = 900) -> Dict[str, Any]:
     """
     中文注解：
@@ -604,6 +661,15 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
     skipped_total = int(doctor_cycle_stats.get("skipped_total", 0) or 0)
     attempted_total = processed_total + skipped_total
     recovery_efficiency_ratio = round((processed_total / attempted_total), 4) if attempted_total > 0 else 0.0
+    blocked_total = sum(1 for item in task_items if item.get("status") == "blocked")
+    blocked_targeted_fix_total = blocked_category_counts.get("targeted_fix", 0)
+    repair_value_inputs = {
+        "blocked_total": blocked_total,
+        "blocked_targeted_fix_total": blocked_targeted_fix_total,
+        "recovery_efficiency_ratio": recovery_efficiency_ratio,
+    }
+    repair_value = _project_repair_value_summary(repair_value_inputs, project_result_feedback_history)
+    project_repair_value_history = _update_project_repair_value_history(repair_value)
     snapshot = {
         "generated_at": _utc_now_iso(),
         "process_registry_path": process_registry.get("path"),
@@ -643,13 +709,16 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
             "doctor_processed_total": processed_total,
             "doctor_skipped_total": skipped_total,
             "recovery_efficiency_ratio": recovery_efficiency_ratio,
+            "project_repair_value_status": repair_value.get("status", "unknown"),
+            "project_repair_value_trend": ((project_repair_value_history.get("trend", {}) or {}).get("direction", "unknown")),
+            "project_repair_value_score": ((project_repair_value_history.get("trend", {}) or {}).get("latest_score", 0)),
             "tasks_total": len(task_items),
-            "blocked_total": sum(1 for item in task_items if item.get("status") == "blocked"),
+            "blocked_total": blocked_total,
             "blocked_project_crawler_remediation_total": blocked_category_counts.get("project_crawler_remediation", 0),
             "blocked_approval_or_contract_total": blocked_category_counts.get("approval_or_contract", 0),
             "blocked_authorized_session_total": blocked_category_counts.get("authorized_session", 0),
             "blocked_human_checkpoint_total": blocked_category_counts.get("human_checkpoint", 0),
-            "blocked_targeted_fix_total": blocked_category_counts.get("targeted_fix", 0),
+            "blocked_targeted_fix_total": blocked_targeted_fix_total,
             "blocked_categories": blocked_category_counts,
             "top_blocked_category": top_blocked_category,
             "waiting_total": len(task_views["waiting_registry"].get("items", [])),
@@ -676,6 +745,8 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
         "memory_writeback_overview": memory_writeback_overview,
         "project_result_feedback": project_result_feedback,
         "project_result_feedback_history": project_result_feedback_history,
+        "project_repair_value": repair_value,
+        "project_repair_value_history": project_repair_value_history,
         "crawler_remediation_queue": crawler_remediation_queue,
         "crawler_remediation_plan": crawler_remediation_plan,
         "crawler_remediation_execution": crawler_remediation_execution,

@@ -98,6 +98,8 @@ def _doctor_cycle_strategy(control_plane: Dict[str, object]) -> Dict[str, object
     project_result_feedback_status = str(summary.get("project_result_feedback_status", "")).strip().lower()
     project_result_feedback_attention_total = int(summary.get("project_result_feedback_attention_total", 0) or 0)
     project_result_feedback_trend = str(summary.get("project_result_feedback_trend", "")).strip().lower()
+    project_repair_value_status = str(summary.get("project_repair_value_status", "")).strip().lower()
+    project_repair_value_trend = str(summary.get("project_repair_value_trend", "")).strip().lower()
     strategy = {
         "top_blocked_category": top_blocked_category,
         "blocked_categories": blocked_categories,
@@ -150,6 +152,24 @@ def _doctor_cycle_strategy(control_plane: Dict[str, object]) -> Dict[str, object
             {
                 "priority_focus": "feedback_watch",
                 "repair_mode": "feedback_trend_watch",
+                "max_repairs_per_cycle": 12,
+                "allowed_buckets": ["critical", "high", "medium"],
+            }
+        )
+    if project_repair_value_status == "weak":
+        strategy.update(
+            {
+                "priority_focus": "repair_value_rebuild",
+                "repair_mode": "repair_value_first",
+                "max_repairs_per_cycle": 10,
+                "allowed_buckets": ["critical", "high", "medium"],
+            }
+        )
+    elif project_repair_value_trend == "degrading" and strategy["priority_focus"] == "general":
+        strategy.update(
+            {
+                "priority_focus": "repair_value_watch",
+                "repair_mode": "repair_value_watch",
                 "max_repairs_per_cycle": 12,
                 "allowed_buckets": ["critical", "high", "medium"],
             }

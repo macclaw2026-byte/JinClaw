@@ -33,6 +33,14 @@ def _project_result_feedback_trend(system_summary: Dict[str, Any]) -> str:
     return str(system_summary.get("project_result_feedback_trend", "")).strip().lower() or "unknown"
 
 
+def _project_repair_value_status(system_summary: Dict[str, Any]) -> str:
+    return str(system_summary.get("project_repair_value_status", "")).strip().lower() or "unknown"
+
+
+def _project_repair_value_trend(system_summary: Dict[str, Any]) -> str:
+    return str(system_summary.get("project_repair_value_trend", "")).strip().lower() or "unknown"
+
+
 def _derive_repair_focus(system_summary: Dict[str, Any]) -> str:
     top_blocked_category = str(system_summary.get("top_blocked_category", "")).strip()
     if top_blocked_category in {"project_crawler_remediation", "approval_or_contract", "authorized_session", "human_checkpoint"}:
@@ -73,6 +81,8 @@ def _crawler_remediation_policy(
     project_result_feedback_status = _project_result_feedback_status(system_summary)
     project_result_feedback_attention = _project_result_feedback_attention_total(system_summary)
     project_result_feedback_trend = _project_result_feedback_trend(system_summary)
+    project_repair_value_status = _project_repair_value_status(system_summary)
+    project_repair_value_trend = _project_repair_value_trend(system_summary)
     if str(feedback.get("coverage_status", "")).strip().lower() == "thin":
         recommended_mode = "aggressive"
         suggested_interval_seconds = 1800
@@ -141,6 +151,15 @@ def _crawler_remediation_policy(
         if repair_mode == "steady_balance":
             repair_mode = "feedback_trend_watch"
         reasons.append("project_result_feedback_trend_degrading")
+    if project_repair_value_status == "weak":
+        suggested_interval_seconds = min(suggested_interval_seconds, 1200)
+        max_start_tasks = min(max_start_tasks or 2, 2)
+        start_bias = "repair_hotspot_first"
+        repair_mode = "repair_value_rebuild"
+        reasons.append("project_repair_value_weak")
+    elif project_repair_value_trend == "degrading" and repair_mode == "steady_balance":
+        repair_mode = "repair_value_watch"
+        reasons.append("project_repair_value_trend_degrading")
     if active_items and str(feedback.get("coverage_status", "")).strip().lower() == "strong":
         start_tasks = False
         suggested_interval_seconds = max(suggested_interval_seconds, 7200)
@@ -170,6 +189,8 @@ def _crawler_remediation_policy(
             "project_result_feedback_status": project_result_feedback_status,
             "project_result_feedback_attention_total": project_result_feedback_attention,
             "project_result_feedback_trend": project_result_feedback_trend,
+            "project_repair_value_status": project_repair_value_status,
+            "project_repair_value_trend": project_repair_value_trend,
         },
     }
 
@@ -182,6 +203,8 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
     project_result_feedback_status = _project_result_feedback_status(system_summary)
     project_result_feedback_attention = _project_result_feedback_attention_total(system_summary)
     project_result_feedback_trend = _project_result_feedback_trend(system_summary)
+    project_repair_value_status = _project_repair_value_status(system_summary)
+    project_repair_value_trend = _project_repair_value_trend(system_summary)
     reasons = ["seller_bulk_is_time_window_gated_in_script"]
     recommended_mode = "nightly_window"
     suggested_interval_seconds = 900
@@ -238,6 +261,17 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
         effective_page_size = min(effective_page_size or 20, 15)
         effective_max_pages = min(effective_max_pages or 2, 2)
         reasons.append("project_result_feedback_trend_degrading")
+    if project_repair_value_status == "weak":
+        suggested_interval_seconds = max(suggested_interval_seconds, 3600)
+        repair_mode = "repair_value_backpressure"
+        batch_bias = "repair_value_batch"
+        effective_limit = min(effective_limit or 10, 6)
+        effective_page_size = min(effective_page_size or 15, 12)
+        effective_max_pages = min(effective_max_pages or 2, 1)
+        reasons.append("project_repair_value_weak")
+    elif project_repair_value_trend == "degrading" and batch_bias == "balanced":
+        batch_bias = "repair_value_watch_batch"
+        reasons.append("project_repair_value_trend_degrading")
     return {
         "recommended_mode": recommended_mode,
         "repair_focus": repair_focus,
@@ -259,6 +293,8 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
             "project_result_feedback_status": project_result_feedback_status,
             "project_result_feedback_attention_total": project_result_feedback_attention,
             "project_result_feedback_trend": project_result_feedback_trend,
+            "project_repair_value_status": project_repair_value_status,
+            "project_repair_value_trend": project_repair_value_trend,
         },
     }
 
@@ -286,6 +322,8 @@ def _cross_market_arbitrage_policy(
     project_result_feedback_status = _project_result_feedback_status(system_summary)
     project_result_feedback_attention = _project_result_feedback_attention_total(system_summary)
     project_result_feedback_trend = _project_result_feedback_trend(system_summary)
+    project_repair_value_status = _project_repair_value_status(system_summary)
+    project_repair_value_trend = _project_repair_value_trend(system_summary)
     if coverage_status == "thin":
         recommended_mode = "aggressive"
         loop_sleep_seconds = 180
@@ -356,6 +394,17 @@ def _cross_market_arbitrage_policy(
         loop_sleep_seconds = max(loop_sleep_seconds, 900)
         repair_mode = "feedback_trend_watch"
         reasons.append("project_result_feedback_trend_degrading")
+    if project_repair_value_status == "weak":
+        recommended_mode = "repair_hold"
+        loop_sleep_seconds = max(loop_sleep_seconds, 1200)
+        discovery_interval_seconds = max(discovery_interval_seconds, 60 * 60)
+        matching_interval_seconds = max(matching_interval_seconds, 2 * 60 * 60)
+        repair_mode = "repair_value_backpressure"
+        reasons.append("project_repair_value_weak")
+    elif project_repair_value_trend == "degrading" and repair_mode == "steady_balance":
+        recommended_mode = "guarded"
+        repair_mode = "repair_value_watch"
+        reasons.append("project_repair_value_trend_degrading")
     return {
         "recommended_mode": recommended_mode,
         "repair_focus": repair_focus,
@@ -378,6 +427,8 @@ def _cross_market_arbitrage_policy(
             "project_result_feedback_status": project_result_feedback_status,
             "project_result_feedback_attention_total": project_result_feedback_attention,
             "project_result_feedback_trend": project_result_feedback_trend,
+            "project_repair_value_status": project_repair_value_status,
+            "project_repair_value_trend": project_repair_value_trend,
         },
     }
 
@@ -394,6 +445,8 @@ def build_project_scheduler_policy(
         "project_result_feedback_status": str((project_result_feedback or {}).get("status", system_summary.get("project_result_feedback_status", "unknown"))).strip(),
         "project_result_feedback_attention_total": int((project_result_feedback or {}).get("attention_total", system_summary.get("project_result_feedback_attention_total", 0)) or 0),
         "project_result_feedback_trend": str((((project_result_feedback or {}).get("trend", {}) or {}).get("direction", system_summary.get("project_result_feedback_trend", "unknown")))).strip(),
+        "project_repair_value_status": str(system_summary.get("project_repair_value_status", "unknown")).strip(),
+        "project_repair_value_trend": str(system_summary.get("project_repair_value_trend", "unknown")).strip(),
     }
     return {
         "generated_at": _utc_now_iso(),
