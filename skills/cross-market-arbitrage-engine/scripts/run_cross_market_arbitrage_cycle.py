@@ -141,6 +141,9 @@ MONTHLY_ORDER_PATTERNS = [
     r"(\d[\d,]*)\+?\s+bought in past month",
     r"(\d[\d,]*)\+?\s+purchased in the last month",
     r"(\d[\d,]*)\+?\s+sold in past month",
+    r"(\d[\d,]*(?:\.\d+)?)\s*k\+?\s+(?:bought|purchased|sold)(?:\s+in\s+(?:the\s+)?)?(?:past|last)?\s*month",
+    r"(\d[\d,]*)\+?\s+(?:bought|purchased|sold)(?:\s+in\s+(?:the\s+)?)?(?:past|last)?\s*(?:month|30 days)",
+    r'"(?:monthlySold|unitsSold|monthly_orders|monthlySales)"\s*[:=]\s*"?(\\d[\d,]*)\+?"?',
 ]
 
 SOLD_PATTERNS = [
@@ -165,6 +168,8 @@ LISTING_AGE_PATTERNS = [
     r"Date First Available[^0-9]{0,20}(\d{1,2}/\d{1,2}/\d{4})",
     r"First available[^0-9]{0,20}(\d{1,2}/\d{1,2}/\d{4})",
     r"Available on[^0-9]{0,20}(\d{1,2}/\d{1,2}/\d{4})",
+    r'"(?:dateFirstAvailable|firstAvailableDate|datePublished|releaseDate)"\s*[:=]\s*"(\d{4}-\d{2}-\d{2})"',
+    r'"(?:dateFirstAvailable|firstAvailableDate|datePublished|releaseDate)"\s*[:=]\s*"(\d{4}/\d{2}/\d{2})"',
 ]
 
 WEIGHT_PATTERNS = [
@@ -443,6 +448,14 @@ def _source_query_variants(candidate: DemandCandidate) -> list[str]:
     base = _normalize_title(candidate.title) or _normalize_title(candidate.query) or candidate.query.strip().lower()
     tokens = [token for token in base.split() if token not in SOURCE_QUERY_STOPWORDS]
     variants: list[str] = []
+    if len(tokens) >= 2:
+        pair = " ".join(tokens[:2]).strip()
+        if pair:
+            variants.append(pair)
+    if len(tokens) >= 3:
+        trio = " ".join(tokens[:3]).strip()
+        if trio:
+            variants.append(trio)
     for text in [
         " ".join(tokens[:6]).strip(),
         " ".join(tokens[:4]).strip(),
@@ -721,7 +734,10 @@ def _extract_monthly_orders(text: str) -> float | None:
         found = re.search(pattern, lowered, flags=re.I)
         if found:
             try:
-                return float(found.group(1).replace(",", ""))
+                raw = found.group(1).replace(",", "").strip().lower()
+                if raw.endswith("k"):
+                    return float(raw[:-1]) * 1000.0
+                return float(raw)
             except Exception:
                 continue
     for pattern in SOLD_PATTERNS:
@@ -757,7 +773,12 @@ def _extract_listing_age_days(text: str) -> int | None:
         try:
             raw = found.group(1).strip()
             if "/" in raw:
-                dt = datetime.strptime(raw, "%m/%d/%Y").replace(tzinfo=timezone.utc)
+                if len(raw.split("/", 1)[0]) == 4:
+                    dt = datetime.strptime(raw, "%Y/%m/%d").replace(tzinfo=timezone.utc)
+                else:
+                    dt = datetime.strptime(raw, "%m/%d/%Y").replace(tzinfo=timezone.utc)
+            elif "-" in raw and raw[:4].isdigit():
+                dt = datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=timezone.utc)
             else:
                 dt = datetime.strptime(raw, "%B %d, %Y").replace(tzinfo=timezone.utc)
         except Exception:
@@ -1113,8 +1134,8 @@ def _best_source_for_platform(platform: str, candidate: DemandCandidate, *, max_
 def _enrich_sell_candidate(candidate: DemandCandidate, *, max_tools: int | None = None) -> tuple[DemandCandidate, dict[str, Any]]:
     tool_plan = {
         "temu": ["agent_browser", "playwright_stealth", "curl_cffi", "crawl4ai"],
-        "amazon": ["curl_cffi", "agent_browser", "playwright_stealth", "crawl4ai"],
-        "walmart": ["agent_browser", "playwright_stealth", "curl_cffi", "crawl4ai"],
+        "amazon": ["curl_cffi", "agent_browser", "playwright_stealth", "direct_http", "crawl4ai"],
+        "walmart": ["agent_browser", "playwright_stealth", "curl_cffi", "direct_http", "crawl4ai"],
     }.get(candidate.sell_platform, [fetch_best(candidate.sell_platform, candidate.sell_link, max_tools=max_tools).tool])
     if max_tools is not None:
         tool_plan = tool_plan[:max_tools]
