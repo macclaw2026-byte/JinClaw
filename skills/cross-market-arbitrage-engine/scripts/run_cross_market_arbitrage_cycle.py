@@ -267,6 +267,69 @@ FEATURE_TOKENS = {
     "hook", "rack", "holder", "container", "dispenser", "pill", "cable", "bag", "tote", "insert", "bin",
 }
 
+CHINESE_TOKEN_NORMALIZERS: dict[str, tuple[str, ...]] = {
+    "透明": ("clear", "transparent"),
+    "黑色": ("black",),
+    "白色": ("white",),
+    "灰色": ("gray",),
+    "银色": ("silver",),
+    "金色": ("gold",),
+    "米色": ("beige",),
+    "棕色": ("brown",),
+    "粉色": ("pink",),
+    "蓝色": ("blue",),
+    "绿色": ("green",),
+    "红色": ("red",),
+    "紫色": ("purple",),
+    "橙色": ("orange",),
+    "黄色": ("yellow",),
+    "塑料": ("plastic",),
+    "亚克力": ("acrylic",),
+    "金属": ("metal",),
+    "钢制": ("steel",),
+    "铁艺": ("iron",),
+    "木质": ("wooden",),
+    "竹制": ("bamboo",),
+    "硅胶": ("silicone",),
+    "布艺": ("fabric",),
+    "棉质": ("cotton",),
+    "亚麻": ("linen",),
+    "帆布": ("canvas",),
+    "网格": ("mesh",),
+    "玻璃": ("glass",),
+    "陶瓷": ("ceramic",),
+    "皮革": ("leather",),
+    "壁挂": ("wall", "mounted"),
+    "挂墙": ("wall", "mounted"),
+    "悬挂": ("hanging",),
+    "抽屉": ("drawer",),
+    "可叠加": ("stackable",),
+    "可折叠": ("foldable",),
+    "便携": ("portable",),
+    "磁吸": ("magnetic",),
+    "粘贴": ("adhesive",),
+    "防水": ("waterproof",),
+    "桌面": ("desktop", "desk"),
+    "台面": ("desktop",),
+    "台下": ("under",),
+    "水槽": ("sink",),
+    "衣柜": ("closet",),
+    "置物架": ("shelf", "rack"),
+    "分层": ("tier",),
+    "托盘": ("tray",),
+    "收纳篮": ("basket",),
+    "收纳盒": ("box", "bin", "container"),
+    "挂钩": ("hook",),
+    "支架": ("holder", "rack"),
+    "容器": ("container",),
+    "分配器": ("dispenser",),
+    "药盒": ("pill", "box"),
+    "线缆": ("cable",),
+    "卡扣": ("clip",),
+    "托特包": ("tote", "bag"),
+    "内胆": ("insert",),
+}
+
 MATCH_TOKEN_STOPWORDS = {
     *TITLE_STOPWORDS,
     *SOURCE_QUERY_STOPWORDS,
@@ -1814,15 +1877,24 @@ def _candidate_overlap_score(query: str, text: str) -> float:
 
 
 def _match_tokens(text: str) -> set[str]:
-    return {
+    tokens = {
         token
         for token in re.findall(r"[a-z0-9]+", str(text or "").lower())
         if token not in MATCH_TOKEN_STOPWORDS and len(token) >= 2
     }
+    raw_text = str(text or "")
+    for phrase, canonical_tokens in CHINESE_TOKEN_NORMALIZERS.items():
+        if phrase not in raw_text:
+            continue
+        for token in canonical_tokens:
+            if token not in MATCH_TOKEN_STOPWORDS:
+                tokens.add(token)
+    return tokens
 
 
 def _attribute_signature(text: str) -> dict[str, set[str]]:
-    lowered = str(text or "").lower()
+    raw_text = str(text or "")
+    lowered = raw_text.lower()
     tokens = _match_tokens(lowered)
     return {
         "colors": tokens & COLOR_TOKENS,
@@ -1831,7 +1903,13 @@ def _attribute_signature(text: str) -> dict[str, set[str]]:
         "numbers": set(re.findall(r"\b\d+(?:\.\d+)?\b", lowered)),
         "dimensions": {
             _clean_text(match.group(0))
-            for match in re.finditer(r"\b\d+(?:\.\d+)?\s*(?:inch|in|cm|mm|oz|ml|lb|lbs|g|kg)\b", lowered)
+            for match in re.finditer(
+                r"\b\d+(?:\.\d+)?\s*(?:inch|in|cm|mm|oz|ml|lb|lbs|g|kg)\b|"
+                r"\d+(?:\.\d+)?\s*(?:厘米|毫米|克|公斤|千克|斤|英寸)|"
+                r"\d+(?:\.\d+)?\s*[x×*]\s*\d+(?:\.\d+)?(?:\s*[x×*]\s*\d+(?:\.\d+)?)?\s*(?:cm|mm|in|inch|厘米|毫米|英寸)",
+                raw_text,
+                flags=re.I,
+            )
         },
     }
 
