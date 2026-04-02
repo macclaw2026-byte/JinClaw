@@ -57,6 +57,7 @@ USD_TO_CNY_FALLBACK = 7.2
 _USD_TO_CNY_CACHE: dict[str, Any] | None = None
 DEFAULT_PLATFORM_FEE = 0.15
 SELLERSPRITE_FETCHER = ROOT / "skills/cross-market-arbitrage-engine/scripts/sellersprite_session_fetch.py"
+SELLERSPRITE_KEYWORD_SUBMIT_PROBE = ROOT / "skills/cross-market-arbitrage-engine/scripts/sellersprite_keyword_submit_probe.py"
 SELLERSPRITE_PRODUCT_RESEARCH_URL = "https://www.sellersprite.com/v3/product-research"
 SELLERSPRITE_KEYWORD_RESEARCH_URL = "https://www.sellersprite.com/v2/keyword-research"
 
@@ -1949,6 +1950,24 @@ def _collect_sellersprite_summary(queries: list[str]) -> dict[str, Any]:
         status = "connected"
     elif page_ok_total:
         status = "partial"
+    submit_keyword = _slug(queries[0]).replace("-", " ") if queries else "organizer"
+    if len(submit_keyword.strip()) < 3:
+        submit_keyword = "organizer"
+    submit_probe = _parse_json_stdout(
+        _run(
+            [
+                str(VENV_PY),
+                str(SELLERSPRITE_KEYWORD_SUBMIT_PROBE),
+                "--keyword",
+                submit_keyword,
+                "--save-prefix",
+                f"sellersprite-submit-{_slug(submit_keyword)}",
+                "--wait-seconds",
+                "4",
+            ],
+            timeout=120,
+        ).stdout
+    )
     keyword_metrics = (((pages.get("keyword_research") or {}).get("parsed") or {}).get("filter_metrics") or [])
     product_metrics = (((pages.get("product_research") or {}).get("parsed") or {}).get("filter_metrics") or [])
     return {
@@ -1961,6 +1980,14 @@ def _collect_sellersprite_summary(queries: list[str]) -> dict[str, Any]:
         "api_probes": api_probes,
         "keyword_metrics_available": keyword_metrics,
         "product_metrics_available": product_metrics,
+        "keyword_result_probe": {
+            "keyword": submit_probe.get("keyword", submit_keyword),
+            "title": submit_probe.get("title", ""),
+            "final_url": submit_probe.get("final_url", ""),
+            "result_count": ((submit_probe.get("parsed") or {}).get("result_count", 0)),
+            "top_keywords": ((submit_probe.get("parsed") or {}).get("top_keywords", [])[:5]),
+            "json_path": submit_probe.get("json_path", ""),
+        },
     }
 
 
@@ -2082,6 +2109,23 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
                 ensure_ascii=False,
             )
             ss_ws.append(["api_probe", probe.get("keyword", ""), probe.get("status", ""), detail, probe.get("api_path", "")])
+        keyword_result_probe = sellersprite.get("keyword_result_probe") or {}
+        if keyword_result_probe:
+            ss_ws.append(
+                [
+                    "result_probe",
+                    keyword_result_probe.get("keyword", ""),
+                    "ok" if keyword_result_probe.get("result_count", 0) else "watch",
+                    json.dumps(
+                        {
+                            "result_count": keyword_result_probe.get("result_count", 0),
+                            "top_keywords": keyword_result_probe.get("top_keywords", []),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    keyword_result_probe.get("final_url", ""),
+                ]
+            )
         autosize(ss_ws)
 
     path = OUT_DIR / f"cross-market-arbitrage-{run_id}.xlsx"
@@ -2124,6 +2168,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         f"- Available platforms: `{', '.join(sellersprite.get('available_platforms', []) or ['none'])}`",
         f"- Keyword metrics: `{', '.join((sellersprite.get('keyword_metrics_available', []) or [])[:8]) or 'none'}`",
         f"- Product metrics: `{', '.join((sellersprite.get('product_metrics_available', []) or [])[:8]) or 'none'}`",
+        f"- Result probe: keyword=`{((sellersprite.get('keyword_result_probe') or {}).get('keyword', ''))}` count=`{((sellersprite.get('keyword_result_probe') or {}).get('result_count', 0))}`",
         "",
         "### API Probes",
         "",
@@ -2131,6 +2176,15 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
     for probe in (sellersprite.get("api_probes") or []):
         lines.append(
             f"- `{probe.get('keyword', '')}`: status=`{probe.get('status', '')}` detail=`{probe.get('detail', '')}` api_status=`{probe.get('api_status', '')}` code=`{probe.get('code', '')}`"
+        )
+    lines.extend([
+        "",
+        "### Result Probe",
+        "",
+    ])
+    for row in (((sellersprite.get("keyword_result_probe") or {}).get("top_keywords") or [])[:5]):
+        lines.append(
+            f"- `#{row.get('rank', '')}` `{row.get('keyword', '')}` / `{row.get('keyword_cn', '')}` / search=`{row.get('monthly_searches', '')}`"
         )
     lines.extend([
         "",
@@ -2232,7 +2286,7 @@ def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -
         lines.append(f"下一步: {', '.join(next_actions[:3])}")
     if sellersprite:
         lines.append(
-            f"SellerSprite: {sellersprite.get('status', 'unavailable')} / month={sellersprite.get('latest_month', '')} / api_ok={sellersprite.get('api_ok_total', 0)}"
+            f"SellerSprite: {sellersprite.get('status', 'unavailable')} / month={sellersprite.get('latest_month', '')} / api_ok={sellersprite.get('api_ok_total', 0)} / result_count={((sellersprite.get('keyword_result_probe') or {}).get('result_count', 0))}"
         )
     if qualified:
         top = qualified[:3]
