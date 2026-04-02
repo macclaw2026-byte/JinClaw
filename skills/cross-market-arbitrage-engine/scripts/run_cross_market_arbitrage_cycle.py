@@ -1952,7 +1952,13 @@ def _sellersprite_product_watchlist(summary: dict[str, Any], limit: int = 5) -> 
             {
                 "rank": row.get("rank"),
                 "product_name": name,
+                "asin": str(row.get("asin", "") or ""),
+                "monthly_sales_hint": str(row.get("monthly_sales_hint", "") or ""),
+                "sales_amount_hint": str(row.get("sales_amount_hint", "") or ""),
                 "price_hint": str(row.get("price_hint", "") or ""),
+                "review_count_hint": str(row.get("review_count_hint", "") or ""),
+                "rating_hint": str(row.get("rating_hint", "") or ""),
+                "listing_date_hint": str(row.get("listing_date_hint", "") or ""),
             }
         )
         if len(watchlist) >= limit:
@@ -2259,7 +2265,13 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
                     json.dumps(
                         {
                             "rank": row.get("rank"),
+                            "asin": row.get("asin", ""),
+                            "monthly_sales_hint": row.get("monthly_sales_hint", ""),
+                            "sales_amount_hint": row.get("sales_amount_hint", ""),
                             "price_hint": row.get("price_hint", ""),
+                            "review_count_hint": row.get("review_count_hint", ""),
+                            "rating_hint": row.get("rating_hint", ""),
+                            "listing_date_hint": row.get("listing_date_hint", ""),
                         },
                         ensure_ascii=False,
                     ),
@@ -2345,7 +2357,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         ])
         for row in (sellersprite.get("product_watchlist") or [])[:5]:
             lines.append(
-                f"- `#{row.get('rank', '')}` `{row.get('product_name', '')}` / price_hint=`{row.get('price_hint', '')}`"
+                f"- `#{row.get('rank', '')}` `{row.get('product_name', '')}` / asin=`{row.get('asin', '')}` / sales=`{row.get('monthly_sales_hint', '')}` / revenue=`{row.get('sales_amount_hint', '')}` / price=`{row.get('price_hint', '')}` / rating=`{row.get('rating_hint', '')}` / reviews=`{row.get('review_count_hint', '')}` / listed=`{row.get('listing_date_hint', '')}`"
             )
     lines.extend([
         "",

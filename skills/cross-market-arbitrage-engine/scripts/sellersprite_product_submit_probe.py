@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -43,28 +44,112 @@ def _clean_lines(text: str) -> list[str]:
     return rows
 
 
+def _is_badge_line(value: str) -> bool:
+    token = str(value or "").strip()
+    if not token:
+        return True
+    return token in {"AC", "A+", "BS", "V", "AMZ", "FBA", "FBM"}
+
+
+def _find_price(lines: list[str]) -> str:
+    for line in lines:
+        if re.fullmatch(r"\$\d+(?:\.\d+)?", line.strip()):
+            return line.strip()
+    return ""
+
+
+def _find_sales_amount(lines: list[str]) -> str:
+    for line in lines:
+        if re.fullmatch(r"\$\d[\d,]*(?:\.\d+)?[KMB]?\+?", line.strip()):
+            normalized = line.strip().lower()
+            if normalized in {"$0", "$0.0", "$0.00"}:
+                continue
+            return line.strip()
+    return ""
+
+
+def _find_monthly_sales(lines: list[str]) -> str:
+    preferred: list[str] = []
+    for line in lines:
+        value = line.strip()
+        if re.fullmatch(r"\d[\d,]*(?:\.\d+)?[KMB]\+?", value):
+            preferred.append(value)
+    if preferred:
+        return preferred[0]
+    for line in lines:
+        value = line.strip()
+        if re.fullmatch(r"\d[\d,]{3,}(?:\.\d+)?\+?", value):
+            return value
+    for line in lines:
+        value = line.strip()
+        if re.fullmatch(r"\d[\d,]*(?:\.\d+)?", value):
+            if value in {"1", "2", "3", "4", "5"}:
+                continue
+            return value
+    return ""
+
+
+def _find_review_count(lines: list[str]) -> str:
+    for line in lines:
+        value = line.strip().replace(",", "")
+        if value.isdigit() and len(value) >= 4:
+            return line.strip()
+    return ""
+
+
+def _find_rating(lines: list[str]) -> str:
+    for line in lines:
+        value = line.strip()
+        if re.fullmatch(r"[1-5]\.\d", value):
+            return value
+    for line in lines:
+        value = line.strip()
+        if re.fullmatch(r"[1-5](?:\.0)?", value):
+            return value
+    return ""
+
+
+def _find_listing_date(lines: list[str]) -> str:
+    for line in lines:
+        value = line.strip()
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            return value
+    return ""
+
+
 def _parse_product_results(text: str) -> dict[str, object]:
     lines = _clean_lines(text)
     products: list[dict[str, object]] = []
-    for idx in range(len(lines) - 5):
-        rank_line = lines[idx]
-        if not rank_line.isdigit():
+    for idx, line in enumerate(lines):
+        if "ASIN:" not in line:
             continue
-        name_line = lines[idx + 1]
-        if len(name_line) < 8:
+        title_idx = idx - 1
+        while title_idx >= 0 and (_is_badge_line(lines[title_idx]) or len(lines[title_idx].strip()) < 8):
+            title_idx -= 1
+        if title_idx < 0:
             continue
-        if any(flag in name_line for flag in ["月销量", "评分数", "卖家精灵", "开始筛选"]):
+        title = lines[title_idx].strip()
+        if any(flag in title for flag in ["月销量", "评分数", "卖家精灵", "开始筛选", "搜索结果数", "LQS:", "卖家:"]):
             continue
-        price = ""
-        for probe in lines[idx + 2 : idx + 12]:
-            if "$" in probe:
-                price = probe
+        rank = None
+        for back_idx in range(title_idx - 1, max(-1, title_idx - 4), -1):
+            probe = lines[back_idx].strip()
+            if probe.isdigit():
+                rank = int(probe)
                 break
+        window = lines[idx : idx + 40]
+        asin_match = re.search(r"ASIN:\s*([A-Z0-9]{10})", line)
         products.append(
             {
-                "rank": int(rank_line),
-                "product_name": name_line,
-                "price_hint": price,
+                "rank": rank,
+                "product_name": title,
+                "asin": asin_match.group(1) if asin_match else "",
+                "monthly_sales_hint": _find_monthly_sales(window),
+                "sales_amount_hint": _find_sales_amount(window),
+                "price_hint": _find_price(window),
+                "review_count_hint": _find_review_count(window),
+                "rating_hint": _find_rating(window),
+                "listing_date_hint": _find_listing_date(window),
             }
         )
         if len(products) >= 8:
