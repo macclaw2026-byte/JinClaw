@@ -161,6 +161,10 @@ REVIEW_COUNT_PATTERNS = [
 LISTING_AGE_PATTERNS = [
     r"Date First Available[^A-Za-z0-9]{0,20}([A-Za-z]+ \d{1,2}, \d{4})",
     r"First available[^A-Za-z0-9]{0,20}([A-Za-z]+ \d{1,2}, \d{4})",
+    r"Available on[^A-Za-z0-9]{0,20}([A-Za-z]+ \d{1,2}, \d{4})",
+    r"Date First Available[^0-9]{0,20}(\d{1,2}/\d{1,2}/\d{4})",
+    r"First available[^0-9]{0,20}(\d{1,2}/\d{1,2}/\d{4})",
+    r"Available on[^0-9]{0,20}(\d{1,2}/\d{1,2}/\d{4})",
 ]
 
 WEIGHT_PATTERNS = [
@@ -751,7 +755,11 @@ def _extract_listing_age_days(text: str) -> int | None:
         if not found:
             continue
         try:
-            dt = datetime.strptime(found.group(1), "%B %d, %Y").replace(tzinfo=timezone.utc)
+            raw = found.group(1).strip()
+            if "/" in raw:
+                dt = datetime.strptime(raw, "%m/%d/%Y").replace(tzinfo=timezone.utc)
+            else:
+                dt = datetime.strptime(raw, "%B %d, %Y").replace(tzinfo=timezone.utc)
         except Exception:
             continue
         return max(0, int((_utc_now() - dt).total_seconds() // 86400))
@@ -981,6 +989,50 @@ def _extract_source_candidate(platform: str, text: str, query: str, fetch_tool: 
     )
 
 
+def _extract_source_links(platform: str, text: str) -> list[str]:
+    raw_links: list[str] = []
+    if platform == "1688":
+        raw_links.extend(re.findall(r"(https?://[^\s\"']+offer[^\s\"']+|/offer/[^\s\"']+)", text, flags=re.I))
+    elif platform == "yiwugo":
+        raw_links.extend(re.findall(r"(https?://en\.yiwugo\.com/product/detail/[^\s\"']+|/product/detail/[^\s\"']+)", text, flags=re.I))
+    elif platform == "made_in_china":
+        raw_links.extend(re.findall(r"https?://[^\s\"']+made-in-china\.com/product/[^\s\"']+", text, flags=re.I))
+        raw_links.extend(re.findall(r"/product/[^\s\"']+", text, flags=re.I))
+    resolved: list[str] = []
+    for raw_link in raw_links:
+        if any(skip in raw_link for skip in ("productdirectory.do", "/products-search/", "/search/product", "/suggest/")):
+            continue
+        link = raw_link
+        if not link.startswith("http"):
+            link = {
+                "1688": "https://detail.1688.com",
+                "yiwugo": "https://en.yiwugo.com",
+                "made_in_china": "https://www.made-in-china.com",
+            }[platform] + link
+        if link not in resolved:
+            resolved.append(link)
+    return resolved[:5]
+
+
+def _source_title_from_link(link: str) -> str:
+    cleaned = re.sub(r"https?://", "", str(link or ""), flags=re.I)
+    cleaned = re.sub(r"[?#].*$", "", cleaned)
+    slug = cleaned.rstrip("/").split("/")[-1]
+    slug = re.sub(r"\.html?$", "", slug, flags=re.I)
+    slug = re.sub(r"[-_]+", " ", slug)
+    return _clean_text(slug)
+
+
+def _candidate_overlap_score(query: str, text: str) -> float:
+    query_tokens = set(_normalize_title(query).split())
+    text_tokens = set(_normalize_title(text).split())
+    if not query_tokens or not text_tokens:
+        return 0.0
+    overlap = len(query_tokens & text_tokens)
+    coverage = overlap / max(1, len(query_tokens))
+    return min(20.0, coverage * 20.0)
+
+
 def _enrich_source_candidate(platform: str, candidate: SourceCandidate) -> SourceCandidate:
     if not candidate.link or (candidate.weight_kg is not None and candidate.price_cny is not None):
         return candidate
@@ -1019,6 +1071,40 @@ def _best_source_for_platform(platform: str, candidate: DemandCandidate, *, max_
         row = _enrich_source_candidate(platform, row)
         if best is None or row.match_score > best.match_score:
             best = row
+        extra_links = _extract_source_links(platform, result.text)
+        for detail_link in extra_links[:2]:
+            detail_result = fetch_best(platform, detail_link, max_tools=2 if max_tools is None else max_tools)
+            fetch_log.append(
+                {
+                    "stage": "match_detail",
+                    "platform": platform,
+                    "query": query_variant,
+                    "link": detail_link,
+                    "tool": detail_result.tool,
+                    "status": detail_result.status,
+                    "score": detail_result.score,
+                }
+            )
+            detail_row = SourceCandidate(
+                platform=platform,
+                link=detail_link,
+                title=_source_title_from_link(detail_link) or query_variant.title(),
+                price_cny=_extract_platform_price_cny(detail_result.text, platform),
+                weight_kg=_extract_weight(detail_result.text[:120000], platform)[0],
+                weight_grade=_extract_weight(detail_result.text[:120000], platform)[1],
+                fetch_tool=f"detail:{detail_result.tool}",
+                match_score=min(
+                    100.0,
+                    35.0
+                    + (20.0 if _extract_platform_price_cny(detail_result.text, platform) is not None else 0.0)
+                    + (25.0 if _extract_weight(detail_result.text[:120000], platform)[0] is not None else 0.0)
+                    + _candidate_overlap_score(query_variant, _source_title_from_link(detail_link) + " " + detail_result.text[:4000]),
+                ),
+                blocked=detail_result.status == "blocked",
+                notes="detail_probe",
+            )
+            if best is None or detail_row.match_score > best.match_score:
+                best = detail_row
         if row.match_score >= 75 and row.weight_grade in {"A", "B"} and not row.blocked:
             break
     return best or SourceCandidate(platform=platform, link=SOURCE_PLATFORM_SEARCH[platform](candidate.query), title=candidate.title, price_cny=None, weight_kg=None, weight_grade="D", fetch_tool="none", match_score=0.0, blocked=True, notes="no_source_probe"), fetch_log
@@ -1026,9 +1112,9 @@ def _best_source_for_platform(platform: str, candidate: DemandCandidate, *, max_
 
 def _enrich_sell_candidate(candidate: DemandCandidate, *, max_tools: int | None = None) -> tuple[DemandCandidate, dict[str, Any]]:
     tool_plan = {
-        "temu": ["agent_browser", "curl_cffi", "crawl4ai"],
-        "amazon": ["curl_cffi", "agent_browser", "crawl4ai"],
-        "walmart": ["agent_browser", "curl_cffi", "crawl4ai"],
+        "temu": ["agent_browser", "playwright_stealth", "curl_cffi", "crawl4ai"],
+        "amazon": ["curl_cffi", "agent_browser", "playwright_stealth", "crawl4ai"],
+        "walmart": ["agent_browser", "playwright_stealth", "curl_cffi", "crawl4ai"],
     }.get(candidate.sell_platform, [fetch_best(candidate.sell_platform, candidate.sell_link, max_tools=max_tools).tool])
     if max_tools is not None:
         tool_plan = tool_plan[:max_tools]
