@@ -750,9 +750,12 @@ def _score_fetch(platform: str, tool: str, text: str, stderr: str) -> FetchResul
     return FetchResult(platform=platform, tool=tool, status=status, score=max(0, min(100, score)), text=text, notes=stderr[:400])
 
 
-def fetch_best(platform: str, url: str, *, max_tools: int | None = None) -> FetchResult:
+def fetch_best(platform: str, url: str, *, max_tools: int | None = None, fast: bool = False) -> FetchResult:
     best: FetchResult | None = None
     ordered_tools = _tool_order(platform)
+    if fast:
+        preferred_fast = [tool for tool in ordered_tools if tool in {"curl_cffi", "direct_http"}]
+        ordered_tools = preferred_fast or ordered_tools[:1]
     if max_tools is not None:
         ordered_tools = ordered_tools[:max_tools]
     for tool in ordered_tools:
@@ -1665,12 +1668,13 @@ def _best_source_for_platform(
     *,
     max_tools: int | None = None,
     platform_bias: float = 0.0,
+    fast: bool = False,
 ) -> tuple[SourceCandidate, list[dict[str, Any]]]:
     fetch_log: list[dict[str, Any]] = []
     best: SourceCandidate | None = None
     for query_variant in _source_query_variants(candidate):
         url = SOURCE_PLATFORM_SEARCH[platform](query_variant)
-        result = fetch_best(platform, url, max_tools=max_tools)
+        result = fetch_best(platform, url, max_tools=max_tools, fast=fast)
         fetch_log.append(
             {
                 "stage": "match",
@@ -1684,12 +1688,14 @@ def _best_source_for_platform(
         )
         row = _extract_source_candidate(platform, result.text, query_variant, result.tool)
         row.match_score = min(100.0, row.match_score + platform_bias)
-        row = _enrich_source_candidate(platform, row)
+        if not fast:
+            row = _enrich_source_candidate(platform, row)
         if best is None or row.match_score > best.match_score:
             best = row
         extra_links = _extract_source_links(platform, result.text)
-        for detail_link in extra_links[:2]:
-            detail_result = fetch_best(platform, detail_link, max_tools=2 if max_tools is None else max_tools)
+        detail_cap = 0 if fast else 2
+        for detail_link in extra_links[:detail_cap]:
+            detail_result = fetch_best(platform, detail_link, max_tools=2 if max_tools is None else max_tools, fast=fast)
             fetch_log.append(
                 {
                     "stage": "match_detail",
@@ -3054,12 +3060,15 @@ def _persist_adaptive_history(profile: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _collect_sellersprite_summary(queries: list[str]) -> dict[str, Any]:
+def _collect_sellersprite_summary(queries: list[str], *, fast: bool = False) -> dict[str, Any]:
     pages: dict[str, Any] = {}
-    for label, url in {
+    page_map = {
         "product_research": SELLERSPRITE_PRODUCT_RESEARCH_URL,
         "keyword_research": SELLERSPRITE_KEYWORD_RESEARCH_URL,
-    }.items():
+    }
+    if fast:
+        page_map = {"keyword_research": SELLERSPRITE_KEYWORD_RESEARCH_URL}
+    for label, url in page_map.items():
         pages[label] = _sellersprite_fetch(save_prefix=f"sellersprite-{label}", url=url)
     available_platforms = sorted(
         {
@@ -3077,31 +3086,32 @@ def _collect_sellersprite_summary(queries: list[str]) -> dict[str, Any]:
             break
     api_probes: list[dict[str, Any]] = []
     probe_month = latest_month or (_ny_now().strftime("%Y-%m"))
-    for query in queries[:2]:
-        api_path = f"/v2/keyword-stat/gkdata?station=US&keyword={quote_plus(query)}&month={probe_month}"
-        probe = _sellersprite_fetch(
-            save_prefix=f"sellersprite-keyword-probe-{_slug(query)}",
-            api_path=api_path,
-            base_url=SELLERSPRITE_KEYWORD_RESEARCH_URL,
-            wait_seconds=3.0,
-        )
-        parsed = probe.get("parsed") or {}
-        state, detail = _sellersprite_probe_status(parsed if isinstance(parsed, dict) else {})
-        body = parsed.get("body") if isinstance(parsed, dict) else {}
-        api_probes.append(
-            {
-                "keyword": query,
-                "month": probe_month,
-                "status": state,
-                "detail": detail,
-                "api_status": parsed.get("api_status"),
-                "api_ok": parsed.get("api_ok"),
-                "api_path": api_path,
-                "message": body.get("message") if isinstance(body, dict) else "",
-                "code": body.get("code") if isinstance(body, dict) else "",
-                "json_path": probe.get("json_path", ""),
-            }
-        )
+    if not fast:
+        for query in queries[:2]:
+            api_path = f"/v2/keyword-stat/gkdata?station=US&keyword={quote_plus(query)}&month={probe_month}"
+            probe = _sellersprite_fetch(
+                save_prefix=f"sellersprite-keyword-probe-{_slug(query)}",
+                api_path=api_path,
+                base_url=SELLERSPRITE_KEYWORD_RESEARCH_URL,
+                wait_seconds=3.0,
+            )
+            parsed = probe.get("parsed") or {}
+            state, detail = _sellersprite_probe_status(parsed if isinstance(parsed, dict) else {})
+            body = parsed.get("body") if isinstance(parsed, dict) else {}
+            api_probes.append(
+                {
+                    "keyword": query,
+                    "month": probe_month,
+                    "status": state,
+                    "detail": detail,
+                    "api_status": parsed.get("api_status"),
+                    "api_ok": parsed.get("api_ok"),
+                    "api_path": api_path,
+                    "message": body.get("message") if isinstance(body, dict) else "",
+                    "code": body.get("code") if isinstance(body, dict) else "",
+                    "json_path": probe.get("json_path", ""),
+                }
+            )
     page_ok_total = sum(1 for payload in pages.values() if payload.get("ok"))
     api_ok_total = sum(1 for row in api_probes if row.get("status") == "ok")
     status = "unavailable"
@@ -3112,34 +3122,37 @@ def _collect_sellersprite_summary(queries: list[str]) -> dict[str, Any]:
     submit_keyword = _slug(queries[0]).replace("-", " ") if queries else "organizer"
     if len(submit_keyword.strip()) < 3:
         submit_keyword = "organizer"
-    submit_probe = _parse_json_stdout(
-        _run(
-            [
-                str(VENV_PY),
-                str(SELLERSPRITE_KEYWORD_SUBMIT_PROBE),
-                "--keyword",
-                submit_keyword,
-                "--save-prefix",
-                f"sellersprite-submit-{_slug(submit_keyword)}",
-                "--wait-seconds",
-                "4",
-            ],
-            timeout=120,
-        ).stdout
-    )
-    product_probe = _parse_json_stdout(
-        _run(
-            [
-                str(VENV_PY),
-                str(SELLERSPRITE_PRODUCT_SUBMIT_PROBE),
-                "--save-prefix",
-                "sellersprite-product-default",
-                "--wait-seconds",
-                "6",
-            ],
-            timeout=120,
-        ).stdout
-    )
+    submit_probe: dict[str, Any] = {}
+    product_probe: dict[str, Any] = {}
+    if not fast:
+        submit_probe = _parse_json_stdout(
+            _run(
+                [
+                    str(VENV_PY),
+                    str(SELLERSPRITE_KEYWORD_SUBMIT_PROBE),
+                    "--keyword",
+                    submit_keyword,
+                    "--save-prefix",
+                    f"sellersprite-submit-{_slug(submit_keyword)}",
+                    "--wait-seconds",
+                    "4",
+                ],
+                timeout=120,
+            ).stdout
+        )
+        product_probe = _parse_json_stdout(
+            _run(
+                [
+                    str(VENV_PY),
+                    str(SELLERSPRITE_PRODUCT_SUBMIT_PROBE),
+                    "--save-prefix",
+                    "sellersprite-product-default",
+                    "--wait-seconds",
+                    "6",
+                ],
+                timeout=120,
+            ).stdout
+        )
     keyword_metrics = (((pages.get("keyword_research") or {}).get("parsed") or {}).get("filter_metrics") or [])
     product_metrics = (((pages.get("product_research") or {}).get("parsed") or {}).get("filter_metrics") or [])
     summary = {
@@ -3148,6 +3161,7 @@ def _collect_sellersprite_summary(queries: list[str]) -> dict[str, Any]:
         "available_platforms": available_platforms,
         "page_ok_total": page_ok_total,
         "api_ok_total": api_ok_total,
+        "mode": "fast" if fast else "full",
         "pages": pages,
         "api_probes": api_probes,
         "keyword_metrics_available": keyword_metrics,
@@ -3876,24 +3890,27 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
     adaptive_thresholds = _adaptive_thresholds_from_state(state)
     threshold_history = _persist_threshold_history(adaptive_thresholds)
     base_queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
-    sellersprite = _collect_sellersprite_summary(base_queries)
+    sellersprite = _collect_sellersprite_summary(base_queries, fast=test)
     seed_query_keys = {_query_key(item) for item in (sellersprite.get("seed_queries") or []) if _query_key(item)}
     base_query_keys = {_query_key(item) for item in base_queries if _query_key(item)}
+    query_limit = 2 if test else 10
     queries = _apply_query_adaptive_order(
-        _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=3 if test else 10),
+        _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=query_limit),
         adaptive_profile,
-        limit=3 if test else 10,
+        limit=query_limit,
     )
-    sell_platforms = ["temu", "amazon"] if test else ["temu", "amazon", "walmart"]
+    sell_platforms = ["amazon", "temu"] if test else ["temu", "amazon", "walmart"]
     source_platforms = list((adaptive_profile.get("source_order") or []) or ["made_in_china", "1688", "yiwugo"])
-    max_tools = 2 if test else None
+    if test:
+        source_platforms = source_platforms[:2]
+    max_tools = 1 if test else None
 
     fetch_log: list[dict[str, Any]] = []
     demand_candidates: list[DemandCandidate] = []
 
     for query in queries:
         for platform in sell_platforms:
-            result = fetch_best(platform, url_for_sell(platform, query), max_tools=max_tools)
+            result = fetch_best(platform, url_for_sell(platform, query), max_tools=max_tools, fast=test)
             fetch_log.append({"platform": platform, "query": query, "tool": result.tool, "status": result.status, "score": result.score})
             demand_candidates.extend(_extract_sell_candidates(platform, result.text, query))
 
@@ -3929,6 +3946,7 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
                 candidate,
                 max_tools=max_tools,
                 platform_bias=source_bias,
+                fast=test,
             )
             fetch_log.extend(best_log)
             source_rows.append(best_row)
@@ -3996,21 +4014,22 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
     adaptive_profile = _adaptive_profile_from_state(state)
     adaptive_thresholds = _adaptive_thresholds_from_state(state)
     base_queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
-    sellersprite = _collect_sellersprite_summary(base_queries)
+    sellersprite = _collect_sellersprite_summary(base_queries, fast=test)
     seed_query_keys = {_query_key(item) for item in (sellersprite.get("seed_queries") or []) if _query_key(item)}
     base_query_keys = {_query_key(item) for item in base_queries if _query_key(item)}
+    query_limit = 2 if test else 10
     queries = _apply_query_adaptive_order(
-        _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=3 if test else 10),
+        _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=query_limit),
         adaptive_profile,
-        limit=3 if test else 10,
+        limit=query_limit,
     )
-    sell_platforms = ["temu", "amazon"] if test else ["temu", "amazon", "walmart"]
-    max_tools = 2 if test else None
+    sell_platforms = ["amazon", "temu"] if test else ["temu", "amazon", "walmart"]
+    max_tools = 1 if test else None
     fetch_log: list[dict[str, Any]] = []
     candidates: list[DemandCandidate] = []
     for query in queries:
         for platform in sell_platforms:
-            result = fetch_best(platform, url_for_sell(platform, query), max_tools=max_tools)
+            result = fetch_best(platform, url_for_sell(platform, query), max_tools=max_tools, fast=test)
             fetch_log.append({"stage": "discover", "platform": platform, "query": query, "tool": result.tool, "status": result.status, "score": result.score})
             candidates.extend(_extract_sell_candidates(platform, result.text, query))
     enriched: list[DemandCandidate] = []
@@ -4107,7 +4126,9 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
 def _match_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[str, Any], list[ArbitrageDecision], list[dict[str, Any]]]:
     adaptive_profile = _adaptive_profile_from_state(state)
     source_platforms = list((adaptive_profile.get("source_order") or []) or ["made_in_china", "1688", "yiwugo"])
-    max_tools = 2 if test else None
+    if test:
+        source_platforms = source_platforms[:2]
+    max_tools = 1 if test else None
     fetch_log: list[dict[str, Any]] = []
     decisions: list[ArbitrageDecision] = []
     ordered_candidates = sorted(
@@ -4121,7 +4142,13 @@ def _match_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[str
         rows: list[SourceCandidate] = []
         for platform in source_platforms:
             source_bias = float(((adaptive_profile.get("source_biases") or {}).get(platform, 0) or 0))
-            best_row, best_log = _best_source_for_platform(platform, candidate, max_tools=max_tools, platform_bias=source_bias)
+            best_row, best_log = _best_source_for_platform(
+                platform,
+                candidate,
+                max_tools=max_tools,
+                platform_bias=source_bias,
+                fast=test,
+            )
             fetch_log.extend(best_log)
             rows.append(best_row)
         payload["source_matches"] = [asdict(row) for row in rows]
