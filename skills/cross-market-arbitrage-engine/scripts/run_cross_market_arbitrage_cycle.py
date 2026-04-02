@@ -1034,6 +1034,7 @@ def _platform_screen_profile(
     restricted: bool,
     sellersprite_keyword_signal_score: float = 0.0,
     sellersprite_product_signal_score: float = 0.0,
+    adaptive_platform_bias: float = 0.0,
 ) -> tuple[float, str, str]:
     margin_score = min(100.0, max(0.0, (margin or 0.0) * 100.0 * 1.5)) if margin is not None else 0.0
     conservative_score = min(100.0, max(0.0, (conservative_margin or 0.0) * 100.0 * 1.5)) if conservative_margin is not None else 0.0
@@ -1103,6 +1104,7 @@ def _platform_screen_profile(
         )
     if restricted:
         fit = min(fit, 35.0)
+    fit += adaptive_platform_bias
     fit = round(max(0.0, min(100.0, fit)), 2)
     if fit >= 80.0:
         return fit, "strong", "priority_test"
@@ -1542,6 +1544,7 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
     reasons: list[str] = []
     sellersprite_keyword_signal_score = float(((candidate.raw_signals or {}).get("sellersprite_keyword_signal_score", 0) or 0))
     sellersprite_product_signal_score = float(((candidate.raw_signals or {}).get("sellersprite_product_signal_score", 0) or 0))
+    adaptive_platform_bias = float(((candidate.raw_signals or {}).get("adaptive_platform_bias", 0) or 0))
     restricted, hits = _is_restricted(candidate.title)
     if restricted:
         reasons.append(f"restricted:{','.join(hits[:4])}")
@@ -1698,6 +1701,7 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         restricted=restricted,
         sellersprite_keyword_signal_score=sellersprite_keyword_signal_score,
         sellersprite_product_signal_score=sellersprite_product_signal_score,
+        adaptive_platform_bias=adaptive_platform_bias,
     )
     qualified = (
         not restricted
@@ -2181,6 +2185,51 @@ def _decision_bucket(
     return "watchlist", "low_confidence_or_margin"
 
 
+def _state_decisions(state: dict[str, Any]) -> list[ArbitrageDecision]:
+    decisions: list[ArbitrageDecision] = []
+    for payload in (state.get("candidates") or {}).values():
+        decision = payload.get("decision")
+        if isinstance(decision, dict):
+            try:
+                decisions.append(_decision_from_payload(decision))
+            except Exception:
+                continue
+    return decisions
+
+
+def _adaptive_profile_from_state(state: dict[str, Any]) -> dict[str, Any]:
+    decisions = _state_decisions(state)
+    failure_categories = _decision_failure_categories(decisions)
+    primary_blocker = next(iter(failure_categories.keys()), "none")
+    keyword_multiplier = 1.0
+    product_multiplier = 1.0
+    if primary_blocker in {"estimated_daily_orders_below_threshold", "listing_age_unknown"}:
+        keyword_multiplier += 0.18
+        product_multiplier += 0.12
+    elif primary_blocker in {"no_usable_source_match", "missing_trusted_weight"}:
+        keyword_multiplier += 0.05
+        product_multiplier += 0.15
+    platform_biases: dict[str, float] = {}
+    for platform in ["amazon", "walmart", "temu", "tiktok"]:
+        rows = [item for item in decisions if item.sell_platform.lower() == platform]
+        if not rows:
+            platform_biases[platform] = 0.0
+            continue
+        near_miss = sum(1 for item in rows if item.decision_bucket == "near_miss")
+        qualified = sum(1 for item in rows if item.decision_bucket == "qualified")
+        bias = min(8.0, near_miss * 1.5 + qualified * 0.8)
+        platform_biases[platform] = round(bias, 2)
+    return {
+        "status": "adaptive" if decisions else "cold_start",
+        "decision_samples": len(decisions),
+        "primary_blocker": primary_blocker,
+        "failure_categories": failure_categories,
+        "keyword_signal_multiplier": round(keyword_multiplier, 2),
+        "product_signal_multiplier": round(product_multiplier, 2),
+        "platform_biases": platform_biases,
+    }
+
+
 def _collect_sellersprite_summary(queries: list[str]) -> dict[str, Any]:
     pages: dict[str, Any] = {}
     for label, url in {
@@ -2525,6 +2574,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
     governance = summary.get("governance") or {}
     platform_summary = summary.get("platform_summary") or {}
     sellersprite = summary.get("sellersprite") or {}
+    adaptive_profile = summary.get("adaptive_profile") or {}
     lines = [
         "# Cross-market arbitrage run",
         "",
@@ -2548,6 +2598,15 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         f"- Primary blocker: `{governance.get('primary_blocker', 'none')}`",
         f"- Next actions: `{', '.join(governance.get('next_actions', []) or ['none'])}`",
         f"- Failure categories: `{json.dumps(governance.get('failure_categories', {}), ensure_ascii=False)}`",
+        "",
+        "## Adaptive Profile",
+        "",
+        f"- Status: `{adaptive_profile.get('status', 'cold_start')}`",
+        f"- Decision samples: `{adaptive_profile.get('decision_samples', 0)}`",
+        f"- Primary blocker: `{adaptive_profile.get('primary_blocker', 'none')}`",
+        f"- Keyword multiplier: `{adaptive_profile.get('keyword_signal_multiplier', 1.0)}`",
+        f"- Product multiplier: `{adaptive_profile.get('product_signal_multiplier', 1.0)}`",
+        f"- Platform biases: `{json.dumps(adaptive_profile.get('platform_biases', {}), ensure_ascii=False)}`",
         "",
         "## SellerSprite",
         "",
@@ -2701,6 +2760,7 @@ def _send_to_telegram(*, chat_id: str, text: str, media_paths: list[Path]) -> li
 def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -> str:
     governance = summary.get("governance") or {}
     sellersprite = summary.get("sellersprite") or {}
+    adaptive_profile = summary.get("adaptive_profile") or {}
     qualified = [item for item in decisions if item.qualified]
     lines = [
         f"Cross-market arbitrage run completed.",
@@ -2718,6 +2778,10 @@ def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -
     if sellersprite:
         lines.append(
             f"SellerSprite: {sellersprite.get('status', 'unavailable')} / month={sellersprite.get('latest_month', '')} / api_ok={sellersprite.get('api_ok_total', 0)} / seed_queries={len(sellersprite.get('seed_queries') or [])} / keyword_results={((sellersprite.get('keyword_result_probe') or {}).get('result_count', 0))} / product_rows={((sellersprite.get('product_result_probe') or {}).get('product_rows_detected', 0))}"
+        )
+    if adaptive_profile:
+        lines.append(
+            f"Adaptive: blocker={adaptive_profile.get('primary_blocker', 'none')} / keyword_x={adaptive_profile.get('keyword_signal_multiplier', 1.0)} / product_x={adaptive_profile.get('product_signal_multiplier', 1.0)}"
         )
     if qualified:
         top = qualified[:3]
@@ -2787,6 +2851,8 @@ def _platform_summary(decisions: list[ArbitrageDecision]) -> dict[str, Any]:
 
 def run_once(*, test: bool = False) -> dict[str, Any]:
     run_id = _utc_now().strftime("%Y%m%dT%H%M%SZ")
+    state = _load_state()
+    adaptive_profile = _adaptive_profile_from_state(state)
     base_queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
     sellersprite = _collect_sellersprite_summary(base_queries)
     queries = _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=3 if test else 10)
@@ -2830,6 +2896,7 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
         "discovery_candidate_count": len(demand_candidates),
         "qualified_count": sum(1 for item in decisions if item.qualified),
         "platform_summary": _platform_summary(decisions),
+        "adaptive_profile": adaptive_profile,
         "sellersprite": sellersprite,
         "base_queries": base_queries,
         "queries": queries,
@@ -2851,7 +2918,6 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
         },
     )
 
-    state = _load_state()
     state.setdefault("runs", []).append(
         {
             "run_id": run_id,
@@ -2875,6 +2941,7 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
 
 
 def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[str, Any], list[DemandCandidate], list[dict[str, Any]]]:
+    adaptive_profile = _adaptive_profile_from_state(state)
     base_queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
     sellersprite = _collect_sellersprite_summary(base_queries)
     queries = _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=3 if test else 10)
@@ -2892,6 +2959,25 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
         updated, detail_log = _enrich_sell_candidate(item, max_tools=max_tools)
         fetch_log.append(detail_log)
         hints = _sellersprite_candidate_hints(sellersprite, updated)
+        hints["sellersprite_keyword_signal_score"] = round(
+            min(
+                100.0,
+                float(hints.get("sellersprite_keyword_signal_score", 0) or 0)
+                * float(adaptive_profile.get("keyword_signal_multiplier", 1.0) or 1.0),
+            ),
+            2,
+        )
+        hints["sellersprite_product_signal_score"] = round(
+            min(
+                100.0,
+                float(hints.get("sellersprite_product_signal_score", 0) or 0)
+                * float(adaptive_profile.get("product_signal_multiplier", 1.0) or 1.0),
+            ),
+            2,
+        )
+        hints["adaptive_platform_bias"] = float(
+            ((adaptive_profile.get("platform_biases") or {}).get(updated.sell_platform.lower(), 0) or 0)
+        )
         updated.raw_signals = {**(updated.raw_signals or {}), **hints}
         if hints.get("sellersprite_product_freshest_listing_days") is not None and updated.listing_age_days is None:
             updated.listing_age_days = int(hints["sellersprite_product_freshest_listing_days"])
@@ -2940,6 +3026,7 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
     state["last_discovery_at"] = _utc_now_iso()
     state["last_sellersprite_seed_queries"] = list(sellersprite.get("seed_queries") or [])
     state["last_effective_queries"] = list(queries)
+    state["last_adaptive_profile"] = adaptive_profile
     return state, candidates, fetch_log
 
 
@@ -2993,6 +3080,7 @@ def _report_cycle(
         "discovery_candidate_count": len(rows),
         "qualified_count": sum(1 for item in decisions if item.qualified),
         "platform_summary": _platform_summary(decisions),
+        "adaptive_profile": _adaptive_profile_from_state(state),
         "sellersprite": _collect_sellersprite_summary(DEFAULT_DISCOVERY_QUERIES),
         "base_queries": DEFAULT_DISCOVERY_QUERIES,
         "queries": state.get("last_effective_queries") or DEFAULT_DISCOVERY_QUERIES,
