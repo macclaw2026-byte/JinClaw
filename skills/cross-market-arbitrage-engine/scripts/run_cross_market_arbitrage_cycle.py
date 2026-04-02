@@ -281,6 +281,20 @@ MATCH_TOKEN_STOPWORDS = {
     "wholesale",
 }
 
+SOURCE_QUERY_BANNED_TOKENS = {
+    "amazon",
+    "walmart",
+    "temu",
+    "com",
+    "www",
+    "http",
+    "https",
+    "dp",
+    "ip",
+    "html",
+    "shtml",
+}
+
 
 @dataclass
 class FetchResult:
@@ -624,16 +638,25 @@ def _extract_page_title(text: str) -> str | None:
 
 def _source_query_variants(candidate: DemandCandidate) -> list[str]:
     def _compact(text: str) -> str:
+        text = re.sub(r"https?://\S+", " ", str(text or ""), flags=re.I)
+        text = re.sub(r"\b(?:www\.)?(?:amazon|walmart|temu)\.com\b", " ", text, flags=re.I)
+        text = re.sub(r"\b(?:dp|ip|offer|product|detail|html|shtml|ref)\b", " ", text, flags=re.I)
         text = _normalize_title(text)
         text = re.sub(r"\b\d+(?:\.\d+)?\s*(?:pack|pcs?|pieces?|count|ct|inch|in|cm|mm|oz|ml|lb|lbs|g|kg)\b", " ", text)
         text = re.sub(r"\b(?:set of|pack of|for women|for men|for kids|amazon basics|walmart|temu)\b", " ", text)
         text = re.sub(r"\b\d+\b", " ", text)
+        tokens = [token for token in text.split() if token not in SOURCE_QUERY_BANNED_TOKENS]
+        text = " ".join(tokens)
         text = re.sub(r"\s+", " ", text).strip()
         return text
 
     primary = _compact(candidate.title) or _compact(candidate.query) or candidate.query.strip().lower()
     fallback = _normalize_title(candidate.query) or candidate.query.strip().lower()
-    token_pool = [token for token in primary.split() if token not in SOURCE_QUERY_STOPWORDS]
+    token_pool = [
+        token
+        for token in primary.split()
+        if token not in SOURCE_QUERY_STOPWORDS and token not in SOURCE_QUERY_BANNED_TOKENS
+    ]
     variants: list[str] = []
 
     for text in [
@@ -643,11 +666,11 @@ def _source_query_variants(candidate: DemandCandidate) -> list[str]:
         " ".join(token_pool[:3]).strip(),
         " ".join(token_pool[:2]).strip(),
         primary,
-        fallback,
+        " ".join(token for token in fallback.split() if token not in SOURCE_QUERY_BANNED_TOKENS).strip(),
         _compact(candidate.query),
         _compact(candidate.title),
-        candidate.query.strip().lower(),
-        candidate.title.strip().lower(),
+        _compact(candidate.query.strip().lower()),
+        _compact(candidate.title.strip().lower()),
     ]:
         text = re.sub(r"\s+", " ", text).strip()
         if len(text.split()) < 2:
