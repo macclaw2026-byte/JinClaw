@@ -654,6 +654,26 @@ def _extract_prices_detailed(text: str) -> list[tuple[float, str]]:
     return rows
 
 
+def _extract_amazon_price_usd(text: str) -> float | None:
+    patterns = [
+        r'id="apex-pricetopay-accessibility-label"[^>]*>\s*\$?(\d+(?:\.\d+)?)',
+        r'class="[^"]*priceToPay[^"]*"[^>]*>\s*<span class="a-offscreen">\s*\$?(\d+(?:\.\d+)?)',
+        r'class="[^"]*apex-pricetopay-value[^"]*"[^>]*>.*?<span class="a-offscreen">\s*\$?(\d+(?:\.\d+)?)',
+        r'id="corePriceDisplay_desktop_feature_div".*?<span class="a-offscreen">\s*\$?(\d+(?:\.\d+)?)',
+    ]
+    for pattern in patterns:
+        found = re.search(pattern, text, flags=re.I | re.S)
+        if not found:
+            continue
+        try:
+            value = float(found.group(1))
+        except Exception:
+            continue
+        if value > 1.0:
+            return value
+    return None
+
+
 def _price_to_cny(value: float, currency: str, platform: str) -> float:
     if currency == "USD":
         return value * USD_TO_CNY
@@ -680,6 +700,10 @@ def _best_price_cny(text: str, platform: str) -> float | None:
 
 
 def _extract_platform_price_cny(text: str, platform: str) -> float | None:
+    if platform == "amazon":
+        amazon_price = _extract_amazon_price_usd(text)
+        if amazon_price is not None:
+            return round(amazon_price * USD_TO_CNY, 2)
     if platform == "yiwugo":
         prices: list[float] = []
         for raw in re.findall(r'sellprice="(\d+(?:\.\d+)?)"', text, flags=re.I):
