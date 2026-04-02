@@ -7,11 +7,13 @@ import os
 import re
 import subprocess
 import time
+import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote_plus
+from urllib.request import urlopen
 from zoneinfo import ZoneInfo
 
 from openpyxl import Workbook
@@ -27,6 +29,7 @@ STATE_PATH = STATE_DIR / "cross-market-arbitrage-engine.json"
 OUT_DIR = ROOT / "output" / "cross-market-arbitrage-engine"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 LATEST_REPORT_PATH = OUT_DIR / "latest-report.json"
+FX_CACHE_PATH = STATE_DIR / "usd_cny_midrate.json"
 
 TOOLS_ROOT = ROOT / "tools"
 CRAWL4AI = TOOLS_ROOT / "bin" / "crawl4ai"
@@ -50,7 +53,8 @@ REPORT_WINDOW_HOURS = 24
 REPORT_TIMEZONE = ZoneInfo("America/New_York")
 REPORT_HOUR = 18
 DEFAULT_TELEGRAM_TARGET = "8528973600"
-USD_TO_CNY = 7.2
+USD_TO_CNY_FALLBACK = 7.2
+_USD_TO_CNY_CACHE: dict[str, Any] | None = None
 DEFAULT_PLATFORM_FEE = 0.15
 
 PLATFORM_FEE_TABLE = {
@@ -323,6 +327,83 @@ def _utc_now() -> datetime:
 
 def _utc_now_iso() -> str:
     return _utc_now().isoformat()
+
+
+def _load_fx_cache() -> dict[str, Any] | None:
+    if not FX_CACHE_PATH.exists():
+        return None
+    try:
+        payload = json.loads(FX_CACHE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _save_fx_cache(payload: dict[str, Any]) -> None:
+    FX_CACHE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _fetch_usd_to_cny_midrate() -> dict[str, Any] | None:
+    try:
+        with urlopen("https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml", timeout=20) as resp:
+            raw = resp.read()
+    except Exception:
+        return None
+    try:
+        root = ET.fromstring(raw)
+    except ET.ParseError:
+        return None
+    ns = {"e": "http://www.ecb.int/vocabulary/2002-08-01/eurofxref"}
+    time_node = root.find(".//e:Cube[@time]", ns)
+    if time_node is None:
+        return None
+    as_of = time_node.attrib.get("time")
+    eur_usd = None
+    eur_cny = None
+    for cube in time_node.findall("e:Cube", ns):
+        currency = (cube.attrib.get("currency") or "").upper()
+        rate_raw = cube.attrib.get("rate")
+        try:
+            rate = float(rate_raw)
+        except Exception:
+            continue
+        if currency == "USD":
+            eur_usd = rate
+        elif currency == "CNY":
+            eur_cny = rate
+    if not eur_usd or not eur_cny or eur_usd <= 0:
+        return None
+    return {
+        "source": "ECB euro foreign exchange reference rates",
+        "as_of": as_of,
+        "eur_usd": eur_usd,
+        "eur_cny": eur_cny,
+        "usd_cny_midrate": round(eur_cny / eur_usd, 6),
+        "fetched_at": _utc_now_iso(),
+    }
+
+
+def _usd_to_cny_rate() -> float:
+    global _USD_TO_CNY_CACHE
+    today = _utc_now().date().isoformat()
+    if _USD_TO_CNY_CACHE and _USD_TO_CNY_CACHE.get("as_of") == today:
+        return float(_USD_TO_CNY_CACHE.get("usd_cny_midrate") or USD_TO_CNY_FALLBACK)
+    cached = _load_fx_cache()
+    if cached and cached.get("as_of") == today:
+        _USD_TO_CNY_CACHE = cached
+        return float(cached.get("usd_cny_midrate") or USD_TO_CNY_FALLBACK)
+    fresh = _fetch_usd_to_cny_midrate()
+    if fresh:
+        _USD_TO_CNY_CACHE = fresh
+        try:
+            _save_fx_cache(fresh)
+        except OSError:
+            pass
+        return float(fresh.get("usd_cny_midrate") or USD_TO_CNY_FALLBACK)
+    if cached and cached.get("usd_cny_midrate") is not None:
+        _USD_TO_CNY_CACHE = cached
+        return float(cached["usd_cny_midrate"])
+    return USD_TO_CNY_FALLBACK
 
 
 def _ny_now() -> datetime:
@@ -697,12 +778,13 @@ def _extract_amazon_price_usd(text: str) -> float | None:
 
 
 def _price_to_cny(value: float, currency: str, platform: str) -> float:
+    usd_to_cny = _usd_to_cny_rate()
     if currency == "USD":
-        return value * USD_TO_CNY
+        return value * usd_to_cny
     if platform in {"amazon", "walmart", "temu"}:
-        return value * USD_TO_CNY
+        return value * usd_to_cny
     if platform == "made_in_china" and currency != "CNY":
-        return value * USD_TO_CNY
+        return value * usd_to_cny
     return value
 
 
@@ -717,7 +799,7 @@ def _best_price_cny(text: str, platform: str) -> float | None:
         return None
     inferred = min(simple)
     if platform in {"amazon", "walmart", "temu", "made_in_china"}:
-        inferred *= USD_TO_CNY
+        inferred *= _usd_to_cny_rate()
     return round(inferred, 2)
 
 
@@ -725,7 +807,7 @@ def _extract_platform_price_cny(text: str, platform: str) -> float | None:
     if platform == "amazon":
         amazon_price = _extract_amazon_price_usd(text)
         if amazon_price is not None:
-            return round(amazon_price * USD_TO_CNY, 2)
+            return round(amazon_price * _usd_to_cny_rate(), 2)
     if platform == "yiwugo":
         prices: list[float] = []
         for raw in re.findall(r'sellprice="(\d+(?:\.\d+)?)"', text, flags=re.I):
@@ -747,7 +829,7 @@ def _extract_platform_price_cny(text: str, platform: str) -> float | None:
             if value > 0:
                 usd_hits.append(value)
         if usd_hits:
-            return round(min(usd_hits) * USD_TO_CNY, 2)
+            return round(min(usd_hits) * _usd_to_cny_rate(), 2)
     return _best_price_cny(text, platform)
 
 
