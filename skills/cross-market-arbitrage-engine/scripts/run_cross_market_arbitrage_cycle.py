@@ -310,6 +310,8 @@ class ArbitrageDecision:
     confidence_score: float
     weight_grade: str
     qualified: bool
+    decision_bucket: str = "watchlist"
+    priority_reason: str = ""
     reasons: list[str] = field(default_factory=list)
 
 
@@ -328,6 +330,8 @@ DECISION_DEFAULTS: dict[str, Any] = {
     "confidence_score": 0.0,
     "weight_grade": "D",
     "qualified": False,
+    "decision_bucket": "watchlist",
+    "priority_reason": "",
     "reasons": [],
 }
 
@@ -1709,6 +1713,19 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         and confidence >= 80.0
         and platform_fit_score >= 65.0
     )
+    decision_bucket, priority_reason = _decision_bucket(
+        qualified=qualified,
+        platform_fit_score=platform_fit_score,
+        confidence=confidence,
+        launchability_score=launchability_score,
+        estimated_daily_orders=estimated_daily_orders,
+        listing_age_days=listing_age_days,
+        margin=margin,
+        conservative_margin=conservative_margin,
+        sellersprite_keyword_signal_score=sellersprite_keyword_signal_score,
+        sellersprite_product_signal_score=sellersprite_product_signal_score,
+        reasons=reasons,
+    )
     if not qualified and not reasons:
         reasons.append("below_threshold_or_low_confidence")
     return ArbitrageDecision(
@@ -1737,6 +1754,8 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         confidence_score=round(confidence, 2),
         weight_grade=best_source.weight_grade,
         qualified=qualified,
+        decision_bucket=decision_bucket,
+        priority_reason=priority_reason,
         reasons=reasons,
     )
 
@@ -2124,6 +2143,44 @@ def _sellersprite_candidate_hints(summary: dict[str, Any], candidate: DemandCand
     }
 
 
+def _decision_bucket(
+    *,
+    qualified: bool,
+    platform_fit_score: float,
+    confidence: float,
+    launchability_score: float,
+    estimated_daily_orders: float,
+    listing_age_days: int | None,
+    margin: float | None,
+    conservative_margin: float | None,
+    sellersprite_keyword_signal_score: float,
+    sellersprite_product_signal_score: float,
+    reasons: list[str],
+) -> tuple[str, str]:
+    if qualified:
+        return "qualified", "passed_strong_thresholds"
+    combined_signal = max(sellersprite_keyword_signal_score, sellersprite_product_signal_score)
+    if (
+        platform_fit_score >= 60.0
+        and confidence >= 70.0
+        and launchability_score >= 58.0
+        and margin is not None
+        and margin >= 0.30
+        and conservative_margin is not None
+        and conservative_margin >= 0.25
+        and estimated_daily_orders >= 15.0
+        and (listing_age_days is None or listing_age_days <= 900)
+    ):
+        if combined_signal >= 45.0:
+            return "near_miss", "strong_sellersprite_signal_needs_validation"
+        return "near_miss", "close_to_threshold"
+    if combined_signal >= 55.0:
+        return "watchlist", "high_signal_watchlist"
+    if any(reason in {"listing_age_unknown", "estimated_daily_orders_below_threshold"} for reason in reasons):
+        return "watchlist", "demand_or_age_evidence_gap"
+    return "watchlist", "low_confidence_or_margin"
+
+
 def _collect_sellersprite_summary(queries: list[str]) -> dict[str, Any]:
     pages: dict[str, Any] = {}
     for label, url in {
@@ -2255,11 +2312,45 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
         ws.append([item.product_name, item.buy_platform, item.buy_link, item.sell_platform, item.sell_link, item.platform_fit_score, item.platform_recommendation])
     autosize(ws)
 
+    near_ws = wb.create_sheet("Near_Miss")
+    near_ws.append(["产品名称", "售卖平台", "平台适配分", "可做分", "置信度", "优先原因", "原因"])
+    style_header(near_ws)
+    for item in decisions:
+        if item.decision_bucket != "near_miss":
+            continue
+        near_ws.append([
+            item.product_name,
+            item.sell_platform,
+            item.platform_fit_score,
+            item.launchability_score,
+            item.confidence_score,
+            item.priority_reason,
+            " | ".join(item.reasons),
+        ])
+    autosize(near_ws)
+
+    watch_ws = wb.create_sheet("Watchlist")
+    watch_ws.append(["产品名称", "售卖平台", "平台适配分", "可做分", "置信度", "优先原因", "原因"])
+    style_header(watch_ws)
+    for item in decisions:
+        if item.decision_bucket != "watchlist":
+            continue
+        watch_ws.append([
+            item.product_name,
+            item.sell_platform,
+            item.platform_fit_score,
+            item.launchability_score,
+            item.confidence_score,
+            item.priority_reason,
+            " | ".join(item.reasons),
+        ])
+    autosize(watch_ws)
+
     for platform in ["amazon", "walmart", "temu", "tiktok"]:
         platform_ws = wb.create_sheet(_sheet_name_for_platform(platform))
         platform_ws.append([
             "产品名称", "目标采购平台", "采购链接", "目标售卖平台", "售卖链接", "售价(RMB)", "采购成本(RMB)", "毛利率",
-            "保守毛利率", "估算日单量", "上架天数", "可做分", "平台适配分", "平台适配标签", "平台建议", "是否入选", "原因"
+            "保守毛利率", "估算日单量", "上架天数", "可做分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "是否入选", "原因"
         ])
         style_header(platform_ws)
         platform_rows = _platform_sheet_rows(decisions, platform)
@@ -2282,6 +2373,8 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
                 item.platform_fit_score,
                 item.platform_fit_label,
                 item.platform_recommendation,
+                item.decision_bucket,
+                item.priority_reason,
                 "yes" if item.qualified else "no",
                 " | ".join(item.reasons),
             ])
@@ -2291,7 +2384,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
     headers = [
         "产品名称", "采购平台", "采购链接", "售卖平台", "售卖链接", "售价(RMB)", "采购成本(RMB)", "重量(kg)",
         "毛利额", "毛利率", "保守毛利率", "平台佣金率", "估算日单量", "上架天数", "需求分", "竞争分",
-        "差异化分", "价格稳定分", "平台适配分", "平台适配标签", "平台建议", "综合可做分", "置信度", "重量等级", "是否入选", "原因"
+        "差异化分", "价格稳定分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "综合可做分", "置信度", "重量等级", "是否入选", "原因"
     ]
     audit.append(headers)
     style_header(audit)
@@ -2318,6 +2411,8 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             item.platform_fit_score,
             item.platform_fit_label,
             item.platform_recommendation,
+            item.decision_bucket,
+            item.priority_reason,
             item.launchability_score,
             item.confidence_score,
             item.weight_grade,
@@ -2444,7 +2539,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
     ]
     for platform, payload in platform_summary.items():
         lines.append(
-            f"- `{platform}`: candidates=`{payload.get('candidate_count', 0)}`, qualified=`{payload.get('qualified_count', 0)}`, strong_fit=`{payload.get('strong_fit_count', 0)}`, watch=`{payload.get('watch_count', 0)}`"
+            f"- `{platform}`: candidates=`{payload.get('candidate_count', 0)}`, qualified=`{payload.get('qualified_count', 0)}`, near_miss=`{payload.get('near_miss_count', 0)}`, strong_fit=`{payload.get('strong_fit_count', 0)}`, watch=`{payload.get('watch_count', 0)}`"
         )
     lines.extend([
         "",
@@ -2506,6 +2601,8 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         "",
     ])
     qualified = [item for item in decisions if item.qualified]
+    near_miss = [item for item in decisions if item.decision_bucket == "near_miss"]
+    watchlist = [item for item in decisions if item.decision_bucket == "watchlist"]
     if not qualified:
         lines.append("- No candidates passed the current strong thresholds.")
     for item in qualified:
@@ -2521,6 +2618,26 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
             f"- Launchability: `{item.launchability_score}`",
             f"- Confidence: `{item.confidence_score}`",
             "",
+        ])
+    lines.extend(["## Near Miss", ""])
+    if not near_miss:
+        lines.append("- No near-miss candidates this run.")
+    for item in near_miss[:10]:
+        lines.extend([
+            f"### {item.product_name}",
+            f"- Platform: `{item.sell_platform}`",
+            f"- Priority reason: `{item.priority_reason}`",
+            f"- Platform fit: `{item.platform_fit_score}` / `{item.platform_fit_label}` / `{item.platform_recommendation}`",
+            f"- Launchability: `{item.launchability_score}` / confidence=`{item.confidence_score}`",
+            f"- Reasons: `{', '.join(item.reasons or ['none'])}`",
+            "",
+        ])
+    lines.extend(["## Watchlist", ""])
+    if not watchlist:
+        lines.append("- No watchlist candidates this run.")
+    for item in watchlist[:10]:
+        lines.extend([
+            f"- `{item.product_name}` / `{item.sell_platform}` / reason=`{item.priority_reason}` / fit=`{item.platform_fit_score}` / launchability=`{item.launchability_score}`",
         ])
     lines.extend(["## Audit notes", ""])
     lines.extend([
@@ -2610,6 +2727,9 @@ def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -
             )
     else:
         lines.append("- 本轮没有候选通过强阈值；请看附件里的审计和证据。")
+    near_miss = [item for item in decisions if item.decision_bucket == "near_miss"]
+    if near_miss:
+        lines.append(f"- Near miss: {near_miss[0].product_name} / {near_miss[0].sell_platform} / {near_miss[0].priority_reason}")
     return "\n".join(lines)
 
 
@@ -2658,6 +2778,7 @@ def _platform_summary(decisions: list[ArbitrageDecision]) -> dict[str, Any]:
         summary[platform] = {
             "candidate_count": len(rows),
             "qualified_count": sum(1 for item in rows if item.qualified),
+            "near_miss_count": sum(1 for item in rows if item.decision_bucket == "near_miss"),
             "strong_fit_count": sum(1 for item in rows if item.platform_fit_label == "strong"),
             "watch_count": sum(1 for item in rows if item.platform_recommendation == "watchlist_only"),
         }
