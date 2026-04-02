@@ -161,6 +161,19 @@ REVIEW_COUNT_PATTERNS = [
     r"(\d[\d,]*)\s+reviews",
 ]
 
+AMAZON_TOP_CATEGORIES = {
+    "home & kitchen",
+    "kitchen & dining",
+    "tools & home improvement",
+    "patio, lawn & garden",
+    "office products",
+    "industrial & scientific",
+    "sports & outdoors",
+    "arts, crafts & sewing",
+    "home improvement",
+    "pet supplies",
+}
+
 LISTING_AGE_PATTERNS = [
     r"Date First Available[^A-Za-z0-9]{0,20}([A-Za-z]+ \d{1,2}, \d{4})",
     r"First available[^A-Za-z0-9]{0,20}([A-Za-z]+ \d{1,2}, \d{4})",
@@ -501,20 +514,29 @@ def _fetch_curl_cffi(url: str) -> tuple[str, str]:
 
 
 def _fetch_playwright(url: str, stealth: bool = False) -> tuple[str, str]:
-    preamble = "from playwright_stealth import Stealth;" if stealth else ""
-    apply = "Stealth().apply_stealth_sync(page);" if stealth else ""
+    preamble = "from playwright_stealth import Stealth\n" if stealth else ""
+    apply = "    Stealth().apply_stealth_sync(page)\n" if stealth else ""
     code = (
-        "from playwright.sync_api import sync_playwright;"
+        "from playwright.sync_api import sync_playwright\n"
         f"{preamble}"
-        "import sys;"
-        "u=sys.argv[1];"
-        "with sync_playwright() as p:"
-        " browser=p.chromium.launch(headless=True);"
-        " page=browser.new_page();"
-        f" {apply}"
-        " page.goto(u, wait_until='load', timeout=45000);"
-        " print(page.content()[:400000]);"
-        " browser.close()"
+        "import sys\n"
+        "u = sys.argv[1]\n"
+        "with sync_playwright() as p:\n"
+        "    browser = p.chromium.launch(headless=True)\n"
+        "    page = browser.new_page()\n"
+        f"{apply}"
+        "    page.goto(u, wait_until='load', timeout=45000)\n"
+        "    html = page.content()[:400000]\n"
+        "    body_text = ''\n"
+        "    try:\n"
+        "        body_text = page.locator('body').inner_text(timeout=10000)[:200000]\n"
+        "    except Exception:\n"
+        "        body_text = ''\n"
+        "    print(html)\n"
+        "    if body_text:\n"
+        "        print('\\n\\n__VISIBLE_TEXT__\\n')\n"
+        "        print(body_text)\n"
+        "    browser.close()\n"
     )
     proc = _run([str(VENV_PY), "-c", code, url])
     return proc.stdout, proc.stderr
@@ -753,29 +775,89 @@ def _extract_review_count(text: str) -> int | None:
     return None
 
 
-def _extract_monthly_orders(text: str) -> float | None:
-    lowered = text.lower()
-    for pattern in MONTHLY_ORDER_PATTERNS:
-        found = re.search(pattern, lowered, flags=re.I)
-        if found:
-            try:
-                raw = found.group(1).replace(",", "").strip().lower()
-                if raw.endswith("k"):
-                    return float(raw[:-1]) * 1000.0
-                return float(raw)
-            except Exception:
-                continue
-    for pattern in SOLD_PATTERNS:
-        found = re.search(pattern, lowered, flags=re.I)
+def _normalize_category_name(raw: str) -> str:
+    cleaned = _clean_text(raw)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" >-")
+    return cleaned
+
+
+def _extract_amazon_best_seller_rank(text: str) -> tuple[int | None, str | None]:
+    section_patterns = [
+        r"Best Sellers Rank.*?#([\d,]+)\s+in\s+([^<\n\r]+)",
+        r"#([\d,]+)\s+in\s+([^<\n\r]+).*?Best Sellers Rank",
+    ]
+    for pattern in section_patterns:
+        found = re.search(pattern, text, flags=re.I | re.S)
         if not found:
             continue
-        raw = found.group(1).replace(",", "").lower()
         try:
-            value = float(raw[:-1]) * 1000 if raw.endswith("k") else float(raw)
+            rank = int(found.group(1).replace(",", ""))
         except Exception:
             continue
-        # Treat "sold" as lower-confidence rolling demand proxy over roughly 90 days.
-        return value / 3.0
+        category = _normalize_category_name(found.group(2))
+        if rank > 0 and category:
+            return rank, category
+    return None, None
+
+
+def _estimate_amazon_daily_orders_from_rank(rank: int | None, category: str | None) -> float | None:
+    if not rank or rank <= 0:
+        return None
+    lowered = (category or "").lower()
+    is_top_category = any(token in lowered for token in AMAZON_TOP_CATEGORIES)
+    if is_top_category:
+        if rank <= 100:
+            return 120.0
+        if rank <= 250:
+            return 80.0
+        if rank <= 500:
+            return 50.0
+        if rank <= 1000:
+            return 30.0
+        if rank <= 3000:
+            return 15.0
+        if rank <= 10000:
+            return 5.0
+        return 1.0
+    if rank <= 10:
+        return 20.0
+    if rank <= 50:
+        return 10.0
+    if rank <= 200:
+        return 5.0
+    if rank <= 1000:
+        return 2.0
+    return 0.5
+
+
+def _extract_monthly_orders(text: str) -> float | None:
+    lowered = text.lower()
+    values: list[float] = []
+    for pattern in MONTHLY_ORDER_PATTERNS:
+        for found in re.finditer(pattern, lowered, flags=re.I):
+            try:
+                raw = found.group(1).replace(",", "").strip().lower()
+                whole = found.group(0).lower()
+                base = float(raw[:-1]) if raw.endswith("k") else float(raw)
+                if raw.endswith("k") or re.search(r"\d\s*k\+?", whole):
+                    values.append(base * 1000.0)
+                else:
+                    values.append(base)
+            except Exception:
+                continue
+    if values:
+        return max(values)
+    for pattern in SOLD_PATTERNS:
+        for found in re.finditer(pattern, lowered, flags=re.I):
+            raw = found.group(1).replace(",", "").lower()
+            try:
+                value = float(raw[:-1]) * 1000 if raw.endswith("k") else float(raw)
+            except Exception:
+                continue
+            # Treat "sold" as lower-confidence rolling demand proxy over roughly 90 days.
+            values.append(value / 3.0)
+    if values:
+        return max(values)
     return None
 
 
@@ -894,6 +976,9 @@ def _extract_sell_candidates(platform: str, text: str, query: str) -> list[Deman
                 title = query.title()
             price = _best_price_cny(snippet, platform)
             monthly_orders = _extract_monthly_orders(snippet)
+            amazon_rank, amazon_category = _extract_amazon_best_seller_rank(snippet)
+            amazon_rank_daily_proxy = _estimate_amazon_daily_orders_from_rank(amazon_rank, amazon_category)
+            estimated_daily_orders = (monthly_orders / 30.0) if monthly_orders else amazon_rank_daily_proxy
             rating_value = _extract_rating_value(snippet)
             review_count = _extract_review_count(snippet)
             rows.append(
@@ -905,11 +990,18 @@ def _extract_sell_candidates(platform: str, text: str, query: str) -> list[Deman
                     sell_price_cny=price,
                     query=query,
                     extracted_at=_utc_now_iso(),
-                    estimated_daily_orders=(monthly_orders / 30.0) if monthly_orders else None,
+                    estimated_daily_orders=estimated_daily_orders,
                     rating_value=rating_value,
                     review_count=review_count,
-                    demand_confidence=65.0 if monthly_orders else 35.0,
-                    raw_signals={"price_extracted": price is not None, "monthly_orders": monthly_orders, "source": "amazon_search"},
+                    demand_confidence=65.0 if monthly_orders else (45.0 if amazon_rank_daily_proxy else 35.0),
+                    raw_signals={
+                        "price_extracted": price is not None,
+                        "monthly_orders": monthly_orders,
+                        "amazon_best_seller_rank": amazon_rank,
+                        "amazon_best_seller_category": amazon_category,
+                        "amazon_rank_daily_proxy": amazon_rank_daily_proxy,
+                        "source": "amazon_search",
+                    },
                 )
             )
             if len(rows) >= 8:
@@ -1173,6 +1265,9 @@ def _enrich_sell_candidate(candidate: DemandCandidate, *, max_tools: int | None 
     best_confidence = candidate.demand_confidence
     best_status = "unknown"
     best_tool = "none"
+    best_amazon_rank = (candidate.raw_signals or {}).get("amazon_best_seller_rank")
+    best_amazon_category = (candidate.raw_signals or {}).get("amazon_best_seller_category")
+    best_amazon_rank_daily_proxy = (candidate.raw_signals or {}).get("amazon_rank_daily_proxy")
     for tool in tool_plan:
         fetcher = TOOL_FETCHERS.get(tool)
         if not fetcher:
@@ -1195,6 +1290,16 @@ def _enrich_sell_candidate(candidate: DemandCandidate, *, max_tools: int | None 
         if monthly_orders is not None:
             best_monthly_orders = max(best_monthly_orders or 0.0, monthly_orders)
             best_confidence = max(best_confidence, 70.0 if candidate.sell_platform == "temu" else 65.0)
+        elif candidate.sell_platform == "amazon":
+            amazon_rank, amazon_category = _extract_amazon_best_seller_rank(detail.text)
+            amazon_rank_daily_proxy = _estimate_amazon_daily_orders_from_rank(amazon_rank, amazon_category)
+            if amazon_rank_daily_proxy is not None:
+                inferred_monthly_orders = amazon_rank_daily_proxy * 30.0
+                best_monthly_orders = max(best_monthly_orders or 0.0, inferred_monthly_orders)
+                best_confidence = max(best_confidence, 48.0)
+                best_amazon_rank = amazon_rank
+                best_amazon_category = amazon_category
+                best_amazon_rank_daily_proxy = amazon_rank_daily_proxy
         listing_age_days = _extract_listing_age_days(detail.text)
         if listing_age_days is not None:
             best_listing_age = listing_age_days
@@ -1224,7 +1329,15 @@ def _enrich_sell_candidate(candidate: DemandCandidate, *, max_tools: int | None 
         review_count=best_reviews,
         demand_confidence=max(candidate.demand_confidence, best_confidence),
         demand_refresh_priority=candidate.demand_refresh_priority,
-        raw_signals={**candidate.raw_signals, "detail_tool": best_tool, "detail_status": best_status, "detail_monthly_orders": best_monthly_orders},
+        raw_signals={
+            **candidate.raw_signals,
+            "detail_tool": best_tool,
+            "detail_status": best_status,
+            "detail_monthly_orders": best_monthly_orders,
+            "amazon_best_seller_rank": best_amazon_rank,
+            "amazon_best_seller_category": best_amazon_category,
+            "amazon_rank_daily_proxy": best_amazon_rank_daily_proxy,
+        },
     )
     return updated, {"stage": "sell_detail", "platform": candidate.sell_platform, "query": candidate.query, "tool": best_tool, "status": best_status, "score": 0}
 
@@ -1418,11 +1531,14 @@ def _refresh_priority(row: dict[str, Any]) -> float:
     estimated_daily_orders = float(row.get("estimated_daily_orders", 0) or 0)
     review_count = float(row.get("review_count", 0) or 0)
     listing_age_days = row.get("listing_age_days")
+    amazon_rank_daily_proxy = float(((row.get("raw_signals", {}) or {}).get("amazon_rank_daily_proxy", 0) or 0) or 0)
     score = 0.0
     if best_monthly_orders:
         score += min(60.0, best_monthly_orders / 20.0)
     elif estimated_daily_orders:
         score += min(50.0, estimated_daily_orders * 1.5)
+    elif amazon_rank_daily_proxy:
+        score += min(45.0, amazon_rank_daily_proxy * 1.5)
     score += min(20.0, review_count / 5000.0)
     if listing_age_days is None:
         score += 15.0
