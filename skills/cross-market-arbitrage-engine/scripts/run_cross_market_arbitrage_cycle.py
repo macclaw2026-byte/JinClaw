@@ -27,6 +27,7 @@ STATE_DIR = ROOT / ".state"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 STATE_PATH = STATE_DIR / "cross-market-arbitrage-engine.json"
 ADAPTIVE_HISTORY_PATH = STATE_DIR / "cross-market-arbitrage-adaptive-history.json"
+QUERY_HISTORY_PATH = STATE_DIR / "cross-market-arbitrage-query-history.json"
 OUT_DIR = ROOT / "output" / "cross-market-arbitrage-engine"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 LATEST_REPORT_PATH = OUT_DIR / "latest-report.json"
@@ -1036,6 +1037,7 @@ def _platform_screen_profile(
     sellersprite_keyword_signal_score: float = 0.0,
     sellersprite_product_signal_score: float = 0.0,
     adaptive_platform_bias: float = 0.0,
+    adaptive_query_bias: float = 0.0,
 ) -> tuple[float, str, str]:
     margin_score = min(100.0, max(0.0, (margin or 0.0) * 100.0 * 1.5)) if margin is not None else 0.0
     conservative_score = min(100.0, max(0.0, (conservative_margin or 0.0) * 100.0 * 1.5)) if conservative_margin is not None else 0.0
@@ -1106,6 +1108,7 @@ def _platform_screen_profile(
     if restricted:
         fit = min(fit, 35.0)
     fit += adaptive_platform_bias
+    fit += adaptive_query_bias
     fit = round(max(0.0, min(100.0, fit)), 2)
     if fit >= 80.0:
         return fit, "strong", "priority_test"
@@ -1563,6 +1566,7 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
     sellersprite_keyword_signal_score = float(((candidate.raw_signals or {}).get("sellersprite_keyword_signal_score", 0) or 0))
     sellersprite_product_signal_score = float(((candidate.raw_signals or {}).get("sellersprite_product_signal_score", 0) or 0))
     adaptive_platform_bias = float(((candidate.raw_signals or {}).get("adaptive_platform_bias", 0) or 0))
+    adaptive_query_bias = float(((candidate.raw_signals or {}).get("adaptive_query_bias", 0) or 0))
     restricted, hits = _is_restricted(candidate.title)
     if restricted:
         reasons.append(f"restricted:{','.join(hits[:4])}")
@@ -1720,6 +1724,7 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         sellersprite_keyword_signal_score=sellersprite_keyword_signal_score,
         sellersprite_product_signal_score=sellersprite_product_signal_score,
         adaptive_platform_bias=adaptive_platform_bias,
+        adaptive_query_bias=adaptive_query_bias,
     )
     qualified = (
         not restricted
@@ -2252,6 +2257,15 @@ def _adaptive_profile_from_state(state: dict[str, Any]) -> dict[str, Any]:
         source_biases[source] = round(max(-4.0, bias), 2)
         source_scores[source] = qualified * 3.0 + near_miss * 1.5 - watchlist * 0.2
     source_order = sorted(source_scores.keys(), key=lambda key: (-source_scores[key], -source_biases[key], key))
+    query_feedback = _query_feedback_from_state(state)
+    query_rows = list(query_feedback.get("queries") or [])
+    query_biases = {
+        str(row.get("query_key", "")): round(float(row.get("query_bias", 0) or 0), 2)
+        for row in query_rows
+        if str(row.get("query_key", "")).strip()
+    }
+    query_order = [str(row.get("query_key", "")).strip() for row in query_rows if str(row.get("query_key", "")).strip()]
+    query_focus = [str(row.get("query", "")).strip() for row in query_rows[:3] if str(row.get("query", "")).strip()]
     return {
         "status": "adaptive" if decisions else "cold_start",
         "decision_samples": len(decisions),
@@ -2262,12 +2276,192 @@ def _adaptive_profile_from_state(state: dict[str, Any]) -> dict[str, Any]:
         "platform_biases": platform_biases,
         "source_biases": source_biases,
         "source_order": source_order,
+        "query_biases": query_biases,
+        "query_order": query_order,
+        "query_focus": query_focus,
     }
 
 
 def _load_adaptive_history() -> dict[str, Any]:
     default = {"entries": []}
     return _read_json(ADAPTIVE_HISTORY_PATH, default)
+
+
+def _load_query_history() -> dict[str, Any]:
+    default = {"entries": []}
+    return _read_json(QUERY_HISTORY_PATH, default)
+
+
+def _query_key(value: str) -> str:
+    cleaned = _clean_seed_phrase(value)
+    if cleaned:
+        return cleaned
+    lowered = _normalize_title(value)
+    return lowered or _slug(value).replace("-", " ")
+
+
+def _query_feedback_from_state(state: dict[str, Any]) -> dict[str, Any]:
+    query_map: dict[str, dict[str, Any]] = {}
+    for payload in (state.get("candidates") or {}).values():
+        query = str(payload.get("query", "")).strip()
+        if not query:
+            continue
+        query_key = _query_key(query)
+        if not query_key:
+            continue
+        stats = query_map.setdefault(
+            query_key,
+            {
+                "query": query,
+                "query_key": query_key,
+                "candidate_count": 0,
+                "qualified_count": 0,
+                "near_miss_count": 0,
+                "watchlist_count": 0,
+                "refresh_priority_total": 0.0,
+                "sellersprite_keyword_signal_total": 0.0,
+                "sellersprite_product_signal_total": 0.0,
+                "failure_categories": {},
+                "platform_counts": {},
+            },
+        )
+        stats["candidate_count"] += 1
+        refresh_priority = float(payload.get("demand_refresh_priority", 0) or 0)
+        raw_signals = payload.get("raw_signals") or {}
+        keyword_signal = float(raw_signals.get("sellersprite_keyword_signal_score", 0) or 0)
+        product_signal = float(raw_signals.get("sellersprite_product_signal_score", 0) or 0)
+        stats["refresh_priority_total"] += refresh_priority
+        stats["sellersprite_keyword_signal_total"] += keyword_signal
+        stats["sellersprite_product_signal_total"] += product_signal
+        platform = str(payload.get("sell_platform", "")).lower().strip() or "unknown"
+        platform_counts = stats["platform_counts"]
+        platform_counts[platform] = int(platform_counts.get(platform, 0) or 0) + 1
+        decision = payload.get("decision") or {}
+        bucket = str(decision.get("decision_bucket", "")).strip() or "watchlist"
+        if bool(decision.get("qualified")) or bucket == "qualified":
+            stats["qualified_count"] += 1
+        elif bucket == "near_miss":
+            stats["near_miss_count"] += 1
+        else:
+            stats["watchlist_count"] += 1
+        for reason in (decision.get("reasons") or []):
+            reason = str(reason).strip()
+            if not reason:
+                continue
+            failure_categories = stats["failure_categories"]
+            failure_categories[reason] = int(failure_categories.get(reason, 0) or 0) + 1
+    query_rows: list[dict[str, Any]] = []
+    for stats in query_map.values():
+        candidate_count = int(stats.get("candidate_count", 0) or 0)
+        if candidate_count <= 0:
+            continue
+        avg_refresh_priority = float(stats.get("refresh_priority_total", 0) or 0) / candidate_count
+        avg_keyword_signal = float(stats.get("sellersprite_keyword_signal_total", 0) or 0) / candidate_count
+        avg_product_signal = float(stats.get("sellersprite_product_signal_total", 0) or 0) / candidate_count
+        qualified_count = int(stats.get("qualified_count", 0) or 0)
+        near_miss_count = int(stats.get("near_miss_count", 0) or 0)
+        watchlist_count = int(stats.get("watchlist_count", 0) or 0)
+        score = (
+            qualified_count * 4.0
+            + near_miss_count * 2.2
+            + watchlist_count * 0.5
+            + min(2.0, avg_refresh_priority / 30.0)
+            + min(2.0, max(avg_keyword_signal, avg_product_signal) / 28.0)
+        )
+        query_bias = max(-1.5, min(6.0, score - 1.0))
+        top_platform = "unknown"
+        if stats["platform_counts"]:
+            top_platform = sorted(
+                stats["platform_counts"].keys(),
+                key=lambda key: (-int(stats["platform_counts"][key] or 0), key),
+            )[0]
+        query_rows.append(
+            {
+                "query": stats["query"],
+                "query_key": stats["query_key"],
+                "score": round(score, 2),
+                "query_bias": round(query_bias, 2),
+                "candidate_count": candidate_count,
+                "qualified_count": qualified_count,
+                "near_miss_count": near_miss_count,
+                "watchlist_count": watchlist_count,
+                "avg_refresh_priority": round(avg_refresh_priority, 2),
+                "avg_sellersprite_keyword_signal": round(avg_keyword_signal, 2),
+                "avg_sellersprite_product_signal": round(avg_product_signal, 2),
+                "top_platform": top_platform,
+                "top_failure_category": next(iter((stats.get("failure_categories") or {}).keys()), "none"),
+            }
+        )
+    query_rows.sort(
+        key=lambda row: (
+            -float(row.get("score", 0) or 0),
+            -int(row.get("qualified_count", 0) or 0),
+            -int(row.get("near_miss_count", 0) or 0),
+            str(row.get("query_key", "")),
+        )
+    )
+    return {
+        "status": "adaptive" if query_rows else "cold_start",
+        "queries": query_rows[:15],
+        "primary_query": str((query_rows[0] if query_rows else {}).get("query", "none")),
+    }
+
+
+def _persist_query_history(query_feedback: dict[str, Any]) -> dict[str, Any]:
+    payload = _load_query_history()
+    entries = list(payload.get("entries") or [])
+    top_queries = list(query_feedback.get("queries") or [])[:5]
+    latest_top_score = float((top_queries[0] if top_queries else {}).get("score", 0) or 0)
+    entry = {
+        "captured_at": _utc_now_iso(),
+        "primary_query": query_feedback.get("primary_query", "none"),
+        "query_count": len(query_feedback.get("queries") or []),
+        "latest_top_score": round(latest_top_score, 2),
+        "top_queries": top_queries,
+    }
+    entries.append(entry)
+    entries = entries[-40:]
+    payload["entries"] = entries
+    _write_json_file(QUERY_HISTORY_PATH, payload)
+    latest = entries[-1] if entries else entry
+    prev = entries[-2] if len(entries) >= 2 else None
+    delta = round(float(latest.get("latest_top_score", 0) or 0) - float((prev or {}).get("latest_top_score", 0) or 0), 2)
+    if not prev:
+        direction = "new"
+    elif delta > 1.0:
+        direction = "up"
+    elif delta < -1.0:
+        direction = "down"
+    else:
+        direction = "stable"
+    return {
+        "entries_total": len(entries),
+        "latest": latest,
+        "trend": {
+            "direction": direction,
+            "delta": delta,
+        },
+        "path": str(QUERY_HISTORY_PATH),
+    }
+
+
+def _apply_query_adaptive_order(queries: list[str], adaptive_profile: dict[str, Any], *, limit: int | None = None) -> list[str]:
+    query_biases = adaptive_profile.get("query_biases") or {}
+    query_order = list(adaptive_profile.get("query_order") or [])
+    query_order_index = {str(key): index for index, key in enumerate(query_order)}
+    rows: list[tuple[str, str, float]] = []
+    seen: set[str] = set()
+    for query in queries:
+        query_key = _query_key(query)
+        if not query_key or query_key in seen:
+            continue
+        seen.add(query_key)
+        rows.append((query, query_key, float(query_biases.get(query_key, 0) or 0)))
+    rows.sort(key=lambda row: (-row[2], query_order_index.get(row[1], 999), row[0]))
+    ordered = [row[0] for row in rows]
+    if limit is not None:
+        ordered = ordered[:limit]
+    return ordered
 
 
 def _adaptive_strength_score(profile: dict[str, Any]) -> float:
@@ -2278,6 +2472,8 @@ def _adaptive_strength_score(profile: dict[str, Any]) -> float:
     bias_strength = sum(abs(float(value or 0)) for value in biases.values())
     source_biases = profile.get("source_biases") or {}
     source_bias_strength = sum(abs(float(value or 0)) for value in source_biases.values())
+    query_biases = profile.get("query_biases") or {}
+    query_bias_strength = sum(abs(float(value or 0)) for value in query_biases.values())
     return round(
         min(
             100.0,
@@ -2287,6 +2483,7 @@ def _adaptive_strength_score(profile: dict[str, Any]) -> float:
             + (product_multiplier - 1.0) * 40.0
             + min(12.0, bias_strength)
             + min(10.0, source_bias_strength),
+            + min(10.0, query_bias_strength),
         ),
         2,
     )
@@ -2304,6 +2501,9 @@ def _persist_adaptive_history(profile: dict[str, Any]) -> dict[str, Any]:
         "platform_biases": profile.get("platform_biases", {}) or {},
         "source_biases": profile.get("source_biases", {}) or {},
         "source_order": profile.get("source_order", []) or [],
+        "query_biases": profile.get("query_biases", {}) or {},
+        "query_order": profile.get("query_order", []) or [],
+        "query_focus": profile.get("query_focus", []) or [],
         "strength_score": _adaptive_strength_score(profile),
     }
     entries.append(entry)
@@ -2579,6 +2779,41 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
         summary_ws.append([key, json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else value])
     autosize(summary_ws)
 
+    query_feedback = summary.get("query_feedback") or {}
+    if query_feedback:
+        q_ws = wb.create_sheet("Query_Insights")
+        q_ws.append([
+            "Query",
+            "Score",
+            "Bias",
+            "Candidates",
+            "Qualified",
+            "Near Miss",
+            "Watchlist",
+            "Avg Refresh Priority",
+            "Avg SS Keyword Signal",
+            "Avg SS Product Signal",
+            "Top Platform",
+            "Top Failure Category",
+        ])
+        style_header(q_ws)
+        for row in (query_feedback.get("queries") or [])[:20]:
+            q_ws.append([
+                row.get("query", ""),
+                row.get("score", 0),
+                row.get("query_bias", 0),
+                row.get("candidate_count", 0),
+                row.get("qualified_count", 0),
+                row.get("near_miss_count", 0),
+                row.get("watchlist_count", 0),
+                row.get("avg_refresh_priority", 0),
+                row.get("avg_sellersprite_keyword_signal", 0),
+                row.get("avg_sellersprite_product_signal", 0),
+                row.get("top_platform", ""),
+                row.get("top_failure_category", ""),
+            ])
+        autosize(q_ws)
+
     sellersprite = summary.get("sellersprite") or {}
     if sellersprite:
         ss_ws = wb.create_sheet("SellerSprite")
@@ -2678,6 +2913,8 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
     sellersprite = summary.get("sellersprite") or {}
     adaptive_profile = summary.get("adaptive_profile") or {}
     adaptive_history = summary.get("adaptive_history") or {}
+    query_feedback = summary.get("query_feedback") or {}
+    query_history = summary.get("query_history") or {}
     lines = [
         "# Cross-market arbitrage run",
         "",
@@ -2712,7 +2949,15 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         f"- Platform biases: `{json.dumps(adaptive_profile.get('platform_biases', {}), ensure_ascii=False)}`",
         f"- Source biases: `{json.dumps(adaptive_profile.get('source_biases', {}), ensure_ascii=False)}`",
         f"- Source order: `{', '.join(adaptive_profile.get('source_order', []) or ['none'])}`",
+        f"- Query focus: `{', '.join(adaptive_profile.get('query_focus', []) or ['none'])}`",
+        f"- Query biases: `{json.dumps(adaptive_profile.get('query_biases', {}), ensure_ascii=False)}`",
         f"- History trend: `{((adaptive_history.get('trend') or {}).get('direction', 'stable'))}` delta=`{((adaptive_history.get('trend') or {}).get('delta', 0))}` entries=`{adaptive_history.get('entries_total', 0)}`",
+        "",
+        "## Query Feedback",
+        "",
+        f"- Status: `{query_feedback.get('status', 'cold_start')}`",
+        f"- Primary query: `{query_feedback.get('primary_query', 'none')}`",
+        f"- History trend: `{((query_history.get('trend') or {}).get('direction', 'stable'))}` delta=`{((query_history.get('trend') or {}).get('delta', 0))}` entries=`{query_history.get('entries_total', 0)}`",
         "",
         "## SellerSprite",
         "",
@@ -2759,6 +3004,16 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         for row in (sellersprite.get("product_watchlist") or [])[:5]:
             lines.append(
                 f"- `#{row.get('rank', '')}` `{row.get('product_name', '')}` / asin=`{row.get('asin', '')}` / sales=`{row.get('monthly_sales_hint', '')}` / revenue=`{row.get('sales_amount_hint', '')}` / price=`{row.get('price_hint', '')}` / rating=`{row.get('rating_hint', '')}` / reviews=`{row.get('review_count_hint', '')}` / listed=`{row.get('listing_date_hint', '')}`"
+            )
+    if query_feedback:
+        lines.extend([
+            "",
+            "### Query Insights",
+            "",
+        ])
+        for row in (query_feedback.get("queries") or [])[:8]:
+            lines.append(
+                f"- `{row.get('query', '')}` / score=`{row.get('score', 0)}` / bias=`{row.get('query_bias', 0)}` / qualified=`{row.get('qualified_count', 0)}` / near_miss=`{row.get('near_miss_count', 0)}` / top_platform=`{row.get('top_platform', '')}`"
             )
     lines.extend([
         "",
@@ -2867,6 +3122,9 @@ def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -
     governance = summary.get("governance") or {}
     sellersprite = summary.get("sellersprite") or {}
     adaptive_profile = summary.get("adaptive_profile") or {}
+    adaptive_history = summary.get("adaptive_history") or {}
+    query_feedback = summary.get("query_feedback") or {}
+    query_history = summary.get("query_history") or {}
     qualified = [item for item in decisions if item.qualified]
     lines = [
         f"Cross-market arbitrage run completed.",
@@ -2892,9 +3150,20 @@ def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -
         lines.append(
             f"Source adaptive: order={','.join(adaptive_profile.get('source_order', []) or ['none'])} / biases={json.dumps(adaptive_profile.get('source_biases', {}), ensure_ascii=False)}"
         )
+        lines.append(
+            f"Query adaptive: focus={','.join(adaptive_profile.get('query_focus', []) or ['none'])} / biases={json.dumps(adaptive_profile.get('query_biases', {}), ensure_ascii=False)}"
+        )
     if adaptive_history:
         lines.append(
             f"Adaptive trend: {((adaptive_history.get('trend') or {}).get('direction', 'stable'))} / delta={((adaptive_history.get('trend') or {}).get('delta', 0))} / entries={adaptive_history.get('entries_total', 0)}"
+        )
+    if query_feedback:
+        lines.append(
+            f"Query feedback: primary={query_feedback.get('primary_query', 'none')} / tracked={len(query_feedback.get('queries') or [])}"
+        )
+    if query_history:
+        lines.append(
+            f"Query trend: {((query_history.get('trend') or {}).get('direction', 'stable'))} / delta={((query_history.get('trend') or {}).get('delta', 0))} / entries={query_history.get('entries_total', 0)}"
         )
     if qualified:
         top = qualified[:3]
@@ -2967,9 +3236,15 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
     state = _load_state()
     adaptive_profile = _adaptive_profile_from_state(state)
     adaptive_history = _persist_adaptive_history(adaptive_profile)
+    query_feedback = _query_feedback_from_state(state)
+    query_history = _persist_query_history(query_feedback)
     base_queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
     sellersprite = _collect_sellersprite_summary(base_queries)
-    queries = _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=3 if test else 10)
+    queries = _apply_query_adaptive_order(
+        _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=3 if test else 10),
+        adaptive_profile,
+        limit=3 if test else 10,
+    )
     sell_platforms = ["temu", "amazon"] if test else ["temu", "amazon", "walmart"]
     source_platforms = list((adaptive_profile.get("source_order") or []) or ["made_in_china", "1688", "yiwugo"])
     max_tools = 2 if test else None
@@ -3015,6 +3290,8 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
         "platform_summary": _platform_summary(decisions),
         "adaptive_profile": adaptive_profile,
         "adaptive_history": adaptive_history,
+        "query_feedback": query_feedback,
+        "query_history": query_history,
         "sellersprite": sellersprite,
         "base_queries": base_queries,
         "queries": queries,
@@ -3062,7 +3339,11 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
     adaptive_profile = _adaptive_profile_from_state(state)
     base_queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
     sellersprite = _collect_sellersprite_summary(base_queries)
-    queries = _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=3 if test else 10)
+    queries = _apply_query_adaptive_order(
+        _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=3 if test else 10),
+        adaptive_profile,
+        limit=3 if test else 10,
+    )
     sell_platforms = ["temu", "amazon"] if test else ["temu", "amazon", "walmart"]
     max_tools = 2 if test else None
     fetch_log: list[dict[str, Any]] = []
@@ -3095,6 +3376,9 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
         )
         hints["adaptive_platform_bias"] = float(
             ((adaptive_profile.get("platform_biases") or {}).get(updated.sell_platform.lower(), 0) or 0)
+        )
+        hints["adaptive_query_bias"] = float(
+            ((adaptive_profile.get("query_biases") or {}).get(_query_key(updated.query), 0) or 0)
         )
         updated.raw_signals = {**(updated.raw_signals or {}), **hints}
         if hints.get("sellersprite_product_freshest_listing_days") is not None and updated.listing_age_days is None:
@@ -3145,6 +3429,7 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
     state["last_sellersprite_seed_queries"] = list(sellersprite.get("seed_queries") or [])
     state["last_effective_queries"] = list(queries)
     state["last_adaptive_profile"] = adaptive_profile
+    state["last_query_feedback"] = _query_feedback_from_state(state)
     return state, candidates, fetch_log
 
 
@@ -3202,6 +3487,8 @@ def _report_cycle(
         "platform_summary": _platform_summary(decisions),
         "adaptive_profile": _adaptive_profile_from_state(state),
         "adaptive_history": _persist_adaptive_history(_adaptive_profile_from_state(state)),
+        "query_feedback": _query_feedback_from_state(state),
+        "query_history": _persist_query_history(_query_feedback_from_state(state)),
         "sellersprite": _collect_sellersprite_summary(DEFAULT_DISCOVERY_QUERIES),
         "base_queries": DEFAULT_DISCOVERY_QUERIES,
         "queries": state.get("last_effective_queries") or DEFAULT_DISCOVERY_QUERIES,
@@ -3271,6 +3558,7 @@ def _report_cycle(
             "excel_path": str(excel_path),
             "markdown_path": str(md_path),
             "json_path": str(json_path),
+            "query_feedback": summary.get("query_feedback", {}) or {},
         },
     )
     _save_state(state)
