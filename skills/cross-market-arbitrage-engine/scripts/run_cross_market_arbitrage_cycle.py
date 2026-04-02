@@ -2839,6 +2839,7 @@ def _sellersprite_candidate_hints(summary: dict[str, Any], candidate: DemandCand
         + min(35.0, best_product_monthly_sales / 4000.0)
         + min(20.0, best_product_revenue / 50000.0),
     )
+    product_daily_orders_proxy = round(best_product_monthly_sales / 30.0, 2) if best_product_monthly_sales > 0 else 0.0
     return {
         "sellersprite_keyword_matches": keyword_matches,
         "sellersprite_keyword_monthly_searches": round(best_keyword_monthly_searches, 2),
@@ -2846,6 +2847,7 @@ def _sellersprite_candidate_hints(summary: dict[str, Any], candidate: DemandCand
         "sellersprite_keyword_signal_score": round(keyword_signal_score, 2),
         "sellersprite_product_matches": product_matches,
         "sellersprite_product_monthly_sales": round(best_product_monthly_sales, 2),
+        "sellersprite_product_daily_orders_proxy": product_daily_orders_proxy,
         "sellersprite_product_revenue": round(best_product_revenue, 2),
         "sellersprite_product_rating": round(best_product_rating, 2),
         "sellersprite_product_freshest_listing_days": freshest_listing_days,
@@ -4491,6 +4493,16 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
         )
         hints["adaptive_thresholds"] = adaptive_thresholds
         updated.raw_signals = {**(updated.raw_signals or {}), **hints}
+        sellersprite_daily_proxy = float(hints.get("sellersprite_product_daily_orders_proxy", 0) or 0)
+        if sellersprite_daily_proxy > 0:
+            current_daily_orders = float(updated.estimated_daily_orders or 0)
+            if current_daily_orders <= 0:
+                updated.estimated_daily_orders = round(sellersprite_daily_proxy * 0.65, 2)
+                updated.raw_signals["estimated_daily_orders_source"] = "sellersprite_product_proxy"
+            elif current_daily_orders < 20 and sellersprite_daily_proxy > current_daily_orders:
+                blended = max(current_daily_orders, min(sellersprite_daily_proxy * 0.55, current_daily_orders * 1.8))
+                updated.estimated_daily_orders = round(blended, 2)
+                updated.raw_signals["estimated_daily_orders_source"] = "blended_sellersprite_product_proxy"
         if hints.get("sellersprite_product_freshest_listing_days") is not None and updated.listing_age_days is None:
             updated.listing_age_days = int(hints["sellersprite_product_freshest_listing_days"])
         hint_boost = max(
