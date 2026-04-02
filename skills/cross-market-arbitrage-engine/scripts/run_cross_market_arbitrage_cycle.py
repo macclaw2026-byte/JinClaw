@@ -154,14 +154,21 @@ MONTHLY_ORDER_PATTERNS = [
     r"(\d[\d,]*)\+?\s+bought in past month",
     r"(\d[\d,]*)\+?\s+purchased in the last month",
     r"(\d[\d,]*)\+?\s+sold in past month",
+    r"(\d[\d,]*(?:\.\d+)?)\s*k\+?\s+(?:bought|purchased|sold)(?:\s+in\s+(?:the\s+)?)?(?:past|last)?\s*(?:30 days|month)",
     r"(\d[\d,]*(?:\.\d+)?)\s*k\+?\s+(?:bought|purchased|sold)(?:\s+in\s+(?:the\s+)?)?(?:past|last)?\s*month",
     r"(\d[\d,]*)\+?\s+(?:bought|purchased|sold)(?:\s+in\s+(?:the\s+)?)?(?:past|last)?\s*(?:month|30 days)",
-    r'"(?:monthlySold|unitsSold|monthly_orders|monthlySales)"\s*[:=]\s*"?(\\d[\d,]*)\+?"?',
+    r'"(?:monthlySold|unitsSold|monthly_orders|monthlySales)"\s*[:=]\s*"?(?:\s*)(\d[\d,]*)\+?"?',
+    r'"(?:monthlySold|unitsSold|monthly_orders|monthlySales)"\s*:\s*(\d[\d,]*)',
 ]
 
 SOLD_PATTERNS = [
     r"(\d+(?:\.\d+)?)k\+?\s+sold",
     r"(\d[\d,]*)\+?\s+sold",
+]
+
+WEEKLY_ORDER_PATTERNS = [
+    r"(\d[\d,]*(?:\.\d+)?)\s*k\+?\s+(?:bought|purchased|sold)(?:\s+in\s+(?:the\s+)?)?(?:past|last)?\s*(?:week|7 days)",
+    r"(\d[\d,]*)\+?\s+(?:bought|purchased|sold)(?:\s+in\s+(?:the\s+)?)?(?:past|last)?\s*(?:week|7 days)",
 ]
 
 RATING_PATTERNS = [
@@ -573,27 +580,38 @@ def _extract_page_title(text: str) -> str | None:
 
 
 def _source_query_variants(candidate: DemandCandidate) -> list[str]:
-    base = _normalize_title(candidate.title) or _normalize_title(candidate.query) or candidate.query.strip().lower()
-    tokens = [token for token in base.split() if token not in SOURCE_QUERY_STOPWORDS]
+    def _compact(text: str) -> str:
+        text = _normalize_title(text)
+        text = re.sub(r"\b\d+(?:\.\d+)?\s*(?:pack|pcs?|pieces?|count|ct|inch|in|cm|mm|oz|ml|lb|lbs|g|kg)\b", " ", text)
+        text = re.sub(r"\b(?:set of|pack of|for women|for men|for kids|amazon basics|walmart|temu)\b", " ", text)
+        text = re.sub(r"\b\d+\b", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
+
+    primary = _compact(candidate.title) or _compact(candidate.query) or candidate.query.strip().lower()
+    fallback = _normalize_title(candidate.query) or candidate.query.strip().lower()
+    token_pool = [token for token in primary.split() if token not in SOURCE_QUERY_STOPWORDS]
     variants: list[str] = []
-    if len(tokens) >= 2:
-        pair = " ".join(tokens[:2]).strip()
-        if pair:
-            variants.append(pair)
-    if len(tokens) >= 3:
-        trio = " ".join(tokens[:3]).strip()
-        if trio:
-            variants.append(trio)
+
     for text in [
-        " ".join(tokens[:6]).strip(),
-        " ".join(tokens[:4]).strip(),
+        " ".join(token_pool[:6]).strip(),
+        " ".join(token_pool[:5]).strip(),
+        " ".join(token_pool[:4]).strip(),
+        " ".join(token_pool[:3]).strip(),
+        " ".join(token_pool[:2]).strip(),
+        primary,
+        fallback,
+        _compact(candidate.query),
+        _compact(candidate.title),
         candidate.query.strip().lower(),
         candidate.title.strip().lower(),
     ]:
         text = re.sub(r"\s+", " ", text).strip()
+        if len(text.split()) < 2:
+            continue
         if text and text not in variants:
             variants.append(text)
-    return variants[:4]
+    return variants[:6]
 
 
 def _load_site_preferences() -> dict[str, Any]:
@@ -962,6 +980,17 @@ def _extract_monthly_orders(text: str) -> float | None:
                 continue
     if values:
         return max(values)
+    weekly_values: list[float] = []
+    for pattern in WEEKLY_ORDER_PATTERNS:
+        for found in re.finditer(pattern, lowered, flags=re.I):
+            raw = found.group(1).replace(",", "").lower()
+            try:
+                value = float(raw[:-1]) * 1000 if raw.endswith("k") else float(raw)
+            except Exception:
+                continue
+            weekly_values.append(value * (30.0 / 7.0))
+    if weekly_values:
+        return max(weekly_values)
     for pattern in SOLD_PATTERNS:
         for found in re.finditer(pattern, lowered, flags=re.I):
             raw = found.group(1).replace(",", "").lower()
@@ -1517,10 +1546,15 @@ def _extract_source_candidate(platform: str, text: str, query: str, fetch_tool: 
     normalized_text = _normalize_title(text[:4000])
     overlap = len(set(normalized_query.split()) & set(normalized_text.split()))
     match_score += min(10, overlap * 2)
+    title = _source_title_from_link(raw_link) if raw_link else query.title()
+    if not title or title.lower() == query.lower():
+        page_title = _extract_page_title(text[:8000])
+        if page_title:
+            title = page_title
     return SourceCandidate(
         platform=platform,
         link=raw_link or SOURCE_PLATFORM_SEARCH[platform](query),
-        title=query.title(),
+        title=title or query.title(),
         price_cny=price_cny,
         weight_kg=weight,
         weight_grade=grade,
@@ -3888,15 +3922,16 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
     source_matches: dict[str, list[SourceCandidate]] = {}
     for candidate in demand_candidates:
         source_rows: list[SourceCandidate] = []
-        normalized_query = _normalize_title(candidate.title) or candidate.query
         for platform in source_platforms:
-            url = SOURCE_PLATFORM_SEARCH[platform](normalized_query)
-            result = fetch_best(platform, url, max_tools=max_tools)
             source_bias = float(((adaptive_profile.get("source_biases") or {}).get(platform, 0) or 0))
-            fetch_log.append({"platform": platform, "query": normalized_query, "tool": result.tool, "status": result.status, "score": result.score, "source_bias": source_bias})
-            row = _extract_source_candidate(platform, result.text, normalized_query, result.tool)
-            row.match_score = min(100.0, row.match_score + source_bias)
-            source_rows.append(row)
+            best_row, best_log = _best_source_for_platform(
+                platform,
+                candidate,
+                max_tools=max_tools,
+                platform_bias=source_bias,
+            )
+            fetch_log.extend(best_log)
+            source_rows.append(best_row)
         source_matches[candidate.candidate_id] = source_rows
 
     decisions = [_compute_decision(item, source_matches.get(item.candidate_id, [])) for item in demand_candidates]
