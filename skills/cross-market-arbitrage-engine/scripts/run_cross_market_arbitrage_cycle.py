@@ -690,11 +690,16 @@ def _load_site_preferences() -> dict[str, Any]:
 
 
 def _fetch_direct_http(url: str) -> tuple[str, str]:
+    timeout = 30
+    timeout_cap = os.environ.get("CROSS_MARKET_TIMEOUT_CAP", "").strip()
+    if timeout_cap.isdigit():
+        timeout = min(timeout, max(3, int(timeout_cap)))
     code = (
         "import sys,urllib.request; "
         "u=sys.argv[1]; "
+        f"t={timeout}; "
         "req=urllib.request.Request(u, headers={'User-Agent':'Mozilla/5.0'}); "
-        "resp=urllib.request.urlopen(req, timeout=30); "
+        "resp=urllib.request.urlopen(req, timeout=t); "
         "print(resp.read().decode('utf-8','ignore')[:400000])"
     )
     proc = _run(["python3", "-c", code, url])
@@ -702,9 +707,13 @@ def _fetch_direct_http(url: str) -> tuple[str, str]:
 
 
 def _fetch_curl_cffi(url: str) -> tuple[str, str]:
+    timeout = 30
+    timeout_cap = os.environ.get("CROSS_MARKET_TIMEOUT_CAP", "").strip()
+    if timeout_cap.isdigit():
+        timeout = min(timeout, max(3, int(timeout_cap)))
     code = (
         "from curl_cffi import requests; import sys; "
-        "r=requests.get(sys.argv[1], impersonate='chrome124', timeout=30); "
+        f"r=requests.get(sys.argv[1], impersonate='chrome124', timeout={timeout}); "
         "print(r.text[:400000])"
     )
     proc = _run([str(VENV_PY), "-c", code, url])
@@ -4274,135 +4283,155 @@ def _platform_summary(decisions: list[ArbitrageDecision]) -> dict[str, Any]:
 
 
 def run_once(*, test: bool = False) -> dict[str, Any]:
+    previous_timeout_cap = os.environ.get("CROSS_MARKET_TIMEOUT_CAP")
+    if test:
+        os.environ["CROSS_MARKET_TIMEOUT_CAP"] = "12"
     run_id = _utc_now().strftime("%Y%m%dT%H%M%SZ")
-    state = _load_state()
-    adaptive_profile = _adaptive_profile_from_state(state)
-    adaptive_history = _persist_adaptive_history(adaptive_profile)
-    query_feedback = _query_feedback_from_state(state)
-    query_history = _persist_query_history(query_feedback)
-    market_feedback = _market_feedback_from_state(state)
-    market_history = _persist_market_history(market_feedback)
-    adaptive_thresholds = _adaptive_thresholds_from_state(state)
-    threshold_history = _persist_threshold_history(adaptive_thresholds)
-    base_queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
-    sellersprite = _collect_sellersprite_summary(base_queries, fast=test)
-    seed_query_keys = {_query_key(item) for item in (sellersprite.get("seed_queries") or []) if _query_key(item)}
-    base_query_keys = {_query_key(item) for item in base_queries if _query_key(item)}
-    query_limit = 2 if test else 10
-    queries = _apply_query_adaptive_order(
-        _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=query_limit),
-        adaptive_profile,
-        limit=query_limit,
-    )
-    sell_platforms = ["amazon", "temu"] if test else ["temu", "amazon", "walmart"]
-    source_platforms = list((adaptive_profile.get("source_order") or []) or ["made_in_china", "1688", "yiwugo"])
-    if test:
-        source_platforms = source_platforms[:2]
-    max_tools = 1 if test else None
+    try:
+        state = _load_state()
+        adaptive_profile = _adaptive_profile_from_state(state)
+        adaptive_history = _persist_adaptive_history(adaptive_profile)
+        query_feedback = _query_feedback_from_state(state)
+        query_history = _persist_query_history(query_feedback)
+        market_feedback = _market_feedback_from_state(state)
+        market_history = _persist_market_history(market_feedback)
+        adaptive_thresholds = _adaptive_thresholds_from_state(state)
+        threshold_history = _persist_threshold_history(adaptive_thresholds)
+        base_queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
+        sellersprite = (
+            {
+                "status": "skipped_fast_test",
+                "seed_queries": [],
+                "available_platforms": [],
+                "keyword_result_probe": {},
+                "product_result_probe": {},
+                "api_probes": [],
+            }
+            if test
+            else _collect_sellersprite_summary(base_queries, fast=False)
+        )
+        seed_query_keys = {_query_key(item) for item in (sellersprite.get("seed_queries") or []) if _query_key(item)}
+        base_query_keys = {_query_key(item) for item in base_queries if _query_key(item)}
+        query_limit = 2 if test else 10
+        queries = _apply_query_adaptive_order(
+            _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=query_limit),
+            adaptive_profile,
+            limit=query_limit,
+        )
+        sell_platforms = ["amazon", "temu"] if test else ["temu", "amazon", "walmart"]
+        source_platforms = list((adaptive_profile.get("source_order") or []) or ["made_in_china", "1688", "yiwugo"])
+        if test:
+            source_platforms = source_platforms[:1]
+        max_tools = 1 if test else None
 
-    fetch_log: list[dict[str, Any]] = []
-    demand_candidates: list[DemandCandidate] = []
+        fetch_log: list[dict[str, Any]] = []
+        demand_candidates: list[DemandCandidate] = []
 
-    for query in queries:
-        for platform in sell_platforms:
-            result = fetch_best(platform, url_for_sell(platform, query), max_tools=max_tools, fast=test)
-            fetch_log.append({"platform": platform, "query": query, "tool": result.tool, "status": result.status, "score": result.score})
-            demand_candidates.extend(_extract_sell_candidates(platform, result.text, query))
+        for query in queries:
+            for platform in sell_platforms:
+                result = fetch_best(platform, url_for_sell(platform, query), max_tools=max_tools, fast=test)
+                fetch_log.append({"platform": platform, "query": query, "tool": result.tool, "status": result.status, "score": result.score})
+                demand_candidates.extend(_extract_sell_candidates(platform, result.text, query))
 
-    deduped: dict[tuple[str, str], DemandCandidate] = {}
-    for item in demand_candidates:
-        query_key = _query_key(item.query)
-        item.raw_signals = {
-            **(item.raw_signals or {}),
-            "query_source_kind": (
-                "shared" if query_key in seed_query_keys and query_key in base_query_keys
-                else "seed" if query_key in seed_query_keys
-                else "base"
-            ),
+        deduped: dict[tuple[str, str], DemandCandidate] = {}
+        for item in demand_candidates:
+            query_key = _query_key(item.query)
+            item.raw_signals = {
+                **(item.raw_signals or {}),
+                "query_source_kind": (
+                    "shared" if query_key in seed_query_keys and query_key in base_query_keys
+                    else "seed" if query_key in seed_query_keys
+                    else "base"
+                ),
+            }
+            key = (item.sell_platform, _normalize_title(item.title))
+            if key not in deduped:
+                deduped[key] = item
+        demand_candidates = list(deduped.values())
+        competition_hints = _competition_density_hints(demand_candidates)
+        for item in demand_candidates:
+            if item.candidate_id in competition_hints:
+                item.raw_signals = {**(item.raw_signals or {}), **competition_hints[item.candidate_id]}
+        if test:
+            demand_candidates = demand_candidates[:3]
+
+        source_matches: dict[str, list[SourceCandidate]] = {}
+        for candidate in demand_candidates:
+            source_rows: list[SourceCandidate] = []
+            for platform in source_platforms:
+                source_bias = float(((adaptive_profile.get("source_biases") or {}).get(platform, 0) or 0))
+                best_row, best_log = _best_source_for_platform(
+                    platform,
+                    candidate,
+                    max_tools=max_tools,
+                    platform_bias=source_bias,
+                    fast=test,
+                )
+                fetch_log.extend(best_log)
+                source_rows.append(best_row)
+            source_matches[candidate.candidate_id] = source_rows
+
+        decisions = [_compute_decision(item, source_matches.get(item.candidate_id, [])) for item in demand_candidates]
+        summary = {
+            "generated_at": _utc_now_iso(),
+            "mode": "test" if test else "normal",
+            "discovery_candidate_count": len(demand_candidates),
+            "qualified_count": sum(1 for item in decisions if item.qualified),
+            "platform_summary": _platform_summary(decisions),
+            "adaptive_profile": adaptive_profile,
+            "adaptive_history": adaptive_history,
+            "adaptive_thresholds": adaptive_thresholds,
+            "threshold_history": threshold_history,
+            "query_feedback": query_feedback,
+            "query_history": query_history,
+            "market_feedback": market_feedback,
+            "market_history": market_history,
+            "sellersprite": sellersprite,
+            "base_queries": base_queries,
+            "queries": queries,
+            "timing": {
+                "discovery_interval_seconds": DISCOVERY_INTERVAL_SECONDS,
+                "matching_interval_seconds": MATCH_INTERVAL_SECONDS,
+                "report_hour_new_york": REPORT_HOUR,
+            },
         }
-        key = (item.sell_platform, _normalize_title(item.title))
-        if key not in deduped:
-            deduped[key] = item
-    demand_candidates = list(deduped.values())
-    competition_hints = _competition_density_hints(demand_candidates)
-    for item in demand_candidates:
-        if item.candidate_id in competition_hints:
-            item.raw_signals = {**(item.raw_signals or {}), **competition_hints[item.candidate_id]}
-    if test:
-        demand_candidates = demand_candidates[:3]
+        excel_path = _write_excel(run_id, decisions, summary)
+        md_path = _write_markdown(run_id, decisions, summary)
+        json_path = _write_json(
+            run_id,
+            {
+                "summary": summary,
+                "fetch_log": fetch_log,
+                "decisions": [asdict(item) for item in decisions],
+                "source_matches": {key: [asdict(row) for row in rows] for key, rows in source_matches.items()},
+            },
+        )
 
-    source_matches: dict[str, list[SourceCandidate]] = {}
-    for candidate in demand_candidates:
-        source_rows: list[SourceCandidate] = []
-        for platform in source_platforms:
-            source_bias = float(((adaptive_profile.get("source_biases") or {}).get(platform, 0) or 0))
-            best_row, best_log = _best_source_for_platform(
-                platform,
-                candidate,
-                max_tools=max_tools,
-                platform_bias=source_bias,
-                fast=test,
-            )
-            fetch_log.extend(best_log)
-            source_rows.append(best_row)
-        source_matches[candidate.candidate_id] = source_rows
+        state.setdefault("runs", []).append(
+            {
+                "run_id": run_id,
+                "generated_at": summary["generated_at"],
+                "qualified_count": summary["qualified_count"],
+                "excel_path": str(excel_path),
+                "markdown_path": str(md_path),
+                "json_path": str(json_path),
+            }
+        )
+        state["runs"] = state["runs"][-40:]
+        _save_state(state)
 
-    decisions = [_compute_decision(item, source_matches.get(item.candidate_id, [])) for item in demand_candidates]
-    summary = {
-        "generated_at": _utc_now_iso(),
-        "mode": "test" if test else "normal",
-        "discovery_candidate_count": len(demand_candidates),
-        "qualified_count": sum(1 for item in decisions if item.qualified),
-        "platform_summary": _platform_summary(decisions),
-        "adaptive_profile": adaptive_profile,
-        "adaptive_history": adaptive_history,
-        "adaptive_thresholds": adaptive_thresholds,
-        "threshold_history": threshold_history,
-        "query_feedback": query_feedback,
-        "query_history": query_history,
-        "market_feedback": market_feedback,
-        "market_history": market_history,
-        "sellersprite": sellersprite,
-        "base_queries": base_queries,
-        "queries": queries,
-        "timing": {
-            "discovery_interval_seconds": DISCOVERY_INTERVAL_SECONDS,
-            "matching_interval_seconds": MATCH_INTERVAL_SECONDS,
-            "report_hour_new_york": REPORT_HOUR,
-        },
-    }
-    excel_path = _write_excel(run_id, decisions, summary)
-    md_path = _write_markdown(run_id, decisions, summary)
-    json_path = _write_json(
-        run_id,
-        {
-            "summary": summary,
-            "fetch_log": fetch_log,
-            "decisions": [asdict(item) for item in decisions],
-            "source_matches": {key: [asdict(row) for row in rows] for key, rows in source_matches.items()},
-        },
-    )
-
-    state.setdefault("runs", []).append(
-        {
+        return {
             "run_id": run_id,
-            "generated_at": summary["generated_at"],
-            "qualified_count": summary["qualified_count"],
+            "summary": summary,
             "excel_path": str(excel_path),
             "markdown_path": str(md_path),
             "json_path": str(json_path),
         }
-    )
-    state["runs"] = state["runs"][-40:]
-    _save_state(state)
-
-    return {
-        "run_id": run_id,
-        "summary": summary,
-        "excel_path": str(excel_path),
-        "markdown_path": str(md_path),
-        "json_path": str(json_path),
-    }
+    finally:
+        if previous_timeout_cap is None:
+            os.environ.pop("CROSS_MARKET_TIMEOUT_CAP", None)
+        else:
+            os.environ["CROSS_MARKET_TIMEOUT_CAP"] = previous_timeout_cap
 
 
 def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[str, Any], list[DemandCandidate], list[dict[str, Any]]]:
