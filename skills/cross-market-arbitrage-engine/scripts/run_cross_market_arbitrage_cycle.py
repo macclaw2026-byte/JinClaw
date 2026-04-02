@@ -1579,6 +1579,16 @@ def parse_dt(value: str) -> datetime | None:
         return None
 
 
+def _needs_rematch(row: dict[str, Any]) -> bool:
+    last_matched = parse_dt(str(row.get("last_matched_at", "")))
+    if last_matched is None:
+        return True
+    updated_at = parse_dt(str(row.get("updated_at", "")))
+    if updated_at and updated_at > last_matched:
+        return True
+    return not bool(row.get("decision"))
+
+
 def _send_to_telegram(*, chat_id: str, text: str, media_paths: list[Path]) -> list[dict[str, Any]]:
     deliveries: list[dict[str, Any]] = []
     text_cmd = [OPENCLAW_BIN, "message", "send", "--channel", "telegram", "--target", chat_id, "--message", text, "--json"]
@@ -1760,6 +1770,14 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
     bucket = state.setdefault("candidates", {})
     for item in candidates:
         row = bucket.get(item.candidate_id, {})
+        previous_snapshot = {
+            "title": row.get("title"),
+            "sell_price_cny": row.get("sell_price_cny"),
+            "estimated_daily_orders": row.get("estimated_daily_orders"),
+            "listing_age_days": row.get("listing_age_days"),
+            "rating_value": row.get("rating_value"),
+            "review_count": row.get("review_count"),
+        }
         price_history = list(row.get("observed_sell_prices", []) or [])
         if item.sell_price_cny is not None:
             price_history.append(item.sell_price_cny)
@@ -1769,6 +1787,18 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
         row["discovered_at"] = row.get("discovered_at") or item.extracted_at
         row["observed_sell_prices"] = price_history
         row.setdefault("source_matches", [])
+        current_snapshot = {
+            "title": row.get("title"),
+            "sell_price_cny": row.get("sell_price_cny"),
+            "estimated_daily_orders": row.get("estimated_daily_orders"),
+            "listing_age_days": row.get("listing_age_days"),
+            "rating_value": row.get("rating_value"),
+            "review_count": row.get("review_count"),
+        }
+        if previous_snapshot != current_snapshot:
+            row.pop("last_matched_at", None)
+            row.pop("decision", None)
+            row["source_matches"] = []
         bucket[item.candidate_id] = row
     state["last_discovery_at"] = _utc_now_iso()
     return state, candidates, fetch_log
@@ -1780,7 +1810,7 @@ def _match_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[str
     fetch_log: list[dict[str, Any]] = []
     decisions: list[ArbitrageDecision] = []
     for candidate_id, payload in (state.get("candidates") or {}).items():
-        if payload.get("last_matched_at"):
+        if not _needs_rematch(payload):
             continue
         candidate = DemandCandidate(**{k: payload[k] for k in DemandCandidate.__dataclass_fields__.keys() if k in payload})
         rows: list[SourceCandidate] = []
@@ -1897,7 +1927,7 @@ def _discovery_due(state: dict[str, Any], interval_seconds: int = DISCOVERY_INTE
 
 def _match_due(state: dict[str, Any], interval_seconds: int = MATCH_INTERVAL_SECONDS) -> bool:
     last = parse_dt(state.get("last_match_at", ""))
-    has_unmatched = any(not row.get("last_matched_at") for row in (state.get("candidates") or {}).values())
+    has_unmatched = any(_needs_rematch(row) for row in (state.get("candidates") or {}).values())
     return has_unmatched and (last is None or (_utc_now() - last).total_seconds() >= interval_seconds)
 
 
