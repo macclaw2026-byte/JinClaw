@@ -315,6 +315,9 @@ class ArbitrageDecision:
     selection_score: float = 0.0
     selection_grade: str = "watch"
     selection_thesis: str = ""
+    query_source_kind: str = "base"
+    trend_source_score: float = 0.0
+    execution_resilience_score: float = 0.0
     decision_bucket: str = "watchlist"
     priority_reason: str = ""
     reasons: list[str] = field(default_factory=list)
@@ -338,6 +341,9 @@ DECISION_DEFAULTS: dict[str, Any] = {
     "selection_score": 0.0,
     "selection_grade": "watch",
     "selection_thesis": "",
+    "query_source_kind": "base",
+    "trend_source_score": 0.0,
+    "execution_resilience_score": 0.0,
     "decision_bucket": "watchlist",
     "priority_reason": "",
     "reasons": [],
@@ -1040,6 +1046,8 @@ def _selection_scorecard(
     weight_grade: str,
     price_stability_score: float,
     restricted: bool,
+    source_match_score: float,
+    query_source_kind: str = "base",
     adaptive_query_bias: float = 0.0,
 ) -> tuple[float, str, str, dict[str, float]]:
     demand_acceleration_score = min(
@@ -1081,12 +1089,18 @@ def _selection_scorecard(
         min(100.0, margin_score * 0.38 + conservative_score * 0.32 + weight_score * 0.18 + price_stability_score * 0.12),
         2,
     )
-    trend_verification_score = round(
+    query_source_bonus = {
+        "seed": 12.0,
+        "shared": 8.0,
+        "base": 0.0,
+    }.get(query_source_kind, 0.0)
+    trend_source_score = round(
         min(
             100.0,
-            sellersprite_keyword_signal_score * 0.52
-            + sellersprite_product_signal_score * 0.38
-            + min(12.0, adaptive_query_bias * 3.0),
+            sellersprite_keyword_signal_score * 0.48
+            + sellersprite_product_signal_score * 0.34
+            + min(12.0, adaptive_query_bias * 3.0)
+            + query_source_bonus,
         ),
         2,
     )
@@ -1095,12 +1109,23 @@ def _selection_scorecard(
         compliance_score = min(compliance_score, 35.0)
     elif weight_grade == "C":
         compliance_score = min(compliance_score, 72.0)
+    execution_resilience_score = round(
+        min(
+            100.0,
+            source_match_score * 0.48
+            + weight_score * 0.28
+            + price_stability_score * 0.14
+            + (10.0 if query_source_kind in {"seed", "shared"} else 0.0),
+        ),
+        2,
+    )
     final_score = round(
-        demand_acceleration_score * 0.30
-        + trend_verification_score * 0.20
-        + competition_inverse_score * 0.20
+        demand_acceleration_score * 0.28
+        + trend_source_score * 0.17
+        + competition_inverse_score * 0.18
         + profit_fulfillment_score * 0.20
-        + compliance_score * 0.10,
+        + execution_resilience_score * 0.09
+        + compliance_score * 0.08,
         2,
     )
     if final_score >= 78.0:
@@ -1112,20 +1137,23 @@ def _selection_scorecard(
     strengths: list[str] = []
     if demand_acceleration_score >= 72.0:
         strengths.append("accelerating_demand")
-    if trend_verification_score >= 56.0:
+    if trend_source_score >= 56.0:
         strengths.append("validated_trend")
     if competition_inverse_score >= 68.0:
         strengths.append("competition_gap")
     if profit_fulfillment_score >= 68.0:
         strengths.append("profitfulfillment_ok")
+    if execution_resilience_score >= 66.0:
+        strengths.append("execution_resilient")
     if compliance_score >= 85.0:
         strengths.append("compliance_safe")
     thesis = "+".join(strengths[:3]) if strengths else "needs_more_validation"
     return final_score, grade, thesis, {
         "demand_acceleration_score": round(demand_acceleration_score, 2),
-        "trend_verification_score": trend_verification_score,
+        "trend_source_score": trend_source_score,
         "competition_inverse_score": competition_inverse_score,
         "profit_fulfillment_score": profit_fulfillment_score,
+        "execution_resilience_score": execution_resilience_score,
         "compliance_score": round(compliance_score, 2),
     }
 
@@ -1677,6 +1705,7 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
     sellersprite_product_signal_score = float(((candidate.raw_signals or {}).get("sellersprite_product_signal_score", 0) or 0))
     adaptive_platform_bias = float(((candidate.raw_signals or {}).get("adaptive_platform_bias", 0) or 0))
     adaptive_query_bias = float(((candidate.raw_signals or {}).get("adaptive_query_bias", 0) or 0))
+    query_source_kind = str(((candidate.raw_signals or {}).get("query_source_kind", "base")) or "base")
     restricted, hits = _is_restricted(candidate.title)
     if restricted:
         reasons.append(f"restricted:{','.join(hits[:4])}")
@@ -1831,6 +1860,8 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         weight_grade=best_source.weight_grade,
         price_stability_score=price_stability_score,
         restricted=restricted,
+        source_match_score=best_source.match_score,
+        query_source_kind=query_source_kind,
         adaptive_query_bias=adaptive_query_bias,
     )
     platform_fit_score, platform_fit_label, platform_recommendation = _platform_screen_profile(
@@ -1911,6 +1942,9 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         selection_score=selection_score,
         selection_grade=selection_grade,
         selection_thesis=selection_thesis,
+        query_source_kind=query_source_kind,
+        trend_source_score=float(selection_components.get("trend_source_score", 0) or 0),
+        execution_resilience_score=float(selection_components.get("execution_resilience_score", 0) or 0),
         decision_bucket=decision_bucket,
         priority_reason=priority_reason,
         reasons=[*reasons, f"selection_thesis:{selection_thesis}", f"selection_components:{json.dumps(selection_components, ensure_ascii=False)}"],
@@ -2798,7 +2832,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
     autosize(ws)
 
     near_ws = wb.create_sheet("Near_Miss")
-    near_ws.append(["产品名称", "售卖平台", "平台适配分", "精选分", "精选标签", "可做分", "置信度", "优先原因", "原因"])
+    near_ws.append(["产品名称", "售卖平台", "来源类型", "平台适配分", "精选分", "精选标签", "趋势源分", "执行分", "可做分", "置信度", "优先原因", "原因"])
     style_header(near_ws)
     for item in decisions:
         if item.decision_bucket != "near_miss":
@@ -2806,9 +2840,12 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
         near_ws.append([
             item.product_name,
             item.sell_platform,
+            item.query_source_kind,
             item.platform_fit_score,
             item.selection_score,
             item.selection_grade,
+            item.trend_source_score,
+            item.execution_resilience_score,
             item.launchability_score,
             item.confidence_score,
             item.priority_reason,
@@ -2817,7 +2854,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
     autosize(near_ws)
 
     watch_ws = wb.create_sheet("Watchlist")
-    watch_ws.append(["产品名称", "售卖平台", "平台适配分", "精选分", "精选标签", "可做分", "置信度", "优先原因", "原因"])
+    watch_ws.append(["产品名称", "售卖平台", "来源类型", "平台适配分", "精选分", "精选标签", "趋势源分", "执行分", "可做分", "置信度", "优先原因", "原因"])
     style_header(watch_ws)
     for item in decisions:
         if item.decision_bucket != "watchlist":
@@ -2825,9 +2862,12 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
         watch_ws.append([
             item.product_name,
             item.sell_platform,
+            item.query_source_kind,
             item.platform_fit_score,
             item.selection_score,
             item.selection_grade,
+            item.trend_source_score,
+            item.execution_resilience_score,
             item.launchability_score,
             item.confidence_score,
             item.priority_reason,
@@ -2839,7 +2879,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
         platform_ws = wb.create_sheet(_sheet_name_for_platform(platform))
         platform_ws.append([
             "产品名称", "目标采购平台", "采购链接", "目标售卖平台", "售卖链接", "售价(RMB)", "采购成本(RMB)", "毛利率",
-            "保守毛利率", "估算日单量", "上架天数", "精选分", "精选标签", "精选论点", "可做分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "是否入选", "原因"
+            "保守毛利率", "估算日单量", "上架天数", "精选分", "精选标签", "精选论点", "趋势源分", "执行分", "可做分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "是否入选", "原因"
         ])
         style_header(platform_ws)
         platform_rows = _platform_sheet_rows(decisions, platform)
@@ -2861,6 +2901,8 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
                 item.selection_score,
                 item.selection_grade,
                 item.selection_thesis,
+                item.trend_source_score,
+                item.execution_resilience_score,
                 item.launchability_score,
                 item.platform_fit_score,
                 item.platform_fit_label,
@@ -2876,7 +2918,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
     headers = [
         "产品名称", "采购平台", "采购链接", "售卖平台", "售卖链接", "售价(RMB)", "采购成本(RMB)", "重量(kg)",
         "毛利额", "毛利率", "保守毛利率", "平台佣金率", "估算日单量", "上架天数", "需求分", "竞争分",
-        "差异化分", "价格稳定分", "精选分", "精选标签", "精选论点", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "综合可做分", "置信度", "重量等级", "是否入选", "原因"
+        "差异化分", "价格稳定分", "精选分", "精选标签", "精选论点", "趋势源分", "执行分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "综合可做分", "置信度", "重量等级", "是否入选", "原因"
     ]
     audit.append(headers)
     style_header(audit)
@@ -2903,6 +2945,8 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             item.selection_score,
             item.selection_grade,
             item.selection_thesis,
+            item.trend_source_score,
+            item.execution_resilience_score,
             item.platform_fit_score,
             item.platform_fit_label,
             item.platform_recommendation,
@@ -3386,6 +3430,8 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
     query_history = _persist_query_history(query_feedback)
     base_queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
     sellersprite = _collect_sellersprite_summary(base_queries)
+    seed_query_keys = {_query_key(item) for item in (sellersprite.get("seed_queries") or []) if _query_key(item)}
+    base_query_keys = {_query_key(item) for item in base_queries if _query_key(item)}
     queries = _apply_query_adaptive_order(
         _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=3 if test else 10),
         adaptive_profile,
@@ -3406,6 +3452,15 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
 
     deduped: dict[tuple[str, str], DemandCandidate] = {}
     for item in demand_candidates:
+        query_key = _query_key(item.query)
+        item.raw_signals = {
+            **(item.raw_signals or {}),
+            "query_source_kind": (
+                "shared" if query_key in seed_query_keys and query_key in base_query_keys
+                else "seed" if query_key in seed_query_keys
+                else "base"
+            ),
+        }
         key = (item.sell_platform, _normalize_title(item.title))
         if key not in deduped:
             deduped[key] = item
@@ -3485,6 +3540,8 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
     adaptive_profile = _adaptive_profile_from_state(state)
     base_queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
     sellersprite = _collect_sellersprite_summary(base_queries)
+    seed_query_keys = {_query_key(item) for item in (sellersprite.get("seed_queries") or []) if _query_key(item)}
+    base_query_keys = {_query_key(item) for item in base_queries if _query_key(item)}
     queries = _apply_query_adaptive_order(
         _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=3 if test else 10),
         adaptive_profile,
@@ -3525,6 +3582,12 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
         )
         hints["adaptive_query_bias"] = float(
             ((adaptive_profile.get("query_biases") or {}).get(_query_key(updated.query), 0) or 0)
+        )
+        query_key = _query_key(updated.query)
+        hints["query_source_kind"] = (
+            "shared" if query_key in seed_query_keys and query_key in base_query_keys
+            else "seed" if query_key in seed_query_keys
+            else "base"
         )
         updated.raw_signals = {**(updated.raw_signals or {}), **hints}
         if hints.get("sellersprite_product_freshest_listing_days") is not None and updated.listing_age_days is None:
