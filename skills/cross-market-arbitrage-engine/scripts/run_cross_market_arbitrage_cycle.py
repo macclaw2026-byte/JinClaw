@@ -312,6 +312,9 @@ class ArbitrageDecision:
     confidence_score: float
     weight_grade: str
     qualified: bool
+    selection_score: float = 0.0
+    selection_grade: str = "watch"
+    selection_thesis: str = ""
     decision_bucket: str = "watchlist"
     priority_reason: str = ""
     reasons: list[str] = field(default_factory=list)
@@ -332,6 +335,9 @@ DECISION_DEFAULTS: dict[str, Any] = {
     "confidence_score": 0.0,
     "weight_grade": "D",
     "qualified": False,
+    "selection_score": 0.0,
+    "selection_grade": "watch",
+    "selection_thesis": "",
     "decision_bucket": "watchlist",
     "priority_reason": "",
     "reasons": [],
@@ -1018,6 +1024,110 @@ def _price_stability_from_history(history: list[float]) -> float:
     variance = sum((x - avg) ** 2 for x in cleaned) / len(cleaned)
     cv = (variance ** 0.5) / avg
     return max(0.0, min(100.0, 100.0 - cv * 200.0))
+
+
+def _selection_scorecard(
+    *,
+    estimated_daily_orders: float,
+    demand_confidence: float,
+    sellersprite_keyword_signal_score: float,
+    sellersprite_product_signal_score: float,
+    competition_score: float,
+    review_count: int | None,
+    listing_age_days: int | None,
+    margin: float | None,
+    conservative_margin: float | None,
+    weight_grade: str,
+    price_stability_score: float,
+    restricted: bool,
+    adaptive_query_bias: float = 0.0,
+) -> tuple[float, str, str, dict[str, float]]:
+    demand_acceleration_score = min(
+        100.0,
+        estimated_daily_orders * 2.1
+        + min(18.0, demand_confidence * 0.12)
+        + min(14.0, max(sellersprite_keyword_signal_score, sellersprite_product_signal_score) * 0.18),
+    )
+    if review_count is None:
+        review_inverse_score = 55.0
+    elif review_count <= 150:
+        review_inverse_score = 95.0
+    elif review_count <= 500:
+        review_inverse_score = 82.0
+    elif review_count <= 1500:
+        review_inverse_score = 66.0
+    elif review_count <= 5000:
+        review_inverse_score = 42.0
+    else:
+        review_inverse_score = 22.0
+    if listing_age_days is None:
+        freshness_score = 45.0
+    elif listing_age_days <= 180:
+        freshness_score = 100.0
+    elif listing_age_days <= 365:
+        freshness_score = 88.0
+    elif listing_age_days <= 730:
+        freshness_score = 62.0
+    else:
+        freshness_score = 24.0
+    competition_inverse_score = round(
+        min(100.0, competition_score * 0.55 + review_inverse_score * 0.25 + freshness_score * 0.20),
+        2,
+    )
+    margin_score = min(100.0, max(0.0, (margin or 0.0) * 100.0 * 1.6)) if margin is not None else 0.0
+    conservative_score = min(100.0, max(0.0, (conservative_margin or 0.0) * 100.0 * 1.7)) if conservative_margin is not None else 0.0
+    weight_score = {"A": 100.0, "B": 82.0, "C": 58.0, "D": 25.0}.get(weight_grade, 35.0)
+    profit_fulfillment_score = round(
+        min(100.0, margin_score * 0.38 + conservative_score * 0.32 + weight_score * 0.18 + price_stability_score * 0.12),
+        2,
+    )
+    trend_verification_score = round(
+        min(
+            100.0,
+            sellersprite_keyword_signal_score * 0.52
+            + sellersprite_product_signal_score * 0.38
+            + min(12.0, adaptive_query_bias * 3.0),
+        ),
+        2,
+    )
+    compliance_score = 22.0 if restricted else 100.0
+    if weight_grade == "D":
+        compliance_score = min(compliance_score, 35.0)
+    elif weight_grade == "C":
+        compliance_score = min(compliance_score, 72.0)
+    final_score = round(
+        demand_acceleration_score * 0.30
+        + trend_verification_score * 0.20
+        + competition_inverse_score * 0.20
+        + profit_fulfillment_score * 0.20
+        + compliance_score * 0.10,
+        2,
+    )
+    if final_score >= 78.0:
+        grade = "strong"
+    elif final_score >= 64.0:
+        grade = "medium"
+    else:
+        grade = "watch"
+    strengths: list[str] = []
+    if demand_acceleration_score >= 72.0:
+        strengths.append("accelerating_demand")
+    if trend_verification_score >= 56.0:
+        strengths.append("validated_trend")
+    if competition_inverse_score >= 68.0:
+        strengths.append("competition_gap")
+    if profit_fulfillment_score >= 68.0:
+        strengths.append("profitfulfillment_ok")
+    if compliance_score >= 85.0:
+        strengths.append("compliance_safe")
+    thesis = "+".join(strengths[:3]) if strengths else "needs_more_validation"
+    return final_score, grade, thesis, {
+        "demand_acceleration_score": round(demand_acceleration_score, 2),
+        "trend_verification_score": trend_verification_score,
+        "competition_inverse_score": competition_inverse_score,
+        "profit_fulfillment_score": profit_fulfillment_score,
+        "compliance_score": round(compliance_score, 2),
+    }
 
 
 def _platform_screen_profile(
@@ -1708,6 +1818,21 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         + (10.0 if margin is not None and margin >= 0.45 else 0.0)
         + (10.0 if conservative_margin is not None and conservative_margin >= 0.45 else 0.0),
     )
+    selection_score, selection_grade, selection_thesis, selection_components = _selection_scorecard(
+        estimated_daily_orders=estimated_daily_orders,
+        demand_confidence=candidate.demand_confidence,
+        sellersprite_keyword_signal_score=sellersprite_keyword_signal_score,
+        sellersprite_product_signal_score=sellersprite_product_signal_score,
+        competition_score=competition_score,
+        review_count=candidate.review_count,
+        listing_age_days=listing_age_days,
+        margin=margin,
+        conservative_margin=conservative_margin,
+        weight_grade=best_source.weight_grade,
+        price_stability_score=price_stability_score,
+        restricted=restricted,
+        adaptive_query_bias=adaptive_query_bias,
+    )
     platform_fit_score, platform_fit_label, platform_recommendation = _platform_screen_profile(
         platform=candidate.sell_platform,
         estimated_daily_orders=estimated_daily_orders,
@@ -1751,6 +1876,8 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         conservative_margin=conservative_margin,
         sellersprite_keyword_signal_score=sellersprite_keyword_signal_score,
         sellersprite_product_signal_score=sellersprite_product_signal_score,
+        selection_score=selection_score,
+        selection_grade=selection_grade,
         reasons=reasons,
     )
     if not qualified and not reasons:
@@ -1781,9 +1908,12 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
         confidence_score=round(confidence, 2),
         weight_grade=best_source.weight_grade,
         qualified=qualified,
+        selection_score=selection_score,
+        selection_grade=selection_grade,
+        selection_thesis=selection_thesis,
         decision_bucket=decision_bucket,
         priority_reason=priority_reason,
-        reasons=reasons,
+        reasons=[*reasons, f"selection_thesis:{selection_thesis}", f"selection_components:{json.dumps(selection_components, ensure_ascii=False)}"],
     )
 
 
@@ -2182,11 +2312,15 @@ def _decision_bucket(
     conservative_margin: float | None,
     sellersprite_keyword_signal_score: float,
     sellersprite_product_signal_score: float,
+    selection_score: float,
+    selection_grade: str,
     reasons: list[str],
 ) -> tuple[str, str]:
     if qualified:
         return "qualified", "passed_strong_thresholds"
     combined_signal = max(sellersprite_keyword_signal_score, sellersprite_product_signal_score)
+    if selection_score >= 74.0 and selection_grade in {"strong", "medium"}:
+        return "near_miss", "high_selection_score_needs_validation"
     if (
         platform_fit_score >= 60.0
         and confidence >= 70.0
@@ -2201,7 +2335,7 @@ def _decision_bucket(
         if combined_signal >= 45.0:
             return "near_miss", "strong_sellersprite_signal_needs_validation"
         return "near_miss", "close_to_threshold"
-    if combined_signal >= 55.0:
+    if combined_signal >= 55.0 or selection_score >= 62.0:
         return "watchlist", "high_signal_watchlist"
     if any(reason in {"listing_age_unknown", "estimated_daily_orders_below_threshold"} for reason in reasons):
         return "watchlist", "demand_or_age_evidence_gap"
@@ -2664,7 +2798,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
     autosize(ws)
 
     near_ws = wb.create_sheet("Near_Miss")
-    near_ws.append(["产品名称", "售卖平台", "平台适配分", "可做分", "置信度", "优先原因", "原因"])
+    near_ws.append(["产品名称", "售卖平台", "平台适配分", "精选分", "精选标签", "可做分", "置信度", "优先原因", "原因"])
     style_header(near_ws)
     for item in decisions:
         if item.decision_bucket != "near_miss":
@@ -2673,6 +2807,8 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             item.product_name,
             item.sell_platform,
             item.platform_fit_score,
+            item.selection_score,
+            item.selection_grade,
             item.launchability_score,
             item.confidence_score,
             item.priority_reason,
@@ -2681,7 +2817,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
     autosize(near_ws)
 
     watch_ws = wb.create_sheet("Watchlist")
-    watch_ws.append(["产品名称", "售卖平台", "平台适配分", "可做分", "置信度", "优先原因", "原因"])
+    watch_ws.append(["产品名称", "售卖平台", "平台适配分", "精选分", "精选标签", "可做分", "置信度", "优先原因", "原因"])
     style_header(watch_ws)
     for item in decisions:
         if item.decision_bucket != "watchlist":
@@ -2690,6 +2826,8 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             item.product_name,
             item.sell_platform,
             item.platform_fit_score,
+            item.selection_score,
+            item.selection_grade,
             item.launchability_score,
             item.confidence_score,
             item.priority_reason,
@@ -2701,7 +2839,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
         platform_ws = wb.create_sheet(_sheet_name_for_platform(platform))
         platform_ws.append([
             "产品名称", "目标采购平台", "采购链接", "目标售卖平台", "售卖链接", "售价(RMB)", "采购成本(RMB)", "毛利率",
-            "保守毛利率", "估算日单量", "上架天数", "可做分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "是否入选", "原因"
+            "保守毛利率", "估算日单量", "上架天数", "精选分", "精选标签", "精选论点", "可做分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "是否入选", "原因"
         ])
         style_header(platform_ws)
         platform_rows = _platform_sheet_rows(decisions, platform)
@@ -2720,6 +2858,9 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
                 item.conservative_margin_rate,
                 item.estimated_daily_orders,
                 item.listing_age_days,
+                item.selection_score,
+                item.selection_grade,
+                item.selection_thesis,
                 item.launchability_score,
                 item.platform_fit_score,
                 item.platform_fit_label,
@@ -2735,7 +2876,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
     headers = [
         "产品名称", "采购平台", "采购链接", "售卖平台", "售卖链接", "售价(RMB)", "采购成本(RMB)", "重量(kg)",
         "毛利额", "毛利率", "保守毛利率", "平台佣金率", "估算日单量", "上架天数", "需求分", "竞争分",
-        "差异化分", "价格稳定分", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "综合可做分", "置信度", "重量等级", "是否入选", "原因"
+        "差异化分", "价格稳定分", "精选分", "精选标签", "精选论点", "平台适配分", "平台适配标签", "平台建议", "结果分层", "优先原因", "综合可做分", "置信度", "重量等级", "是否入选", "原因"
     ]
     audit.append(headers)
     style_header(audit)
@@ -2759,6 +2900,9 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
             item.competition_score,
             item.differentiation_score,
             item.price_stability_score,
+            item.selection_score,
+            item.selection_grade,
+            item.selection_thesis,
             item.platform_fit_score,
             item.platform_fit_label,
             item.platform_recommendation,
@@ -3034,6 +3178,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
             f"- Listing age days: `{item.listing_age_days}`",
             f"- Margin: `{item.gross_margin_rate}`",
             f"- Conservative margin: `{item.conservative_margin_rate}`",
+            f"- Selection score: `{item.selection_score}` / `{item.selection_grade}` / `{item.selection_thesis}`",
             f"- Platform fit: `{item.platform_fit_score}` / `{item.platform_fit_label}` / `{item.platform_recommendation}`",
             f"- Launchability: `{item.launchability_score}`",
             f"- Confidence: `{item.confidence_score}`",
@@ -3047,6 +3192,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
             f"### {item.product_name}",
             f"- Platform: `{item.sell_platform}`",
             f"- Priority reason: `{item.priority_reason}`",
+            f"- Selection score: `{item.selection_score}` / `{item.selection_grade}` / `{item.selection_thesis}`",
             f"- Platform fit: `{item.platform_fit_score}` / `{item.platform_fit_label}` / `{item.platform_recommendation}`",
             f"- Launchability: `{item.launchability_score}` / confidence=`{item.confidence_score}`",
             f"- Reasons: `{', '.join(item.reasons or ['none'])}`",
@@ -3057,7 +3203,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         lines.append("- No watchlist candidates this run.")
     for item in watchlist[:10]:
         lines.extend([
-            f"- `{item.product_name}` / `{item.sell_platform}` / reason=`{item.priority_reason}` / fit=`{item.platform_fit_score}` / launchability=`{item.launchability_score}`",
+            f"- `{item.product_name}` / `{item.sell_platform}` / reason=`{item.priority_reason}` / selection=`{item.selection_score}` / fit=`{item.platform_fit_score}` / launchability=`{item.launchability_score}`",
         ])
     lines.extend(["## Audit notes", ""])
     lines.extend([
