@@ -29,6 +29,7 @@ STATE_PATH = STATE_DIR / "cross-market-arbitrage-engine.json"
 ADAPTIVE_HISTORY_PATH = STATE_DIR / "cross-market-arbitrage-adaptive-history.json"
 QUERY_HISTORY_PATH = STATE_DIR / "cross-market-arbitrage-query-history.json"
 MARKET_HISTORY_PATH = STATE_DIR / "cross-market-arbitrage-market-history.json"
+THRESHOLD_HISTORY_PATH = STATE_DIR / "cross-market-arbitrage-threshold-history.json"
 OUT_DIR = ROOT / "output" / "cross-market-arbitrage-engine"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 LATEST_REPORT_PATH = OUT_DIR / "latest-report.json"
@@ -1800,6 +1801,7 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
     adaptive_platform_bias = float(((candidate.raw_signals or {}).get("adaptive_platform_bias", 0) or 0))
     adaptive_query_bias = float(((candidate.raw_signals or {}).get("adaptive_query_bias", 0) or 0))
     query_source_kind = str(((candidate.raw_signals or {}).get("query_source_kind", "base")) or "base")
+    thresholds = (candidate.raw_signals or {}).get("adaptive_thresholds") or {}
     restricted, hits = _is_restricted(candidate.title)
     if restricted:
         reasons.append(f"restricted:{','.join(hits[:4])}")
@@ -1984,17 +1986,17 @@ def _compute_decision(candidate: DemandCandidate, sources: list[SourceCandidate]
     )
     qualified = (
         not restricted
-        and estimated_daily_orders >= 30
+        and estimated_daily_orders >= float(thresholds.get("order_floor", 30.0) or 30.0)
         and listing_age_days is not None
-        and listing_age_days <= 730
+        and listing_age_days <= int(thresholds.get("listing_age_ceiling", 730) or 730)
         and margin is not None
         and conservative_margin is not None
-        and margin >= 0.45
-        and conservative_margin >= 0.45
+        and margin >= float(thresholds.get("margin_floor", 0.45) or 0.45)
+        and conservative_margin >= float(thresholds.get("conservative_margin_floor", 0.45) or 0.45)
         and best_source.weight_grade in {"A", "B"}
-        and launchability_score >= 70.0
-        and confidence >= 80.0
-        and platform_fit_score >= 65.0
+        and launchability_score >= float(thresholds.get("launchability_floor", 70.0) or 70.0)
+        and confidence >= float(thresholds.get("confidence_floor", 80.0) or 80.0)
+        and platform_fit_score >= float(thresholds.get("platform_fit_floor", 65.0) or 65.0)
     )
     decision_bucket, priority_reason = _decision_bucket(
         qualified=qualified,
@@ -2835,6 +2837,102 @@ def _persist_market_history(market_feedback: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _load_threshold_history() -> dict[str, Any]:
+    default = {"entries": []}
+    return _read_json(THRESHOLD_HISTORY_PATH, default)
+
+
+def _adaptive_thresholds_from_state(state: dict[str, Any]) -> dict[str, Any]:
+    decisions = _state_decisions(state)
+    total = len(decisions)
+    qualified = sum(1 for item in decisions if item.qualified)
+    near_miss = sum(1 for item in decisions if item.decision_bucket == "near_miss")
+    failure_categories = _decision_failure_categories(decisions)
+    primary_blocker = next(iter(failure_categories.keys()), "none")
+    order_floor = 30.0
+    listing_age_ceiling = 730
+    margin_floor = 0.45
+    conservative_margin_floor = 0.45
+    launchability_floor = 70.0
+    confidence_floor = 80.0
+    platform_fit_floor = 65.0
+    if total >= 8 and qualified == 0 and near_miss >= 4:
+        order_floor = 26.0
+        margin_floor = 0.42
+        conservative_margin_floor = 0.40
+        launchability_floor = 67.0
+        confidence_floor = 77.0
+        platform_fit_floor = 62.0
+    if primary_blocker == "estimated_daily_orders_below_threshold":
+        order_floor = min(order_floor, 26.0)
+    if primary_blocker == "listing_age_unknown":
+        listing_age_ceiling = 900
+    if primary_blocker == "missing_trusted_weight":
+        confidence_floor = max(confidence_floor, 82.0)
+        platform_fit_floor = max(platform_fit_floor, 66.0)
+    if qualified >= 3:
+        order_floor = max(order_floor, 30.0)
+        margin_floor = max(margin_floor, 0.45)
+        conservative_margin_floor = max(conservative_margin_floor, 0.45)
+    return {
+        "status": "adaptive" if decisions else "cold_start",
+        "decision_samples": total,
+        "qualified_total": qualified,
+        "near_miss_total": near_miss,
+        "primary_blocker": primary_blocker,
+        "order_floor": round(order_floor, 2),
+        "listing_age_ceiling": int(listing_age_ceiling),
+        "margin_floor": round(margin_floor, 4),
+        "conservative_margin_floor": round(conservative_margin_floor, 4),
+        "launchability_floor": round(launchability_floor, 2),
+        "confidence_floor": round(confidence_floor, 2),
+        "platform_fit_floor": round(platform_fit_floor, 2),
+    }
+
+
+def _persist_threshold_history(thresholds: dict[str, Any]) -> dict[str, Any]:
+    payload = _load_threshold_history()
+    entries = list(payload.get("entries") or [])
+    entry = {
+        "captured_at": _utc_now_iso(),
+        "primary_blocker": thresholds.get("primary_blocker", "none"),
+        "decision_samples": thresholds.get("decision_samples", 0),
+        "qualified_total": thresholds.get("qualified_total", 0),
+        "near_miss_total": thresholds.get("near_miss_total", 0),
+        "order_floor": thresholds.get("order_floor", 30.0),
+        "listing_age_ceiling": thresholds.get("listing_age_ceiling", 730),
+        "margin_floor": thresholds.get("margin_floor", 0.45),
+        "conservative_margin_floor": thresholds.get("conservative_margin_floor", 0.45),
+        "launchability_floor": thresholds.get("launchability_floor", 70.0),
+        "confidence_floor": thresholds.get("confidence_floor", 80.0),
+        "platform_fit_floor": thresholds.get("platform_fit_floor", 65.0),
+    }
+    entries.append(entry)
+    entries = entries[-40:]
+    payload["entries"] = entries
+    _write_json_file(THRESHOLD_HISTORY_PATH, payload)
+    latest = entries[-1] if entries else entry
+    prev = entries[-2] if len(entries) >= 2 else None
+    delta = round(float(latest.get("order_floor", 30.0) or 30.0) - float((prev or {}).get("order_floor", 30.0) or 30.0), 2)
+    if not prev:
+        direction = "new"
+    elif delta > 0.5:
+        direction = "up"
+    elif delta < -0.5:
+        direction = "down"
+    else:
+        direction = "stable"
+    return {
+        "entries_total": len(entries),
+        "latest": latest,
+        "trend": {
+            "direction": direction,
+            "delta": delta,
+        },
+        "path": str(THRESHOLD_HISTORY_PATH),
+    }
+
+
 def _apply_query_adaptive_order(queries: list[str], adaptive_profile: dict[str, Any], *, limit: int | None = None) -> list[str]:
     query_biases = adaptive_profile.get("query_biases") or {}
     query_order = list(adaptive_profile.get("query_order") or [])
@@ -3358,6 +3456,8 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
     sellersprite = summary.get("sellersprite") or {}
     adaptive_profile = summary.get("adaptive_profile") or {}
     adaptive_history = summary.get("adaptive_history") or {}
+    adaptive_thresholds = summary.get("adaptive_thresholds") or {}
+    threshold_history = summary.get("threshold_history") or {}
     query_feedback = summary.get("query_feedback") or {}
     query_history = summary.get("query_history") or {}
     market_feedback = summary.get("market_feedback") or {}
@@ -3401,6 +3501,16 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         f"- Query focus: `{', '.join(adaptive_profile.get('query_focus', []) or ['none'])}`",
         f"- Query biases: `{json.dumps(adaptive_profile.get('query_biases', {}), ensure_ascii=False)}`",
         f"- History trend: `{((adaptive_history.get('trend') or {}).get('direction', 'stable'))}` delta=`{((adaptive_history.get('trend') or {}).get('delta', 0))}` entries=`{adaptive_history.get('entries_total', 0)}`",
+        "",
+        "## Adaptive Thresholds",
+        "",
+        f"- Status: `{adaptive_thresholds.get('status', 'cold_start')}`",
+        f"- Primary blocker: `{adaptive_thresholds.get('primary_blocker', 'none')}`",
+        f"- Order floor: `{adaptive_thresholds.get('order_floor', 30.0)}`",
+        f"- Listing age ceiling: `{adaptive_thresholds.get('listing_age_ceiling', 730)}`",
+        f"- Margin floor: `{adaptive_thresholds.get('margin_floor', 0.45)}` / conservative=`{adaptive_thresholds.get('conservative_margin_floor', 0.45)}`",
+        f"- Launchability / confidence / platform fit: `{adaptive_thresholds.get('launchability_floor', 70.0)}` / `{adaptive_thresholds.get('confidence_floor', 80.0)}` / `{adaptive_thresholds.get('platform_fit_floor', 65.0)}`",
+        f"- History trend: `{((threshold_history.get('trend') or {}).get('direction', 'stable'))}` delta=`{((threshold_history.get('trend') or {}).get('delta', 0))}` entries=`{threshold_history.get('entries_total', 0)}`",
         "",
         "## Query Feedback",
         "",
@@ -3592,6 +3702,8 @@ def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -
     sellersprite = summary.get("sellersprite") or {}
     adaptive_profile = summary.get("adaptive_profile") or {}
     adaptive_history = summary.get("adaptive_history") or {}
+    adaptive_thresholds = summary.get("adaptive_thresholds") or {}
+    threshold_history = summary.get("threshold_history") or {}
     query_feedback = summary.get("query_feedback") or {}
     query_history = summary.get("query_history") or {}
     market_feedback = summary.get("market_feedback") or {}
@@ -3627,6 +3739,14 @@ def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -
     if adaptive_history:
         lines.append(
             f"Adaptive trend: {((adaptive_history.get('trend') or {}).get('direction', 'stable'))} / delta={((adaptive_history.get('trend') or {}).get('delta', 0))} / entries={adaptive_history.get('entries_total', 0)}"
+        )
+    if adaptive_thresholds:
+        lines.append(
+            f"Adaptive thresholds: order>={adaptive_thresholds.get('order_floor', 30.0)} / age<={adaptive_thresholds.get('listing_age_ceiling', 730)} / margin>={adaptive_thresholds.get('margin_floor', 0.45)} / fit>={adaptive_thresholds.get('platform_fit_floor', 65.0)}"
+        )
+    if threshold_history:
+        lines.append(
+            f"Threshold trend: {((threshold_history.get('trend') or {}).get('direction', 'stable'))} / delta={((threshold_history.get('trend') or {}).get('delta', 0))} / entries={threshold_history.get('entries_total', 0)}"
         )
     if query_feedback:
         lines.append(
@@ -3719,6 +3839,8 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
     query_history = _persist_query_history(query_feedback)
     market_feedback = _market_feedback_from_state(state)
     market_history = _persist_market_history(market_feedback)
+    adaptive_thresholds = _adaptive_thresholds_from_state(state)
+    threshold_history = _persist_threshold_history(adaptive_thresholds)
     base_queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
     sellersprite = _collect_sellersprite_summary(base_queries)
     seed_query_keys = {_query_key(item) for item in (sellersprite.get("seed_queries") or []) if _query_key(item)}
@@ -3786,6 +3908,8 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
         "platform_summary": _platform_summary(decisions),
         "adaptive_profile": adaptive_profile,
         "adaptive_history": adaptive_history,
+        "adaptive_thresholds": adaptive_thresholds,
+        "threshold_history": threshold_history,
         "query_feedback": query_feedback,
         "query_history": query_history,
         "market_feedback": market_feedback,
@@ -3835,6 +3959,7 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
 
 def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[str, Any], list[DemandCandidate], list[dict[str, Any]]]:
     adaptive_profile = _adaptive_profile_from_state(state)
+    adaptive_thresholds = _adaptive_thresholds_from_state(state)
     base_queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
     sellersprite = _collect_sellersprite_summary(base_queries)
     seed_query_keys = {_query_key(item) for item in (sellersprite.get("seed_queries") or []) if _query_key(item)}
@@ -3886,6 +4011,7 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
             else "seed" if query_key in seed_query_keys
             else "base"
         )
+        hints["adaptive_thresholds"] = adaptive_thresholds
         updated.raw_signals = {**(updated.raw_signals or {}), **hints}
         if hints.get("sellersprite_product_freshest_listing_days") is not None and updated.listing_age_days is None:
             updated.listing_age_days = int(hints["sellersprite_product_freshest_listing_days"])
@@ -3997,6 +4123,8 @@ def _report_cycle(
         "platform_summary": _platform_summary(decisions),
         "adaptive_profile": _adaptive_profile_from_state(state),
         "adaptive_history": _persist_adaptive_history(_adaptive_profile_from_state(state)),
+        "adaptive_thresholds": _adaptive_thresholds_from_state(state),
+        "threshold_history": _persist_threshold_history(_adaptive_thresholds_from_state(state)),
         "query_feedback": _query_feedback_from_state(state),
         "query_history": _persist_query_history(_query_feedback_from_state(state)),
         "market_feedback": _market_feedback_from_state(state),
