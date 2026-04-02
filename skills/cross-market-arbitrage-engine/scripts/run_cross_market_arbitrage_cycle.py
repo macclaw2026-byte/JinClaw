@@ -26,6 +26,7 @@ CONTROL_CENTER_ROOT = ROOT / "tools/openmoss/control_center"
 STATE_DIR = ROOT / ".state"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 STATE_PATH = STATE_DIR / "cross-market-arbitrage-engine.json"
+ADAPTIVE_HISTORY_PATH = STATE_DIR / "cross-market-arbitrage-adaptive-history.json"
 OUT_DIR = ROOT / "output" / "cross-market-arbitrage-engine"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 LATEST_REPORT_PATH = OUT_DIR / "latest-report.json"
@@ -2230,6 +2231,68 @@ def _adaptive_profile_from_state(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _load_adaptive_history() -> dict[str, Any]:
+    default = {"entries": []}
+    return _read_json(ADAPTIVE_HISTORY_PATH, default)
+
+
+def _adaptive_strength_score(profile: dict[str, Any]) -> float:
+    keyword_multiplier = float(profile.get("keyword_signal_multiplier", 1.0) or 1.0)
+    product_multiplier = float(profile.get("product_signal_multiplier", 1.0) or 1.0)
+    decision_samples = float(profile.get("decision_samples", 0) or 0)
+    biases = profile.get("platform_biases") or {}
+    bias_strength = sum(abs(float(value or 0)) for value in biases.values())
+    return round(
+        min(
+            100.0,
+            40.0
+            + decision_samples * 1.5
+            + (keyword_multiplier - 1.0) * 45.0
+            + (product_multiplier - 1.0) * 40.0
+            + min(12.0, bias_strength),
+        ),
+        2,
+    )
+
+
+def _persist_adaptive_history(profile: dict[str, Any]) -> dict[str, Any]:
+    payload = _load_adaptive_history()
+    entries = list(payload.get("entries") or [])
+    entry = {
+        "captured_at": _utc_now_iso(),
+        "primary_blocker": profile.get("primary_blocker", "none"),
+        "decision_samples": int(profile.get("decision_samples", 0) or 0),
+        "keyword_signal_multiplier": float(profile.get("keyword_signal_multiplier", 1.0) or 1.0),
+        "product_signal_multiplier": float(profile.get("product_signal_multiplier", 1.0) or 1.0),
+        "platform_biases": profile.get("platform_biases", {}) or {},
+        "strength_score": _adaptive_strength_score(profile),
+    }
+    entries.append(entry)
+    entries = entries[-40:]
+    payload["entries"] = entries
+    _write_json_file(ADAPTIVE_HISTORY_PATH, payload)
+    latest = entries[-1] if entries else entry
+    prev = entries[-2] if len(entries) >= 2 else None
+    delta = round(float(latest.get("strength_score", 0) or 0) - float((prev or {}).get("strength_score", 0) or 0), 2)
+    if not prev:
+        direction = "new"
+    elif delta > 1.5:
+        direction = "up"
+    elif delta < -1.5:
+        direction = "down"
+    else:
+        direction = "stable"
+    return {
+        "entries_total": len(entries),
+        "latest": latest,
+        "trend": {
+            "direction": direction,
+            "delta": delta,
+        },
+        "path": str(ADAPTIVE_HISTORY_PATH),
+    }
+
+
 def _collect_sellersprite_summary(queries: list[str]) -> dict[str, Any]:
     pages: dict[str, Any] = {}
     for label, url in {
@@ -2575,6 +2638,8 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
     platform_summary = summary.get("platform_summary") or {}
     sellersprite = summary.get("sellersprite") or {}
     adaptive_profile = summary.get("adaptive_profile") or {}
+    adaptive_history = summary.get("adaptive_history") or {}
+    adaptive_history = summary.get("adaptive_history") or {}
     lines = [
         "# Cross-market arbitrage run",
         "",
@@ -2607,6 +2672,7 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         f"- Keyword multiplier: `{adaptive_profile.get('keyword_signal_multiplier', 1.0)}`",
         f"- Product multiplier: `{adaptive_profile.get('product_signal_multiplier', 1.0)}`",
         f"- Platform biases: `{json.dumps(adaptive_profile.get('platform_biases', {}), ensure_ascii=False)}`",
+        f"- History trend: `{((adaptive_history.get('trend') or {}).get('direction', 'stable'))}` delta=`{((adaptive_history.get('trend') or {}).get('delta', 0))}` entries=`{adaptive_history.get('entries_total', 0)}`",
         "",
         "## SellerSprite",
         "",
@@ -2783,6 +2849,10 @@ def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -
         lines.append(
             f"Adaptive: blocker={adaptive_profile.get('primary_blocker', 'none')} / keyword_x={adaptive_profile.get('keyword_signal_multiplier', 1.0)} / product_x={adaptive_profile.get('product_signal_multiplier', 1.0)}"
         )
+    if adaptive_history:
+        lines.append(
+            f"Adaptive trend: {((adaptive_history.get('trend') or {}).get('direction', 'stable'))} / delta={((adaptive_history.get('trend') or {}).get('delta', 0))} / entries={adaptive_history.get('entries_total', 0)}"
+        )
     if qualified:
         top = qualified[:3]
         for item in top:
@@ -2853,6 +2923,7 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
     run_id = _utc_now().strftime("%Y%m%dT%H%M%SZ")
     state = _load_state()
     adaptive_profile = _adaptive_profile_from_state(state)
+    adaptive_history = _persist_adaptive_history(adaptive_profile)
     base_queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
     sellersprite = _collect_sellersprite_summary(base_queries)
     queries = _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=3 if test else 10)
@@ -2897,6 +2968,7 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
         "qualified_count": sum(1 for item in decisions if item.qualified),
         "platform_summary": _platform_summary(decisions),
         "adaptive_profile": adaptive_profile,
+        "adaptive_history": adaptive_history,
         "sellersprite": sellersprite,
         "base_queries": base_queries,
         "queries": queries,
@@ -3081,6 +3153,7 @@ def _report_cycle(
         "qualified_count": sum(1 for item in decisions if item.qualified),
         "platform_summary": _platform_summary(decisions),
         "adaptive_profile": _adaptive_profile_from_state(state),
+        "adaptive_history": _persist_adaptive_history(_adaptive_profile_from_state(state)),
         "sellersprite": _collect_sellersprite_summary(DEFAULT_DISCOVERY_QUERIES),
         "base_queries": DEFAULT_DISCOVERY_QUERIES,
         "queries": state.get("last_effective_queries") or DEFAULT_DISCOVERY_QUERIES,
