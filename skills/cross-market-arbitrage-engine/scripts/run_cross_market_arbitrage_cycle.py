@@ -1389,16 +1389,31 @@ def _enrich_source_candidate(platform: str, candidate: SourceCandidate) -> Sourc
     )
 
 
-def _best_source_for_platform(platform: str, candidate: DemandCandidate, *, max_tools: int | None = None) -> tuple[SourceCandidate, list[dict[str, Any]]]:
+def _best_source_for_platform(
+    platform: str,
+    candidate: DemandCandidate,
+    *,
+    max_tools: int | None = None,
+    platform_bias: float = 0.0,
+) -> tuple[SourceCandidate, list[dict[str, Any]]]:
     fetch_log: list[dict[str, Any]] = []
     best: SourceCandidate | None = None
     for query_variant in _source_query_variants(candidate):
         url = SOURCE_PLATFORM_SEARCH[platform](query_variant)
         result = fetch_best(platform, url, max_tools=max_tools)
         fetch_log.append(
-            {"stage": "match", "platform": platform, "query": query_variant, "tool": result.tool, "status": result.status, "score": result.score}
+            {
+                "stage": "match",
+                "platform": platform,
+                "query": query_variant,
+                "tool": result.tool,
+                "status": result.status,
+                "score": result.score,
+                "platform_bias": platform_bias,
+            }
         )
         row = _extract_source_candidate(platform, result.text, query_variant, result.tool)
+        row.match_score = min(100.0, row.match_score + platform_bias)
         row = _enrich_source_candidate(platform, row)
         if best is None or row.match_score > best.match_score:
             best = row
@@ -1414,6 +1429,7 @@ def _best_source_for_platform(platform: str, candidate: DemandCandidate, *, max_
                     "tool": detail_result.tool,
                     "status": detail_result.status,
                     "score": detail_result.score,
+                    "platform_bias": platform_bias,
                 }
             )
             detail_row = SourceCandidate(
@@ -1430,6 +1446,7 @@ def _best_source_for_platform(platform: str, candidate: DemandCandidate, *, max_
                     + (20.0 if _extract_platform_price_cny(detail_result.text, platform) is not None else 0.0)
                     + (25.0 if _extract_weight(detail_result.text[:120000], platform)[0] is not None else 0.0)
                     + _candidate_overlap_score(query_variant, _source_title_from_link(detail_link) + " " + detail_result.text[:4000]),
+                    + platform_bias,
                 ),
                 blocked=detail_result.status == "blocked",
                 notes="detail_probe",
@@ -2220,6 +2237,21 @@ def _adaptive_profile_from_state(state: dict[str, Any]) -> dict[str, Any]:
         qualified = sum(1 for item in rows if item.decision_bucket == "qualified")
         bias = min(8.0, near_miss * 1.5 + qualified * 0.8)
         platform_biases[platform] = round(bias, 2)
+    source_biases: dict[str, float] = {}
+    source_scores: dict[str, float] = {}
+    for source in ["made_in_china", "1688", "yiwugo"]:
+        rows = [item for item in decisions if str(item.buy_platform or "").lower() == source]
+        qualified = sum(1 for item in rows if item.decision_bucket == "qualified")
+        near_miss = sum(1 for item in rows if item.decision_bucket == "near_miss")
+        watchlist = sum(1 for item in rows if item.decision_bucket == "watchlist")
+        bias = min(10.0, qualified * 2.0 + near_miss * 1.0 - watchlist * 0.3)
+        if primary_blocker == "missing_trusted_weight" and source == "made_in_china":
+            bias += 1.5
+        if primary_blocker == "no_usable_source_match" and source in {"made_in_china", "1688"}:
+            bias += 1.0
+        source_biases[source] = round(max(-4.0, bias), 2)
+        source_scores[source] = qualified * 3.0 + near_miss * 1.5 - watchlist * 0.2
+    source_order = sorted(source_scores.keys(), key=lambda key: (-source_scores[key], -source_biases[key], key))
     return {
         "status": "adaptive" if decisions else "cold_start",
         "decision_samples": len(decisions),
@@ -2228,6 +2260,8 @@ def _adaptive_profile_from_state(state: dict[str, Any]) -> dict[str, Any]:
         "keyword_signal_multiplier": round(keyword_multiplier, 2),
         "product_signal_multiplier": round(product_multiplier, 2),
         "platform_biases": platform_biases,
+        "source_biases": source_biases,
+        "source_order": source_order,
     }
 
 
@@ -2242,6 +2276,8 @@ def _adaptive_strength_score(profile: dict[str, Any]) -> float:
     decision_samples = float(profile.get("decision_samples", 0) or 0)
     biases = profile.get("platform_biases") or {}
     bias_strength = sum(abs(float(value or 0)) for value in biases.values())
+    source_biases = profile.get("source_biases") or {}
+    source_bias_strength = sum(abs(float(value or 0)) for value in source_biases.values())
     return round(
         min(
             100.0,
@@ -2249,7 +2285,8 @@ def _adaptive_strength_score(profile: dict[str, Any]) -> float:
             + decision_samples * 1.5
             + (keyword_multiplier - 1.0) * 45.0
             + (product_multiplier - 1.0) * 40.0
-            + min(12.0, bias_strength),
+            + min(12.0, bias_strength)
+            + min(10.0, source_bias_strength),
         ),
         2,
     )
@@ -2265,6 +2302,8 @@ def _persist_adaptive_history(profile: dict[str, Any]) -> dict[str, Any]:
         "keyword_signal_multiplier": float(profile.get("keyword_signal_multiplier", 1.0) or 1.0),
         "product_signal_multiplier": float(profile.get("product_signal_multiplier", 1.0) or 1.0),
         "platform_biases": profile.get("platform_biases", {}) or {},
+        "source_biases": profile.get("source_biases", {}) or {},
+        "source_order": profile.get("source_order", []) or [],
         "strength_score": _adaptive_strength_score(profile),
     }
     entries.append(entry)
@@ -2639,7 +2678,6 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
     sellersprite = summary.get("sellersprite") or {}
     adaptive_profile = summary.get("adaptive_profile") or {}
     adaptive_history = summary.get("adaptive_history") or {}
-    adaptive_history = summary.get("adaptive_history") or {}
     lines = [
         "# Cross-market arbitrage run",
         "",
@@ -2672,6 +2710,8 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         f"- Keyword multiplier: `{adaptive_profile.get('keyword_signal_multiplier', 1.0)}`",
         f"- Product multiplier: `{adaptive_profile.get('product_signal_multiplier', 1.0)}`",
         f"- Platform biases: `{json.dumps(adaptive_profile.get('platform_biases', {}), ensure_ascii=False)}`",
+        f"- Source biases: `{json.dumps(adaptive_profile.get('source_biases', {}), ensure_ascii=False)}`",
+        f"- Source order: `{', '.join(adaptive_profile.get('source_order', []) or ['none'])}`",
         f"- History trend: `{((adaptive_history.get('trend') or {}).get('direction', 'stable'))}` delta=`{((adaptive_history.get('trend') or {}).get('delta', 0))}` entries=`{adaptive_history.get('entries_total', 0)}`",
         "",
         "## SellerSprite",
@@ -2849,6 +2889,9 @@ def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -
         lines.append(
             f"Adaptive: blocker={adaptive_profile.get('primary_blocker', 'none')} / keyword_x={adaptive_profile.get('keyword_signal_multiplier', 1.0)} / product_x={adaptive_profile.get('product_signal_multiplier', 1.0)}"
         )
+        lines.append(
+            f"Source adaptive: order={','.join(adaptive_profile.get('source_order', []) or ['none'])} / biases={json.dumps(adaptive_profile.get('source_biases', {}), ensure_ascii=False)}"
+        )
     if adaptive_history:
         lines.append(
             f"Adaptive trend: {((adaptive_history.get('trend') or {}).get('direction', 'stable'))} / delta={((adaptive_history.get('trend') or {}).get('delta', 0))} / entries={adaptive_history.get('entries_total', 0)}"
@@ -2928,7 +2971,7 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
     sellersprite = _collect_sellersprite_summary(base_queries)
     queries = _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=3 if test else 10)
     sell_platforms = ["temu", "amazon"] if test else ["temu", "amazon", "walmart"]
-    source_platforms = ["1688", "yiwugo", "made_in_china"] if test else ["1688", "yiwugo", "made_in_china"]
+    source_platforms = list((adaptive_profile.get("source_order") or []) or ["made_in_china", "1688", "yiwugo"])
     max_tools = 2 if test else None
 
     fetch_log: list[dict[str, Any]] = []
@@ -2956,8 +2999,11 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
         for platform in source_platforms:
             url = SOURCE_PLATFORM_SEARCH[platform](normalized_query)
             result = fetch_best(platform, url, max_tools=max_tools)
-            fetch_log.append({"platform": platform, "query": normalized_query, "tool": result.tool, "status": result.status, "score": result.score})
-            source_rows.append(_extract_source_candidate(platform, result.text, normalized_query, result.tool))
+            source_bias = float(((adaptive_profile.get("source_biases") or {}).get(platform, 0) or 0))
+            fetch_log.append({"platform": platform, "query": normalized_query, "tool": result.tool, "status": result.status, "score": result.score, "source_bias": source_bias})
+            row = _extract_source_candidate(platform, result.text, normalized_query, result.tool)
+            row.match_score = min(100.0, row.match_score + source_bias)
+            source_rows.append(row)
         source_matches[candidate.candidate_id] = source_rows
 
     decisions = [_compute_decision(item, source_matches.get(item.candidate_id, [])) for item in demand_candidates]
@@ -3103,7 +3149,8 @@ def _discover_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[
 
 
 def _match_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[str, Any], list[ArbitrageDecision], list[dict[str, Any]]]:
-    source_platforms = ["1688", "yiwugo", "made_in_china"] if test else ["1688", "yiwugo", "made_in_china"]
+    adaptive_profile = _adaptive_profile_from_state(state)
+    source_platforms = list((adaptive_profile.get("source_order") or []) or ["made_in_china", "1688", "yiwugo"])
     max_tools = 2 if test else None
     fetch_log: list[dict[str, Any]] = []
     decisions: list[ArbitrageDecision] = []
@@ -3117,7 +3164,8 @@ def _match_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[str
         candidate = DemandCandidate(**{k: payload[k] for k in DemandCandidate.__dataclass_fields__.keys() if k in payload})
         rows: list[SourceCandidate] = []
         for platform in source_platforms:
-            best_row, best_log = _best_source_for_platform(platform, candidate, max_tools=max_tools)
+            source_bias = float(((adaptive_profile.get("source_biases") or {}).get(platform, 0) or 0))
+            best_row, best_log = _best_source_for_platform(platform, candidate, max_tools=max_tools, platform_bias=source_bias)
             fetch_log.extend(best_log)
             rows.append(best_row)
         payload["source_matches"] = [asdict(row) for row in rows]
