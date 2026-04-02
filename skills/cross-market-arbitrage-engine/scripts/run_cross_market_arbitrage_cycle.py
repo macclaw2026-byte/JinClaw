@@ -56,6 +56,9 @@ DEFAULT_TELEGRAM_TARGET = "8528973600"
 USD_TO_CNY_FALLBACK = 7.2
 _USD_TO_CNY_CACHE: dict[str, Any] | None = None
 DEFAULT_PLATFORM_FEE = 0.15
+SELLERSPRITE_FETCHER = ROOT / "skills/cross-market-arbitrage-engine/scripts/sellersprite_session_fetch.py"
+SELLERSPRITE_PRODUCT_RESEARCH_URL = "https://www.sellersprite.com/v3/product-research"
+SELLERSPRITE_KEYWORD_RESEARCH_URL = "https://www.sellersprite.com/v2/keyword-research"
 
 PLATFORM_FEE_TABLE = {
     "amazon": 0.15,
@@ -1827,6 +1830,140 @@ def _platform_sheet_rows(decisions: list[ArbitrageDecision], platform: str) -> l
     return [item for item in decisions if item.sell_platform.lower() == platform.lower()]
 
 
+def _parse_json_stdout(raw: str) -> dict[str, Any]:
+    text = str(raw or "").strip()
+    if not text:
+        return {}
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _sellersprite_fetch(
+    *,
+    save_prefix: str,
+    url: str | None = None,
+    api_path: str | None = None,
+    base_url: str | None = None,
+    wait_seconds: float = 6.0,
+) -> dict[str, Any]:
+    cmd = [str(VENV_PY), str(SELLERSPRITE_FETCHER), "--save-prefix", save_prefix, "--wait-seconds", str(wait_seconds)]
+    if api_path:
+        cmd.extend(["--api-path", api_path])
+        if base_url:
+            cmd.extend(["--base-url", base_url])
+        elif url:
+            cmd.extend(["--base-url", url])
+    elif url:
+        cmd.extend(["--url", url])
+    else:
+        return {"ok": False, "error": "missing_url_or_api_path"}
+    proc = _run(cmd, timeout=120)
+    payload = _parse_json_stdout(proc.stdout)
+    if not payload:
+        return {
+            "ok": False,
+            "returncode": proc.returncode,
+            "stdout": proc.stdout.strip(),
+            "stderr": proc.stderr.strip(),
+        }
+    payload["ok"] = proc.returncode == 0
+    payload["returncode"] = proc.returncode
+    payload["stderr"] = proc.stderr.strip()
+    return payload
+
+
+def _sellersprite_probe_status(parsed: dict[str, Any]) -> tuple[str, str]:
+    body = parsed.get("body")
+    if isinstance(body, dict):
+        code = str(body.get("code", "")).strip()
+        if code and code != "0":
+            return "error", code
+        return "ok", code or "ok"
+    if isinstance(body, list):
+        return "ok", f"rows:{len(body)}"
+    return "unknown", ""
+
+
+def _collect_sellersprite_summary(queries: list[str]) -> dict[str, Any]:
+    pages: dict[str, Any] = {}
+    for label, url in {
+        "product_research": SELLERSPRITE_PRODUCT_RESEARCH_URL,
+        "keyword_research": SELLERSPRITE_KEYWORD_RESEARCH_URL,
+    }.items():
+        pages[label] = _sellersprite_fetch(save_prefix=f"sellersprite-{label}", url=url)
+    available_platforms = sorted(
+        {
+            str(platform).strip().lower()
+            for payload in pages.values()
+            for platform in (((payload.get("parsed") or {}).get("platforms") or []))
+            if str(platform).strip()
+        }
+    )
+    latest_month = ""
+    for payload in pages.values():
+        months = ((payload.get("parsed") or {}).get("months") or [])
+        if months:
+            latest_month = str(months[0]).strip()
+            break
+    api_probes: list[dict[str, Any]] = []
+    probe_month = latest_month or (_ny_now().strftime("%Y-%m"))
+    for query in queries[:2]:
+        api_path = f"/v2/keyword-stat/gkdata?station=US&keyword={quote_plus(query)}&month={probe_month}"
+        probe = _sellersprite_fetch(
+            save_prefix=f"sellersprite-keyword-probe-{_slug(query)}",
+            api_path=api_path,
+            base_url=SELLERSPRITE_KEYWORD_RESEARCH_URL,
+            wait_seconds=3.0,
+        )
+        parsed = probe.get("parsed") or {}
+        state, detail = _sellersprite_probe_status(parsed if isinstance(parsed, dict) else {})
+        body = parsed.get("body") if isinstance(parsed, dict) else {}
+        api_probes.append(
+            {
+                "keyword": query,
+                "month": probe_month,
+                "status": state,
+                "detail": detail,
+                "api_status": parsed.get("api_status"),
+                "api_ok": parsed.get("api_ok"),
+                "api_path": api_path,
+                "message": body.get("message") if isinstance(body, dict) else "",
+                "code": body.get("code") if isinstance(body, dict) else "",
+                "json_path": probe.get("json_path", ""),
+            }
+        )
+    page_ok_total = sum(1 for payload in pages.values() if payload.get("ok"))
+    api_ok_total = sum(1 for row in api_probes if row.get("status") == "ok")
+    status = "unavailable"
+    if page_ok_total and api_ok_total:
+        status = "connected"
+    elif page_ok_total:
+        status = "partial"
+    keyword_metrics = (((pages.get("keyword_research") or {}).get("parsed") or {}).get("filter_metrics") or [])
+    product_metrics = (((pages.get("product_research") or {}).get("parsed") or {}).get("filter_metrics") or [])
+    return {
+        "status": status,
+        "latest_month": probe_month,
+        "available_platforms": available_platforms,
+        "page_ok_total": page_ok_total,
+        "api_ok_total": api_ok_total,
+        "pages": pages,
+        "api_probes": api_probes,
+        "keyword_metrics_available": keyword_metrics,
+        "product_metrics_available": product_metrics,
+    }
+
+
 def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[str, Any]) -> Path:
     wb = Workbook()
     ws = wb.active
@@ -1917,6 +2054,36 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
         summary_ws.append([key, json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else value])
     autosize(summary_ws)
 
+    sellersprite = summary.get("sellersprite") or {}
+    if sellersprite:
+        ss_ws = wb.create_sheet("SellerSprite")
+        ss_ws.append(["类型", "名称", "状态", "细节", "附加信息"])
+        style_header(ss_ws)
+        for page_name, payload in (sellersprite.get("pages") or {}).items():
+            parsed = payload.get("parsed") or {}
+            detail = json.dumps(
+                {
+                    "page_kind": parsed.get("page_kind", ""),
+                    "months": parsed.get("months", []),
+                    "platforms": parsed.get("platforms", []),
+                    "metrics": parsed.get("filter_metrics", []),
+                },
+                ensure_ascii=False,
+            )
+            ss_ws.append(["page", page_name, "ok" if payload.get("ok") else "error", detail, payload.get("url", "")])
+        for probe in (sellersprite.get("api_probes") or []):
+            detail = json.dumps(
+                {
+                    "month": probe.get("month", ""),
+                    "api_status": probe.get("api_status", ""),
+                    "message": probe.get("message", ""),
+                    "code": probe.get("code", ""),
+                },
+                ensure_ascii=False,
+            )
+            ss_ws.append(["api_probe", probe.get("keyword", ""), probe.get("status", ""), detail, probe.get("api_path", "")])
+        autosize(ss_ws)
+
     path = OUT_DIR / f"cross-market-arbitrage-{run_id}.xlsx"
     wb.save(path)
     return path
@@ -1925,6 +2092,7 @@ def _write_excel(run_id: str, decisions: list[ArbitrageDecision], summary: dict[
 def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: dict[str, Any]) -> Path:
     governance = summary.get("governance") or {}
     platform_summary = summary.get("platform_summary") or {}
+    sellersprite = summary.get("sellersprite") or {}
     lines = [
         "# Cross-market arbitrage run",
         "",
@@ -1948,6 +2116,23 @@ def _write_markdown(run_id: str, decisions: list[ArbitrageDecision], summary: di
         f"- Primary blocker: `{governance.get('primary_blocker', 'none')}`",
         f"- Next actions: `{', '.join(governance.get('next_actions', []) or ['none'])}`",
         f"- Failure categories: `{json.dumps(governance.get('failure_categories', {}), ensure_ascii=False)}`",
+        "",
+        "## SellerSprite",
+        "",
+        f"- Status: `{sellersprite.get('status', 'unavailable')}`",
+        f"- Latest month: `{sellersprite.get('latest_month', '')}`",
+        f"- Available platforms: `{', '.join(sellersprite.get('available_platforms', []) or ['none'])}`",
+        f"- Keyword metrics: `{', '.join((sellersprite.get('keyword_metrics_available', []) or [])[:8]) or 'none'}`",
+        f"- Product metrics: `{', '.join((sellersprite.get('product_metrics_available', []) or [])[:8]) or 'none'}`",
+        "",
+        "### API Probes",
+        "",
+    ])
+    for probe in (sellersprite.get("api_probes") or []):
+        lines.append(
+            f"- `{probe.get('keyword', '')}`: status=`{probe.get('status', '')}` detail=`{probe.get('detail', '')}` api_status=`{probe.get('api_status', '')}` code=`{probe.get('code', '')}`"
+        )
+    lines.extend([
         "",
         "## Qualified",
         "",
@@ -2030,6 +2215,7 @@ def _send_to_telegram(*, chat_id: str, text: str, media_paths: list[Path]) -> li
 
 def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -> str:
     governance = summary.get("governance") or {}
+    sellersprite = summary.get("sellersprite") or {}
     qualified = [item for item in decisions if item.qualified]
     lines = [
         f"Cross-market arbitrage run completed.",
@@ -2044,6 +2230,10 @@ def _summary_text(summary: dict[str, Any], decisions: list[ArbitrageDecision]) -
     next_actions = governance.get("next_actions", []) or []
     if next_actions:
         lines.append(f"下一步: {', '.join(next_actions[:3])}")
+    if sellersprite:
+        lines.append(
+            f"SellerSprite: {sellersprite.get('status', 'unavailable')} / month={sellersprite.get('latest_month', '')} / api_ok={sellersprite.get('api_ok_total', 0)}"
+        )
     if qualified:
         top = qualified[:3]
         for item in top:
@@ -2149,6 +2339,7 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
         "discovery_candidate_count": len(demand_candidates),
         "qualified_count": sum(1 for item in decisions if item.qualified),
         "platform_summary": _platform_summary(decisions),
+        "sellersprite": _collect_sellersprite_summary(queries),
         "queries": queries,
         "timing": {
             "discovery_interval_seconds": DISCOVERY_INTERVAL_SECONDS,
@@ -2296,6 +2487,7 @@ def _report_cycle(
         "discovery_candidate_count": len(rows),
         "qualified_count": sum(1 for item in decisions if item.qualified),
         "platform_summary": _platform_summary(decisions),
+        "sellersprite": _collect_sellersprite_summary(DEFAULT_DISCOVERY_QUERIES),
         "timing": {
             "discovery_interval_seconds": int(scheduler_policy.get("discovery_interval_seconds", DISCOVERY_INTERVAL_SECONDS) or DISCOVERY_INTERVAL_SECONDS),
             "matching_interval_seconds": int(scheduler_policy.get("matching_interval_seconds", MATCH_INTERVAL_SECONDS) or MATCH_INTERVAL_SECONDS),
@@ -2357,6 +2549,7 @@ def _report_cycle(
             "generated_at": summary["generated_at"],
             "qualified_count": summary["qualified_count"],
             "governance": summary.get("governance", {}) or {},
+            "sellersprite": summary.get("sellersprite", {}) or {},
             "deliveries": deliveries,
             "excel_path": str(excel_path),
             "markdown_path": str(md_path),
