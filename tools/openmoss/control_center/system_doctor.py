@@ -97,6 +97,7 @@ def _doctor_cycle_strategy(control_plane: Dict[str, object]) -> Dict[str, object
     top_blocked_category = str(summary.get("top_blocked_category", "")).strip()
     project_result_feedback_status = str(summary.get("project_result_feedback_status", "")).strip().lower()
     project_result_feedback_attention_total = int(summary.get("project_result_feedback_attention_total", 0) or 0)
+    project_result_feedback_trend = str(summary.get("project_result_feedback_trend", "")).strip().lower()
     strategy = {
         "top_blocked_category": top_blocked_category,
         "blocked_categories": blocked_categories,
@@ -144,6 +145,15 @@ def _doctor_cycle_strategy(control_plane: Dict[str, object]) -> Dict[str, object
     if project_result_feedback_attention_total > 0:
         strategy["repair_mode"] = "feedback_attention_first"
         strategy["max_repairs_per_cycle"] = min(int(strategy.get("max_repairs_per_cycle", 12) or 12), 10)
+    elif project_result_feedback_trend == "degrading" and strategy["priority_focus"] == "general":
+        strategy.update(
+            {
+                "priority_focus": "feedback_watch",
+                "repair_mode": "feedback_trend_watch",
+                "max_repairs_per_cycle": 12,
+                "allowed_buckets": ["critical", "high", "medium"],
+            }
+        )
     return strategy
 
 

@@ -35,6 +35,7 @@ from paths import (
     CRAWLER_REMEDIATION_SCHEDULER_STATE_PATH,
     DOCTOR_QUEUE_PATH,
     PROCESS_REGISTRY_PATH,
+    PROJECT_RESULT_FEEDBACK_HISTORY_PATH,
     SELLER_BULK_SCHEDULER_STATE_PATH,
     SYSTEM_SNAPSHOT_PATH,
     TASK_REGISTRY_PATH,
@@ -521,6 +522,52 @@ def _project_result_feedback_summary(
     }
 
 
+def _score_project_result_feedback(feedback: Dict[str, Any]) -> int:
+    status = str(feedback.get("status", "")).strip().lower()
+    base = {
+        "strong": 100,
+        "watch": 75,
+        "partial": 55,
+        "thin": 30,
+    }.get(status, 40)
+    recent_total = int(feedback.get("recent_total", 0) or 0)
+    attention_total = int(feedback.get("attention_total", 0) or 0)
+    score = base + min(10, recent_total * 3) - min(20, attention_total * 10)
+    return max(0, min(100, score))
+
+
+def _update_project_result_feedback_history(feedback: Dict[str, Any]) -> Dict[str, Any]:
+    history = _read_json(PROJECT_RESULT_FEEDBACK_HISTORY_PATH, {"items": []}) or {"items": []}
+    items = list(history.get("items", []) or [])
+    current = {
+        "at": _utc_now_iso(),
+        "status": str(feedback.get("status", "")).strip() or "unknown",
+        "score": _score_project_result_feedback(feedback),
+        "recent_total": int(feedback.get("recent_total", 0) or 0),
+        "attention_total": int(feedback.get("attention_total", 0) or 0),
+    }
+    items.append(current)
+    items = items[-24:]
+    history["items"] = items
+    history["updated_at"] = current["at"]
+    trend = "stable"
+    delta = 0
+    if len(items) >= 2:
+        delta = int(items[-1].get("score", 0) or 0) - int(items[-2].get("score", 0) or 0)
+        if delta >= 8:
+            trend = "improving"
+        elif delta <= -8:
+            trend = "degrading"
+    history["trend"] = {
+        "direction": trend,
+        "delta": delta,
+        "latest_score": current["score"],
+        "previous_score": int(items[-2].get("score", 0) or 0) if len(items) >= 2 else current["score"],
+    }
+    _write_json(PROJECT_RESULT_FEEDBACK_HISTORY_PATH, history)
+    return history
+
+
 def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seconds: int = 900) -> Dict[str, Any]:
     """
     中文注解：
@@ -543,6 +590,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
         crawler_remediation_execution,
         seller_bulk_scheduler_state,
     )
+    project_result_feedback_history = _update_project_result_feedback_history(project_result_feedback)
     task_views = build_task_registry(
         stale_after_seconds=stale_after_seconds,
         escalation_after_seconds=escalation_after_seconds,
@@ -588,6 +636,8 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
             "project_result_feedback_status": project_result_feedback.get("status", "unknown"),
             "project_result_feedback_recent_total": project_result_feedback.get("recent_total", 0),
             "project_result_feedback_attention_total": project_result_feedback.get("attention_total", 0),
+            "project_result_feedback_trend": ((project_result_feedback_history.get("trend", {}) or {}).get("direction", "unknown")),
+            "project_result_feedback_score": ((project_result_feedback_history.get("trend", {}) or {}).get("latest_score", 0)),
             "doctor_priority_focus": str(doctor_strategy.get("priority_focus", "")).strip() or "unknown",
             "doctor_repair_mode": str(doctor_strategy.get("repair_mode", "")).strip() or "unknown",
             "doctor_processed_total": processed_total,
@@ -625,6 +675,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
         "crawler_capability_profile": crawler_capability_profile,
         "memory_writeback_overview": memory_writeback_overview,
         "project_result_feedback": project_result_feedback,
+        "project_result_feedback_history": project_result_feedback_history,
         "crawler_remediation_queue": crawler_remediation_queue,
         "crawler_remediation_plan": crawler_remediation_plan,
         "crawler_remediation_execution": crawler_remediation_execution,

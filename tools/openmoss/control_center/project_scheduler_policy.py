@@ -29,6 +29,10 @@ def _project_result_feedback_attention_total(system_summary: Dict[str, Any]) -> 
     return int(system_summary.get("project_result_feedback_attention_total", 0) or 0)
 
 
+def _project_result_feedback_trend(system_summary: Dict[str, Any]) -> str:
+    return str(system_summary.get("project_result_feedback_trend", "")).strip().lower() or "unknown"
+
+
 def _derive_repair_focus(system_summary: Dict[str, Any]) -> str:
     top_blocked_category = str(system_summary.get("top_blocked_category", "")).strip()
     if top_blocked_category in {"project_crawler_remediation", "approval_or_contract", "authorized_session", "human_checkpoint"}:
@@ -68,6 +72,7 @@ def _crawler_remediation_policy(
     blocked_human_checkpoint = _blocked_count(system_summary, "human_checkpoint")
     project_result_feedback_status = _project_result_feedback_status(system_summary)
     project_result_feedback_attention = _project_result_feedback_attention_total(system_summary)
+    project_result_feedback_trend = _project_result_feedback_trend(system_summary)
     if str(feedback.get("coverage_status", "")).strip().lower() == "thin":
         recommended_mode = "aggressive"
         suggested_interval_seconds = 1800
@@ -130,6 +135,12 @@ def _crawler_remediation_policy(
         suggested_interval_seconds = min(suggested_interval_seconds, 1200)
         start_bias = "repair_hotspot_first"
         reasons.append("project_result_feedback_attention_present")
+    if project_result_feedback_trend == "degrading":
+        suggested_interval_seconds = min(suggested_interval_seconds, 1200)
+        max_start_tasks = min(max_start_tasks or 2, 2)
+        if repair_mode == "steady_balance":
+            repair_mode = "feedback_trend_watch"
+        reasons.append("project_result_feedback_trend_degrading")
     if active_items and str(feedback.get("coverage_status", "")).strip().lower() == "strong":
         start_tasks = False
         suggested_interval_seconds = max(suggested_interval_seconds, 7200)
@@ -158,6 +169,7 @@ def _crawler_remediation_policy(
             "blocked_human_checkpoint_total": blocked_human_checkpoint,
             "project_result_feedback_status": project_result_feedback_status,
             "project_result_feedback_attention_total": project_result_feedback_attention,
+            "project_result_feedback_trend": project_result_feedback_trend,
         },
     }
 
@@ -169,6 +181,7 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
     recovery_efficiency = _recovery_efficiency(system_summary)
     project_result_feedback_status = _project_result_feedback_status(system_summary)
     project_result_feedback_attention = _project_result_feedback_attention_total(system_summary)
+    project_result_feedback_trend = _project_result_feedback_trend(system_summary)
     reasons = ["seller_bulk_is_time_window_gated_in_script"]
     recommended_mode = "nightly_window"
     suggested_interval_seconds = 900
@@ -219,6 +232,12 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
         effective_max_pages = min(effective_max_pages or 2, 1)
         batch_bias = "feedback_attention_batch"
         reasons.append("project_result_feedback_attention_present")
+    if project_result_feedback_trend == "degrading" and batch_bias == "balanced":
+        batch_bias = "feedback_rebuild_batch"
+        effective_limit = min(effective_limit or 12, 10)
+        effective_page_size = min(effective_page_size or 20, 15)
+        effective_max_pages = min(effective_max_pages or 2, 2)
+        reasons.append("project_result_feedback_trend_degrading")
     return {
         "recommended_mode": recommended_mode,
         "repair_focus": repair_focus,
@@ -239,6 +258,7 @@ def _seller_bulk_policy(system_summary: Dict[str, Any]) -> Dict[str, Any]:
             "blocked_targeted_fix_total": blocked_targeted_fix,
             "project_result_feedback_status": project_result_feedback_status,
             "project_result_feedback_attention_total": project_result_feedback_attention,
+            "project_result_feedback_trend": project_result_feedback_trend,
         },
     }
 
@@ -265,6 +285,7 @@ def _cross_market_arbitrage_policy(
     blocked_human_checkpoint = _blocked_count(system_summary, "human_checkpoint")
     project_result_feedback_status = _project_result_feedback_status(system_summary)
     project_result_feedback_attention = _project_result_feedback_attention_total(system_summary)
+    project_result_feedback_trend = _project_result_feedback_trend(system_summary)
     if coverage_status == "thin":
         recommended_mode = "aggressive"
         loop_sleep_seconds = 180
@@ -330,6 +351,11 @@ def _cross_market_arbitrage_policy(
         matching_interval_seconds = max(matching_interval_seconds, 2 * 60 * 60)
         repair_mode = "feedback_attention"
         reasons.append("project_result_feedback_attention_present")
+    if project_result_feedback_trend == "degrading" and repair_mode == "steady_balance":
+        recommended_mode = "guarded"
+        loop_sleep_seconds = max(loop_sleep_seconds, 900)
+        repair_mode = "feedback_trend_watch"
+        reasons.append("project_result_feedback_trend_degrading")
     return {
         "recommended_mode": recommended_mode,
         "repair_focus": repair_focus,
@@ -351,6 +377,7 @@ def _cross_market_arbitrage_policy(
             "blocked_human_checkpoint_total": blocked_human_checkpoint,
             "project_result_feedback_status": project_result_feedback_status,
             "project_result_feedback_attention_total": project_result_feedback_attention,
+            "project_result_feedback_trend": project_result_feedback_trend,
         },
     }
 
@@ -366,6 +393,7 @@ def build_project_scheduler_policy(
         **(system_summary or {}),
         "project_result_feedback_status": str((project_result_feedback or {}).get("status", system_summary.get("project_result_feedback_status", "unknown"))).strip(),
         "project_result_feedback_attention_total": int((project_result_feedback or {}).get("attention_total", system_summary.get("project_result_feedback_attention_total", 0)) or 0),
+        "project_result_feedback_trend": str((((project_result_feedback or {}).get("trend", {}) or {}).get("direction", system_summary.get("project_result_feedback_trend", "unknown")))).strip(),
     }
     return {
         "generated_at": _utc_now_iso(),
