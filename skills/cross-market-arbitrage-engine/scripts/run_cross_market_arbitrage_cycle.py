@@ -265,6 +265,7 @@ FEATURE_TOKENS = {
     "wall", "mounted", "hanging", "drawer", "stackable", "foldable", "portable", "magnetic", "adhesive",
     "waterproof", "desktop", "desk", "under", "sink", "closet", "shelf", "tier", "tray", "basket", "box",
     "hook", "rack", "holder", "container", "dispenser", "pill", "cable", "bag", "tote", "insert", "bin",
+    "divider", "dividers", "separator", "separators",
 }
 
 CHINESE_TOKEN_NORMALIZERS: dict[str, tuple[str, ...]] = {
@@ -316,9 +317,23 @@ CHINESE_TOKEN_NORMALIZERS: dict[str, tuple[str, ...]] = {
     "衣柜": ("closet",),
     "置物架": ("shelf", "rack"),
     "分层": ("tier",),
+    "分隔板": ("divider", "separator"),
+    "隔板": ("divider", "separator"),
+    "分隔": ("divider",),
     "托盘": ("tray",),
     "收纳篮": ("basket",),
     "收纳盒": ("box", "bin", "container"),
+    "整理": ("organizer",),
+    "套装": ("set",),
+    "件套": ("set",),
+    "四件套": ("set", "4"),
+    "三件套": ("set", "3"),
+    "五件套": ("set", "5"),
+    "六件套": ("set", "6"),
+    "四格": ("4",),
+    "三格": ("3",),
+    "五格": ("5",),
+    "六格": ("6",),
     "挂钩": ("hook",),
     "支架": ("holder", "rack"),
     "容器": ("container",),
@@ -1676,6 +1691,35 @@ def _extract_weight(text: str, platform: str = "") -> tuple[float | None, str]:
     return None, "D"
 
 
+def _sanitize_sell_title(title: str, query: str) -> str:
+    cleaned = _clean_text(title)
+    lowered = cleaned.lower()
+    noisy_patterns = (
+        "amazon's choice",
+        "overall pick",
+        "other buying options",
+        "check each product page",
+        "buying options",
+        "results for",
+        "sponsored",
+        "limited time deal",
+        "shop with points",
+        "you’re seeing this ad",
+        "you're seeing this ad",
+        "based on the product’s relevance",
+        "based on the product's relevance",
+        "in flatware organizers",
+    )
+    if (
+        len(cleaned) < 12
+        or any(pattern in lowered for pattern in noisy_patterns)
+        or re.fullmatch(r"in [a-z &-]{4,60}", lowered)
+        or lowered in {"amazon", "prime", "limited time deal"}
+    ):
+        return query.title()
+    return cleaned
+
+
 def _extract_sell_candidates(platform: str, text: str, query: str) -> list[DemandCandidate]:
     rows: list[DemandCandidate] = []
     seen: set[str] = set()
@@ -1691,9 +1735,7 @@ def _extract_sell_candidates(platform: str, text: str, query: str) -> list[Deman
             end = matches[idx_match + 1].start() if idx_match + 1 < len(matches) else min(len(text), start + 25000)
             snippet = text[start:end]
             title_match = re.search(r'<span[^>]*>([^<]{20,240})</span>', snippet, flags=re.I)
-            title = _clean_text(title_match.group(1)) if title_match else query.title()
-            if title.lower() in {"amazon", "prime", "limited time deal"}:
-                title = query.title()
+            title = _sanitize_sell_title(title_match.group(1), query) if title_match else query.title()
             price = _best_price_cny(snippet, platform)
             monthly_orders = _extract_monthly_orders(snippet)
             amazon_rank, amazon_category = _extract_amazon_best_seller_rank(snippet)
@@ -1746,7 +1788,7 @@ def _extract_sell_candidates(platform: str, text: str, query: str) -> list[Deman
         if link in seen:
             continue
         seen.add(link)
-        title = _title_from_link(link, query.title())
+        title = _sanitize_sell_title(_title_from_link(link, query.title()), query)
         price = _best_price_cny(text, platform)
         monthly_orders = _extract_monthly_orders(text)
         rating_value = _extract_rating_value(text)
@@ -1916,11 +1958,20 @@ def _attribute_signature(text: str) -> dict[str, set[str]]:
     raw_text = str(text or "")
     lowered = raw_text.lower()
     tokens = _match_tokens(lowered)
+    numeric_markers = set(re.findall(r"\b\d+(?:\.\d+)?\b", lowered))
+    numeric_markers.update(
+        _clean_text(match.group(0))
+        for match in re.finditer(r"\d+(?:\.\d+)?\s*(?:pack|pcs?|pieces?|count|ct|set|slot|tier)\b", lowered, flags=re.I)
+    )
+    numeric_markers.update(
+        _clean_text(match.group(0))
+        for match in re.finditer(r"\d+(?:\.\d+)?\s*(?:件|个|只|套|格|层|包|入)", raw_text)
+    )
     return {
         "colors": tokens & COLOR_TOKENS,
         "materials": tokens & MATERIAL_TOKENS,
         "features": tokens & FEATURE_TOKENS,
-        "numbers": set(re.findall(r"\b\d+(?:\.\d+)?\b", lowered)),
+        "numbers": numeric_markers,
         "dimensions": {
             _clean_text(match.group(0))
             for match in re.finditer(
@@ -2190,6 +2241,24 @@ def _enrich_source_candidate(platform: str, candidate: SourceCandidate) -> Sourc
     )
 
 
+def _is_source_access_gate(platform: str, text: str, link: str = "") -> bool:
+    lowered = f"{str(text or '')}\n{str(link or '')}".lower()
+    if platform == "1688":
+        return any(
+            marker in lowered
+            for marker in (
+                "login.taobao.com",
+                "member/login.jhtml",
+                "punish",
+                "close_iframe_page",
+                "x5secdata",
+            )
+        )
+    if platform == "yiwugo":
+        return "captcha" in lowered or "verify" in lowered
+    return False
+
+
 def _best_source_for_platform(
     platform: str,
     candidate: DemandCandidate,
@@ -2203,6 +2272,7 @@ def _best_source_for_platform(
     for query_variant in _source_query_variants_for_platform(candidate, platform):
         url = SOURCE_PLATFORM_SEARCH[platform](query_variant)
         result = fetch_best(platform, url, max_tools=max_tools, fast=fast)
+        gated = _is_source_access_gate(platform, result.text, url)
         fetch_log.append(
             {
                 "stage": "match",
@@ -2212,6 +2282,7 @@ def _best_source_for_platform(
                 "status": result.status,
                 "score": result.score,
                 "platform_bias": platform_bias,
+                "gated": gated,
             }
         )
         row = _extract_source_candidate(platform, result.text, query_variant, result.tool)
@@ -2223,6 +2294,9 @@ def _best_source_for_platform(
         row = _apply_supplier_weight_proxy(candidate, row)
         if best is None or row.match_score > best.match_score:
             best = row
+        if gated:
+            # Search/login gates rarely improve by retrying more variants in the same cycle.
+            break
         extra_links = _extract_source_links(platform, result.text)
         detail_cap = 0 if fast else 2
         for detail_link in extra_links[:detail_cap]:
@@ -4506,8 +4580,8 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
         sell_platforms = ["amazon", "temu"] if test else ["temu", "amazon", "walmart"]
         source_platforms = list((adaptive_profile.get("source_order") or []) or ["made_in_china", "1688", "yiwugo"])
         if test:
-            test_source_platforms = [platform for platform in source_platforms if platform != "yiwugo"]
-            source_platforms = (test_source_platforms or source_platforms)[:2]
+            test_source_platforms = [platform for platform in source_platforms if platform == "1688"]
+            source_platforms = (test_source_platforms or source_platforms[:1])[:1]
         max_tools = 1 if test else None
 
         fetch_log: list[dict[str, Any]] = []
