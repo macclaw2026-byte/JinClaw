@@ -758,6 +758,25 @@ def _extract_page_title(text: str) -> str | None:
 
 
 def _source_query_variants(candidate: DemandCandidate) -> list[str]:
+    query_tokens = set(_normalize_title(candidate.query).split())
+    generic_source_tokens = (
+        COLOR_TOKENS
+        | MATERIAL_TOKENS
+        | FEATURE_TOKENS
+        | SOURCE_QUERY_STOPWORDS
+        | SOURCE_QUERY_BANNED_TOKENS
+        | {"divider", "dividers", "organizer", "organizers", "storage", "holder", "holders"}
+    )
+
+    def _strip_brand_like_prefix(tokens: list[str]) -> list[str]:
+        trimmed = list(tokens)
+        while len(trimmed) >= 3:
+            head = trimmed[0]
+            if head in query_tokens or head in generic_source_tokens:
+                break
+            trimmed = trimmed[1:]
+        return trimmed
+
     def _compact(text: str) -> str:
         text = re.sub(r"https?://\S+", " ", str(text or ""), flags=re.I)
         text = re.sub(r"\b(?:www\.)?(?:amazon|walmart|temu)\.com\b", " ", text, flags=re.I)
@@ -767,6 +786,7 @@ def _source_query_variants(candidate: DemandCandidate) -> list[str]:
         text = re.sub(r"\b(?:set of|pack of|for women|for men|for kids|amazon basics|walmart|temu)\b", " ", text)
         text = re.sub(r"\b\d+\b", " ", text)
         tokens = [token for token in text.split() if token not in SOURCE_QUERY_BANNED_TOKENS]
+        tokens = _strip_brand_like_prefix(tokens)
         text = " ".join(tokens)
         text = re.sub(r"\s+", " ", text).strip()
         return text
@@ -4473,20 +4493,21 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
         market_history = _persist_market_history(market_feedback)
         adaptive_thresholds = _adaptive_thresholds_from_state(state)
         threshold_history = _persist_threshold_history(adaptive_thresholds)
-        base_queries = DEFAULT_DISCOVERY_QUERIES[:1] if test else DEFAULT_DISCOVERY_QUERIES
+        base_queries = DEFAULT_DISCOVERY_QUERIES[:2] if test else DEFAULT_DISCOVERY_QUERIES
         sellersprite = _collect_sellersprite_summary(base_queries, fast=test)
         seed_query_keys = {_query_key(item) for item in (sellersprite.get("seed_queries") or []) if _query_key(item)}
         base_query_keys = {_query_key(item) for item in base_queries if _query_key(item)}
-        query_limit = 1 if test else 10
+        query_limit = 2 if test else 10
         queries = _apply_query_adaptive_order(
             _merge_queries(base_queries, sellersprite.get("seed_queries") or [], limit=query_limit),
             adaptive_profile,
             limit=query_limit,
         )
-        sell_platforms = ["amazon"] if test else ["temu", "amazon", "walmart"]
+        sell_platforms = ["amazon", "temu"] if test else ["temu", "amazon", "walmart"]
         source_platforms = list((adaptive_profile.get("source_order") or []) or ["made_in_china", "1688", "yiwugo"])
         if test:
-            source_platforms = source_platforms[:1]
+            test_source_platforms = [platform for platform in source_platforms if platform != "yiwugo"]
+            source_platforms = (test_source_platforms or source_platforms)[:2]
         max_tools = 1 if test else None
 
         fetch_log: list[dict[str, Any]] = []
@@ -4518,7 +4539,7 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
             if item.candidate_id in competition_hints:
                 item.raw_signals = {**(item.raw_signals or {}), **competition_hints[item.candidate_id]}
         if test:
-            demand_candidates = demand_candidates[:1]
+            demand_candidates = demand_candidates[:3]
 
         source_matches: dict[str, list[SourceCandidate]] = {}
         for candidate in demand_candidates:
