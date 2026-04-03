@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -756,7 +757,11 @@ def _execution_flags_from_scheduler_policy(scheduler_policy: dict[str, Any] | No
 
 
 def _slug(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "item"
+    slug = re.sub(r"[^a-z0-9]+", "-", str(text or "").lower()).strip("-")
+    if slug:
+        return slug
+    digest = hashlib.sha1(str(text or "").encode("utf-8", "ignore")).hexdigest()[:12]
+    return f"item-{digest}"
 
 
 def _run(cmd: list[str], *, timeout: int = 45) -> subprocess.CompletedProcess:
@@ -886,10 +891,41 @@ def _to_chinese_source_queries(english_variants: list[str]) -> list[str]:
     chinese_variants: list[str] = []
     for variant in english_variants:
         tokens = [token for token in re.findall(r"[a-z0-9]+", str(variant or "").lower()) if token]
+        token_set = set(tokens)
+        prioritized: list[str] = []
+        prefix = "竹制" if "bamboo" in token_set else ""
+        if token_set & {"cable", "cord", "wire"} and token_set & {"clip", "clips", "holder", "holders"}:
+            prioritized.append("理线卡扣")
+            prioritized.append("线卡")
+        if token_set & {"hook", "hooks"}:
+            if token_set & {"wall", "adhesive", "sticky", "self", "heavy", "duty"}:
+                prioritized.append("墙壁挂钩")
+            if token_set & {"adhesive", "sticky", "self"}:
+                prioritized.append("无痕挂钩")
+                prioritized.append("粘贴挂钩")
+            prioritized.append("挂钩")
+        if token_set & {"divider", "dividers", "separator", "separators"}:
+            if "drawer" in token_set:
+                prioritized.append(prefix + "抽屉分隔板")
+            prioritized.append(prefix + "分隔板")
+        if token_set & {"organizer", "organizers", "storage"}:
+            if "drawer" in token_set:
+                prioritized.append(prefix + "抽屉收纳盒")
+            prioritized.append(prefix + "收纳盒")
+        if token_set & {"rack", "holder", "shelf"} and "drawer" in token_set:
+            prioritized.append(prefix + "抽屉置物架")
+        if token_set & {"drawer"}:
+            prioritized.append(prefix + "抽屉")
+        for phrase in prioritized:
+            phrase = phrase.strip()
+            if len(phrase) >= 3 and phrase not in chinese_variants:
+                chinese_variants.append(phrase)
         translated = [SOURCE_QUERY_TRANSLATIONS.get(token, "") for token in tokens]
         translated = [token for token in translated if token]
         if len(translated) < 2:
-            continue
+            if len(chinese_variants) >= 4:
+                continue
+            translated = translated[:]
         compact_translated: list[str] = []
         for token in translated[:6]:
             if compact_translated and compact_translated[-1] == token:
@@ -1968,6 +2004,43 @@ def _extract_source_candidate(platform: str, text: str, query: str, fetch_tool: 
     )
 
 
+def _source_candidate_from_structured_row(
+    platform: str,
+    query: str,
+    fetch_tool: str,
+    row: dict[str, Any],
+    fallback_link: str,
+) -> SourceCandidate:
+    title = str(row.get("title") or "").strip() or query.title()
+    excerpt = str(row.get("excerpt") or "")
+    company = str(row.get("company") or "").strip()
+    price_cny = row.get("price_cny")
+    try:
+        price_cny = float(price_cny) if price_cny is not None else None
+    except Exception:
+        price_cny = None
+    weight, grade = _extract_weight(excerpt[:120000], platform)
+    match_score = 42.0
+    if price_cny is not None:
+        match_score += 18
+    if company:
+        match_score += 6
+    if excerpt:
+        match_score += 6
+    return SourceCandidate(
+        platform=platform,
+        link=fallback_link,
+        title=title,
+        price_cny=price_cny,
+        weight_kg=weight,
+        weight_grade=grade,
+        fetch_tool=fetch_tool,
+        match_score=min(100.0, match_score),
+        blocked=False,
+        notes=company or "",
+    )
+
+
 def _extract_source_links(platform: str, text: str) -> list[str]:
     raw_links: list[str] = []
     if platform == "1688":
@@ -2395,6 +2468,8 @@ def _best_source_for_platform(
         if platform == "1688":
             auth, cache_hit = _cached_1688_authorized_fetch(url=url, query_variant=query_variant, fast=fast)
             auth_signals = auth.get("signals") or {}
+            auth_rows = list(auth.get("result_rows") or [])
+            auth_usable = bool(auth_signals.get("usable_search_page")) or bool(auth_rows)
             auth_text = ""
             if auth.get("text_path"):
                 try:
@@ -2420,18 +2495,45 @@ def _best_source_for_platform(
                     "cache_hit": cache_hit,
                     "offer_link_hits": auth_signals.get("offer_link_hits"),
                     "detail_link_hits": auth_signals.get("detail_link_hits"),
-                    "usable_search_page": bool(auth_signals.get("usable_search_page")),
+                    "result_rows": len(auth_rows),
+                    "usable_search_page": auth_usable,
                 }
             )
-            if auth.get("ok") and auth_text and bool(auth_signals.get("usable_search_page")):
-                auth_blob = "\n".join([str(auth.get("title") or ""), auth_text, auth_html[:12000]])
-                auth_row = _extract_source_candidate(platform, auth_blob, query_variant, "cdp_session")
-                auth_row.match_score = min(100.0, auth_row.match_score + platform_bias + 8.0)
-                auth_row = _with_supplier_similarity(candidate, auth_row, source_text=auth_row.title)
-                auth_row = _apply_supplier_weight_proxy(candidate, auth_row)
-                if best is None or auth_row.match_score > best.match_score:
-                    best = auth_row
-                if _source_row_viable(auth_row):
+            if auth.get("ok") and auth_usable:
+                auth_candidates: list[SourceCandidate] = []
+                if auth_rows:
+                    for auth_payload_row in auth_rows[:8]:
+                        auth_row = _source_candidate_from_structured_row(
+                            platform,
+                            query_variant,
+                            "cdp_session",
+                            auth_payload_row,
+                            url,
+                        )
+                        auth_row.match_score = min(100.0, auth_row.match_score + platform_bias + 8.0)
+                        source_text = "\n".join(
+                            [
+                                str(auth_payload_row.get("title") or ""),
+                                str(auth_payload_row.get("excerpt") or ""),
+                                str(auth_payload_row.get("company") or ""),
+                            ]
+                        )
+                        auth_row = _with_supplier_similarity(candidate, auth_row, source_text=source_text)
+                        auth_row = _apply_supplier_weight_proxy(candidate, auth_row)
+                        auth_candidates.append(auth_row)
+                elif auth_text:
+                    auth_blob = "\n".join([str(auth.get("title") or ""), auth_text, auth_html[:12000]])
+                    auth_row = _extract_source_candidate(platform, auth_blob, query_variant, "cdp_session")
+                    auth_row.match_score = min(100.0, auth_row.match_score + platform_bias + 8.0)
+                    auth_row = _with_supplier_similarity(candidate, auth_row, source_text=auth_row.title)
+                    auth_row = _apply_supplier_weight_proxy(candidate, auth_row)
+                    auth_candidates.append(auth_row)
+                for auth_row in auth_candidates:
+                    if best is None or auth_row.match_score > best.match_score:
+                        best = auth_row
+                    if _source_row_viable(auth_row):
+                        break
+                if best is not None and _source_row_viable(best):
                     break
         result = fetch_best(platform, url, max_tools=max_tools, fast=fast)
         gated = _is_source_access_gate(platform, result.text, url)
@@ -3111,10 +3213,13 @@ def _cached_1688_authorized_fetch(*, url: str, query_variant: str, fast: bool) -
     key = _slug(query_variant)
     entry = (cache.get("entries") or {}).get(key) or {}
     ttl_seconds = 15 * 60 if fast else 2 * 60 * 60
-    if entry.get("payload") and _seconds_since(str(entry.get("captured_at") or "")) is not None:
+    cached_payload = dict(entry.get("payload") or {}) if isinstance(entry.get("payload"), dict) else {}
+    cached_signals = cached_payload.get("signals") or {}
+    cache_usable = bool(cached_payload.get("ok")) and bool(cached_signals.get("usable_search_page"))
+    if cache_usable and _seconds_since(str(entry.get("captured_at") or "")) is not None:
         age = _seconds_since(str(entry.get("captured_at") or ""))
         if age is not None and age <= ttl_seconds:
-            return dict(entry.get("payload") or {}), True
+            return cached_payload, True
     payload = _1688_authorized_fetch(
         url=url,
         save_prefix=f"1688-auth-{key[:36]}",

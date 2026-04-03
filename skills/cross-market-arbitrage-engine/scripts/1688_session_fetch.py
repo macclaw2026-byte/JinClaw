@@ -68,6 +68,30 @@ RESULT_TEXT_MARKERS = (
     "明天达",
     "退货包运费",
 )
+COMPANY_SUFFIXES = ("有限公司", "商行", "工厂", "集团", "经营部", "厂", "中心", "店")
+BAD_COMPANY_PREFIXES = ("找", "搜", "批量", "全部", "热门", "最近")
+NOISE_LINE_MARKERS = (
+    "热门搜索",
+    "最近搜索",
+    "全部类目",
+    "批量找货",
+    "精选货源",
+    "采购助手",
+    "趋势",
+    "类目:",
+    "年销量:",
+    "月代销:",
+    "48h揽收:",
+    "支持面单:",
+    "上架日期:",
+    "评论数:",
+    "开店:",
+    "明天达",
+    "后天达",
+    "包邮",
+    "回头率",
+    "同行都在采",
+)
 
 
 def _signals(final_url: str, title: str, text: str, html: str) -> dict[str, object]:
@@ -207,21 +231,33 @@ def _collect_page_payload(page, *, wait_seconds: float) -> dict[str, object]:
         html = page.content()
     except Exception:
         html = ""
+    decoded_query = _decode_1688_query(final_url)
+    result_rows = _extract_result_rows(visible_text, decoded_query)
+    signals = {
+        **_signals(final_url, title, visible_text, html),
+        "network_event_count": len(api_events),
+        "network_offer_hits": sum(int(item.get("offer_hits") or 0) for item in api_events),
+        "network_detail_hits": sum(int(item.get("detail_hits") or 0) for item in api_events),
+        "network_result_like": any(
+            (int(item.get("offer_hits") or 0) + int(item.get("detail_hits") or 0)) > 0 for item in api_events
+        ),
+    }
+    home_like = final_url.rstrip("/") == "https://www.1688.com" or "阿里1688首页" in title
+    search_like = "offer_search" in final_url or "selloffer" in final_url or (decoded_query and decoded_query in title)
+    if result_rows:
+        signals["has_search_results"] = True
+        signals["usable_search_page"] = True
+    elif home_like and not search_like:
+        signals["has_search_results"] = False
+        signals["usable_search_page"] = False
     return {
         "url": final_url,
         "title": title,
         "visible_text": visible_text,
         "html": html,
-        "signals": {
-            **_signals(final_url, title, visible_text, html),
-            "network_event_count": len(api_events),
-            "network_offer_hits": sum(int(item.get("offer_hits") or 0) for item in api_events),
-            "network_detail_hits": sum(int(item.get("detail_hits") or 0) for item in api_events),
-            "network_result_like": any(
-                (int(item.get("offer_hits") or 0) + int(item.get("detail_hits") or 0)) > 0 for item in api_events
-            ),
-        },
+        "signals": signals,
         "network_events": api_events[:20],
+        "result_rows": result_rows,
     }
 
 
@@ -233,6 +269,90 @@ def _decode_1688_query(url: str) -> str:
         return unquote_to_bytes(raw).decode("gb18030", "ignore").strip()
     except Exception:
         return raw.strip()
+
+
+def _looks_like_offer_title(line: str, query: str) -> bool:
+    text = str(line or "").strip()
+    if len(text) < 8 or len(text) > 90:
+        return False
+    if "锟斤拷" in text:
+        return False
+    if any(marker in text for marker in NOISE_LINE_MARKERS):
+        return False
+    if text.endswith(COMPANY_SUFFIXES):
+        return False
+    if re.fullmatch(r"[0-9A-Za-z .,+-]+", text):
+        return False
+    if "¥" in text or "件" in text:
+        return False
+    query_tokens = [token for token in re.findall(r"[\u4e00-\u9fff]{1,4}", query) if len(token) >= 2]
+    if query_tokens and sum(1 for token in query_tokens if token in text) >= max(1, min(2, len(query_tokens))):
+        return True
+    product_markers = ("收纳", "抽屉", "隔板", "分隔", "置物", "整理", "盒", "架", "板", "柜")
+    return sum(1 for token in product_markers if token in text) >= 2
+
+
+def _extract_price_hint(block: str) -> float | None:
+    found = re.search(r"¥\s*([0-9]+)\s*(?:\.\s*([0-9]+))?", block)
+    if not found:
+        return None
+    raw = found.group(1)
+    if found.group(2):
+        raw += "." + found.group(2)
+    try:
+        return float(raw)
+    except Exception:
+        return None
+
+
+def _extract_sales_hint(block: str) -> str:
+    for pattern in (r"售\s*([0-9.]+万?\+?)\s*件", r"年销量:\s*([0-9.]+万?\+?)件"):
+        found = re.search(pattern, block)
+        if found:
+            return str(found.group(1))
+    return ""
+
+
+def _extract_result_rows(text: str, query: str) -> list[dict[str, object]]:
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+
+    def collect(effective_query: str) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        seen_titles: set[str] = set()
+        for idx, line in enumerate(lines):
+            if not line.endswith(COMPANY_SUFFIXES):
+                continue
+            if any(line.startswith(prefix) for prefix in BAD_COMPANY_PREFIXES):
+                continue
+            company = line
+            start = max(0, idx - 14)
+            window = lines[start : idx + 1]
+            title = ""
+            for candidate in reversed(window[:-1]):
+                if _looks_like_offer_title(candidate, effective_query):
+                    title = candidate
+                    break
+            if not title or title in seen_titles:
+                continue
+            block = "\n".join(window)
+            rows.append(
+                {
+                    "title": title,
+                    "price_cny": _extract_price_hint(block),
+                    "sales_hint": _extract_sales_hint(block),
+                    "company": company,
+                    "excerpt": block[:600],
+                }
+            )
+            seen_titles.add(title)
+            if len(rows) >= 12:
+                break
+        return rows
+
+    rows = collect(query)
+    if rows:
+        return rows
+    return collect("")
 
 
 def _interactive_search(page, *, query: str, wait_seconds: float) -> dict[str, object] | None:
@@ -353,6 +473,7 @@ def main() -> int:
         "url": payload["url"],
         "title": payload["title"],
         "signals": payload["signals"],
+        "result_rows": payload.get("result_rows") or [],
         "network_events": payload.get("network_events") or [],
         "state_capture": payload.get("state_capture") or {},
         "replay_attempt": payload.get("replay_attempt") or {},
