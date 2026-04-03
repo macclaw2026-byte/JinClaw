@@ -1720,6 +1720,21 @@ def _sanitize_sell_title(title: str, query: str) -> str:
     return cleaned
 
 
+def _candidate_title_quality_ok(title: str, query: str) -> bool:
+    cleaned = _clean_text(title)
+    if len(cleaned) < 12:
+        return False
+    normalized_title = _normalize_title(cleaned)
+    normalized_query = _normalize_title(query)
+    if normalized_title and normalized_query and normalized_title == normalized_query:
+        return False
+    title_tokens = [token for token in normalized_title.split() if token]
+    query_tokens = {token for token in normalized_query.split() if token}
+    if len(title_tokens) <= 2 and set(title_tokens) <= query_tokens:
+        return False
+    return True
+
+
 def _extract_sell_candidates(platform: str, text: str, query: str) -> list[DemandCandidate]:
     rows: list[DemandCandidate] = []
     seen: set[str] = set()
@@ -1736,6 +1751,8 @@ def _extract_sell_candidates(platform: str, text: str, query: str) -> list[Deman
             snippet = text[start:end]
             title_match = re.search(r'<span[^>]*>([^<]{20,240})</span>', snippet, flags=re.I)
             title = _sanitize_sell_title(title_match.group(1), query) if title_match else query.title()
+            if not _candidate_title_quality_ok(title, query):
+                continue
             price = _best_price_cny(snippet, platform)
             monthly_orders = _extract_monthly_orders(snippet)
             amazon_rank, amazon_category = _extract_amazon_best_seller_rank(snippet)
@@ -1789,6 +1806,8 @@ def _extract_sell_candidates(platform: str, text: str, query: str) -> list[Deman
             continue
         seen.add(link)
         title = _sanitize_sell_title(_title_from_link(link, query.title()), query)
+        if not _candidate_title_quality_ok(title, query):
+            continue
         price = _best_price_cny(text, platform)
         monthly_orders = _extract_monthly_orders(text)
         rating_value = _extract_rating_value(text)
@@ -1813,22 +1832,24 @@ def _extract_sell_candidates(platform: str, text: str, query: str) -> list[Deman
             break
     if not rows:
         fallback_price = _best_price_cny(text, platform)
-        rows.append(
-            DemandCandidate(
-                candidate_id=f"{platform}-{_slug(query)}",
-                title=query.title(),
-                sell_platform=platform,
-                sell_link=url_for_sell(platform, query),
-                sell_price_cny=fallback_price,
-                query=query,
-                extracted_at=_utc_now_iso(),
-                estimated_daily_orders=None,
-                rating_value=_extract_rating_value(text),
-                review_count=_extract_review_count(text),
-                demand_confidence=10.0,
-                raw_signals={"fallback_from_search_page": True},
+        fallback_title = query.title()
+        if _candidate_title_quality_ok(fallback_title, query):
+            rows.append(
+                DemandCandidate(
+                    candidate_id=f"{platform}-{_slug(query)}",
+                    title=fallback_title,
+                    sell_platform=platform,
+                    sell_link=url_for_sell(platform, query),
+                    sell_price_cny=fallback_price,
+                    query=query,
+                    extracted_at=_utc_now_iso(),
+                    estimated_daily_orders=None,
+                    rating_value=_extract_rating_value(text),
+                    review_count=_extract_review_count(text),
+                    demand_confidence=10.0,
+                    raw_signals={"fallback_from_search_page": True},
+                )
             )
-        )
     return rows
 
 
