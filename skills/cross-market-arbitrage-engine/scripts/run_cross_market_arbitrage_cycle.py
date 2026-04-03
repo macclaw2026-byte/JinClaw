@@ -2469,6 +2469,7 @@ def _best_source_for_platform(
             auth, cache_hit = _cached_1688_authorized_fetch(url=url, query_variant=query_variant, fast=fast)
             auth_signals = auth.get("signals") or {}
             auth_rows = list(auth.get("result_rows") or [])
+            auth_related = [str(item).strip() for item in (auth.get("related_queries") or []) if str(item).strip()]
             auth_usable = bool(auth_signals.get("usable_search_page")) or bool(auth_rows)
             auth_text = ""
             if auth.get("text_path"):
@@ -2496,6 +2497,7 @@ def _best_source_for_platform(
                     "offer_link_hits": auth_signals.get("offer_link_hits"),
                     "detail_link_hits": auth_signals.get("detail_link_hits"),
                     "result_rows": len(auth_rows),
+                    "related_queries": auth_related[:4],
                     "usable_search_page": auth_usable,
                 }
             )
@@ -2532,6 +2534,52 @@ def _best_source_for_platform(
                     if best is None or auth_row.match_score > best.match_score:
                         best = auth_row
                     if _source_row_viable(auth_row):
+                        break
+                if best is not None and _source_row_viable(best):
+                    break
+            if auth.get("ok") and not auth_rows and auth_related:
+                for related_query in auth_related[:3]:
+                    related_url = SOURCE_PLATFORM_SEARCH[platform](related_query)
+                    related_auth, related_cache_hit = _cached_1688_authorized_fetch(
+                        url=related_url, query_variant=related_query, fast=fast
+                    )
+                    related_rows = list(related_auth.get("result_rows") or [])
+                    fetch_log.append(
+                        {
+                            "stage": "match_authorized_related",
+                            "platform": platform,
+                            "query": related_query,
+                            "tool": "cdp_session",
+                            "status": "ok" if related_auth.get("ok") else "error",
+                            "authorized": True,
+                            "cache_hit": related_cache_hit,
+                            "result_rows": len(related_rows),
+                            "usable_search_page": bool((related_auth.get("signals") or {}).get("usable_search_page")) or bool(related_rows),
+                        }
+                    )
+                    for auth_payload_row in related_rows[:6]:
+                        auth_row = _source_candidate_from_structured_row(
+                            platform,
+                            related_query,
+                            "cdp_session",
+                            auth_payload_row,
+                            related_url,
+                        )
+                        auth_row.match_score = min(100.0, auth_row.match_score + platform_bias + 6.0)
+                        source_text = "\n".join(
+                            [
+                                str(auth_payload_row.get("title") or ""),
+                                str(auth_payload_row.get("excerpt") or ""),
+                                str(auth_payload_row.get("company") or ""),
+                            ]
+                        )
+                        auth_row = _with_supplier_similarity(candidate, auth_row, source_text=source_text)
+                        auth_row = _apply_supplier_weight_proxy(candidate, auth_row)
+                        if best is None or auth_row.match_score > best.match_score:
+                            best = auth_row
+                        if _source_row_viable(auth_row):
+                            break
+                    if best is not None and _source_row_viable(best):
                         break
                 if best is not None and _source_row_viable(best):
                     break

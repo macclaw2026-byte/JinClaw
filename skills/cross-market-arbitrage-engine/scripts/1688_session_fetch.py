@@ -92,6 +92,17 @@ NOISE_LINE_MARKERS = (
     "回头率",
     "同行都在采",
 )
+RELATED_QUERY_STOP_MARKERS = (
+    "材质",
+    "品牌",
+    "收纳场景",
+    "风格",
+    "高级筛选",
+    "更多",
+    "综合",
+    "销量",
+    "价格",
+)
 
 
 def _signals(final_url: str, title: str, text: str, html: str) -> dict[str, object]:
@@ -233,6 +244,7 @@ def _collect_page_payload(page, *, wait_seconds: float) -> dict[str, object]:
         html = ""
     decoded_query = _decode_1688_query(final_url)
     result_rows = _extract_result_rows(visible_text, decoded_query)
+    related_queries = _extract_related_queries(visible_text)
     signals = {
         **_signals(final_url, title, visible_text, html),
         "network_event_count": len(api_events),
@@ -258,6 +270,7 @@ def _collect_page_payload(page, *, wait_seconds: float) -> dict[str, object]:
         "signals": signals,
         "network_events": api_events[:20],
         "result_rows": result_rows,
+        "related_queries": related_queries,
     }
 
 
@@ -353,6 +366,31 @@ def _extract_result_rows(text: str, query: str) -> list[dict[str, object]]:
     if rows:
         return rows
     return collect("")
+
+
+def _extract_related_queries(text: str) -> list[str]:
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    related: list[str] = []
+    collecting = False
+    for line in lines:
+        if line == "您想找的是":
+            collecting = True
+            continue
+        if not collecting:
+            continue
+        if any(line.startswith(marker) for marker in RELATED_QUERY_STOP_MARKERS):
+            break
+        if len(line) < 2 or len(line) > 18:
+            continue
+        if any(marker in line for marker in NOISE_LINE_MARKERS):
+            continue
+        if re.search(r"[A-Za-z]", line):
+            continue
+        if line not in related:
+            related.append(line)
+        if len(related) >= 8:
+            break
+    return related
 
 
 def _interactive_search(page, *, query: str, wait_seconds: float) -> dict[str, object] | None:
@@ -474,6 +512,7 @@ def main() -> int:
         "title": payload["title"],
         "signals": payload["signals"],
         "result_rows": payload.get("result_rows") or [],
+        "related_queries": payload.get("related_queries") or [],
         "network_events": payload.get("network_events") or [],
         "state_capture": payload.get("state_capture") or {},
         "replay_attempt": payload.get("replay_attempt") or {},
