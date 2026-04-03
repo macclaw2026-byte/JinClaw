@@ -268,6 +268,28 @@ FEATURE_TOKENS = {
     "divider", "dividers", "separator", "separators",
 }
 
+ANCHOR_TOKEN_GROUPS: dict[str, set[str]] = {
+    "divider": {"divider", "dividers", "separator", "separators"},
+    "hook": {"hook", "hooks", "adhesive", "wall", "mounted", "hanging"},
+    "clip": {"clip", "clips", "cable"},
+    "basket": {"basket", "bin", "box", "container", "tray"},
+    "rack": {"rack", "shelf", "holder", "organizer", "organizers"},
+}
+
+SOURCE_CATEGORY_MISMATCH_TOKENS = {
+    "dresser",
+    "bedroom",
+    "furniture",
+    "cabinet",
+    "wardrobe",
+    "vehicle",
+    "rv",
+    "recreational",
+    "changan",
+    "sofa",
+    "nightstand",
+}
+
 CHINESE_TOKEN_NORMALIZERS: dict[str, tuple[str, ...]] = {
     "透明": ("clear", "transparent"),
     "黑色": ("black",),
@@ -1141,6 +1163,13 @@ def _extract_platform_price_cny(text: str, platform: str) -> float | None:
     if platform == "made_in_china":
         usd_hits: list[float] = []
         for raw in re.findall(r"US\$\s*(\d+(?:\.\d+)?)", text, flags=re.I):
+            try:
+                value = float(raw)
+            except Exception:
+                continue
+            if value > 0:
+                usd_hits.append(value)
+        for raw in re.findall(r'"price"\s*:\s*"(\d+(?:\.\d+)?)"', text, flags=re.I):
             try:
                 value = float(raw)
             except Exception:
@@ -2049,6 +2078,10 @@ def _estimated_weight_proxy_kg(candidate: DemandCandidate, source: SourceCandida
     weight = 0.85
     if tokens & {"hook", "clip", "clips", "pill", "cable", "tray"}:
         weight = min(weight, 0.38)
+    if tokens & {"divider", "dividers", "separator", "separators"}:
+        weight = min(weight, 0.58)
+        if tokens & {"drawer"}:
+            weight = max(weight, 0.68)
     if tokens & {"bag", "tote", "insert", "box", "bin", "basket", "holder", "container", "organizer"}:
         weight = max(weight, 0.72)
     if tokens & {"drawer", "rack", "shelf", "tier", "under", "sink", "wall", "mounted"}:
@@ -2064,6 +2097,28 @@ def _estimated_weight_proxy_kg(candidate: DemandCandidate, source: SourceCandida
     return round(max(0.18, min(4.5, weight)), 3)
 
 
+def _anchor_alignment(candidate_tokens: set[str], source_tokens: set[str]) -> tuple[float, list[str]]:
+    reasons: list[str] = []
+    candidate_groups = [name for name, tokens in ANCHOR_TOKEN_GROUPS.items() if candidate_tokens & tokens]
+    if not candidate_groups:
+        return 50.0, reasons
+    overlaps = []
+    for name in candidate_groups:
+        group_tokens = ANCHOR_TOKEN_GROUPS[name]
+        overlap = len(group_tokens & source_tokens) / max(1, len(group_tokens & candidate_tokens))
+        overlaps.append(overlap)
+        if overlap > 0:
+            reasons.append(f"{name}_anchor_match")
+    best_overlap = max(overlaps) if overlaps else 0.0
+    score = 25.0 + best_overlap * 75.0
+    if best_overlap == 0:
+        reasons.append("anchor_mismatch")
+    if "divider" in candidate_groups and source_tokens & SOURCE_CATEGORY_MISMATCH_TOKENS:
+        score = min(score, 8.0)
+        reasons.append("category_mismatch_furniture_like")
+    return round(score, 2), reasons
+
+
 def _supplier_fuzzy_match(
     candidate: DemandCandidate,
     source: SourceCandidate,
@@ -2076,6 +2131,7 @@ def _supplier_fuzzy_match(
     source_tokens = _match_tokens(source_blob)
     keyword_coverage = len(sell_tokens & source_tokens) / max(1, len(sell_tokens)) if sell_tokens else 0.0
     keyword_similarity = round(min(100.0, keyword_coverage * 100.0), 2)
+    anchor_alignment, anchor_reasons = _anchor_alignment(sell_tokens, source_tokens)
 
     sell_signature = _attribute_signature(sell_text)
     source_signature = _attribute_signature(source_blob)
@@ -2095,9 +2151,10 @@ def _supplier_fuzzy_match(
     similarity_score = round(
         min(
             100.0,
-            keyword_similarity * 0.42
-            + attribute_similarity * 0.24
-            + price_similarity * 0.18
+            keyword_similarity * 0.30
+            + attribute_similarity * 0.22
+            + anchor_alignment * 0.20
+            + price_similarity * 0.12
             + weight_reasonableness * 0.10
             + link_bonus * 0.06,
         ),
@@ -2116,6 +2173,7 @@ def _supplier_fuzzy_match(
         reasons.append("keyword_overlap_strong")
     elif keyword_similarity >= 45:
         reasons.append("keyword_overlap_partial")
+    reasons.extend(anchor_reasons)
     if _set_overlap_ratio(sell_signature["materials"], source_signature["materials"]) > 0:
         reasons.append("material_match")
     if _set_overlap_ratio(sell_signature["features"], source_signature["features"]) > 0:
@@ -2129,6 +2187,7 @@ def _supplier_fuzzy_match(
     return {
         "keyword_similarity": keyword_similarity,
         "attribute_similarity": attribute_similarity,
+        "anchor_alignment": anchor_alignment,
         "price_band_similarity": round(price_similarity, 2),
         "supplier_similarity_score": similarity_score,
         "supplier_similarity_grade": grade,
@@ -2325,13 +2384,14 @@ def _best_source_for_platform(
         )
         row = _extract_source_candidate(platform, result.text, query_variant, result.tool)
         row.match_score = min(100.0, row.match_score + platform_bias)
-        row = _with_supplier_similarity(candidate, row, source_text=result.text[:8000])
+        # Search-result pages contain query echoes and unrelated listings; score the raw row mainly from its own title.
+        row = _with_supplier_similarity(candidate, row, source_text=row.title)
         if fast and platform == "made_in_china" and row.supplier_similarity_grade in {"medium", "high"}:
             row = _enrich_source_candidate(platform, row)
-            row = _with_supplier_similarity(candidate, row, source_text=result.text[:8000])
+            row = _with_supplier_similarity(candidate, row, source_text=row.title)
         if not fast:
             row = _enrich_source_candidate(platform, row)
-            row = _with_supplier_similarity(candidate, row, source_text=result.text[:8000])
+            row = _with_supplier_similarity(candidate, row, source_text=row.title)
         row = _apply_supplier_weight_proxy(candidate, row)
         if best is None or row.match_score > best.match_score:
             best = row
@@ -2339,7 +2399,15 @@ def _best_source_for_platform(
             # Search/login gates rarely improve by retrying more variants in the same cycle.
             break
         extra_links = _extract_source_links(platform, result.text)
-        detail_cap = 0 if fast else 2
+        extra_links = sorted(
+            extra_links,
+            key=lambda link: _candidate_overlap_score(
+                candidate.query,
+                f"{_source_title_from_link(link)} {candidate.title}",
+            ),
+            reverse=True,
+        )
+        detail_cap = 1 if fast and platform == "made_in_china" else (0 if fast else 2)
         for detail_link in extra_links[:detail_cap]:
             detail_result = fetch_best(platform, detail_link, max_tools=2 if max_tools is None else max_tools, fast=fast)
             fetch_log.append(
