@@ -3089,6 +3089,7 @@ def _1688_authorized_fetch(*, url: str, save_prefix: str, wait_seconds: float = 
         save_prefix,
         "--wait-seconds",
         str(wait_seconds),
+        "--replay-if-gated",
     ]
     proc = _run(cmd, timeout=45)
     payload = _parse_json_stdout(proc.stdout)
