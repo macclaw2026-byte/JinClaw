@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import quote_plus
+from urllib.parse import quote_from_bytes, quote_plus
 from urllib.request import urlopen
 from zoneinfo import ZoneInfo
 
@@ -87,12 +87,22 @@ SELL_PLATFORM_SEARCH = {
     "walmart": lambda q: f"https://www.walmart.com/search?q={quote_plus(q)}",
 }
 
+
+def _platform_query_quote(platform: str, query: str) -> str:
+    raw = str(query or "")
+    if platform == "1688":
+        try:
+            return quote_from_bytes(raw.encode("gb18030", "ignore"))
+        except Exception:
+            return quote_plus(raw)
+    return quote_plus(raw)
+
 SOURCE_PLATFORM_SEARCH = {
-    "1688": lambda q: f"https://s.1688.com/selloffer/offer_search.htm?keywords={quote_plus(q)}",
-    "yiwugo": lambda q: f"https://en.yiwugo.com/search/s.html?queryKey={quote_plus(q)}",
+    "1688": lambda q: f"https://s.1688.com/selloffer/offer_search.htm?keywords={_platform_query_quote('1688', q)}",
+    "yiwugo": lambda q: f"https://en.yiwugo.com/search/s.html?queryKey={_platform_query_quote('yiwugo', q)}",
     "made_in_china": lambda q: (
         "https://www.made-in-china.com/productdirectory.do?"
-        f"subaction=hunt&style=b&mode=and&code=0&comProvince=nolimit&order=0&isOpenCorrection=1&org=top&keyword=&file=&searchType=0&word={quote_plus(q)}"
+        f"subaction=hunt&style=b&mode=and&code=0&comProvince=nolimit&order=0&isOpenCorrection=1&org=top&keyword=&file=&searchType=0&word={_platform_query_quote('made_in_china', q)}"
     ),
 }
 
