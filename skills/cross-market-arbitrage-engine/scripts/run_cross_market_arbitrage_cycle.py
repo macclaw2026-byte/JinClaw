@@ -30,6 +30,7 @@ ADAPTIVE_HISTORY_PATH = STATE_DIR / "cross-market-arbitrage-adaptive-history.jso
 QUERY_HISTORY_PATH = STATE_DIR / "cross-market-arbitrage-query-history.json"
 MARKET_HISTORY_PATH = STATE_DIR / "cross-market-arbitrage-market-history.json"
 THRESHOLD_HISTORY_PATH = STATE_DIR / "cross-market-arbitrage-threshold-history.json"
+ALIBABA_1688_SESSION_CACHE_PATH = STATE_DIR / "1688-authorized-search-cache.json"
 OUT_DIR = ROOT / "output" / "cross-market-arbitrage-engine"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 LATEST_REPORT_PATH = OUT_DIR / "latest-report.json"
@@ -682,6 +683,18 @@ def _read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
 def _write_json_file(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _load_1688_authorized_cache() -> dict[str, Any]:
+    payload = _read_json(ALIBABA_1688_SESSION_CACHE_PATH, {"entries": {}})
+    entries = payload.get("entries")
+    if not isinstance(entries, dict):
+        payload["entries"] = {}
+    return payload
+
+
+def _write_1688_authorized_cache(payload: dict[str, Any]) -> None:
+    _write_json_file(ALIBABA_1688_SESSION_CACHE_PATH, payload)
 
 
 def _parse_iso(value: str) -> datetime | None:
@@ -2379,6 +2392,47 @@ def _best_source_for_platform(
     best: SourceCandidate | None = None
     for query_variant in _source_query_variants_for_platform(candidate, platform):
         url = SOURCE_PLATFORM_SEARCH[platform](query_variant)
+        if platform == "1688":
+            auth, cache_hit = _cached_1688_authorized_fetch(url=url, query_variant=query_variant, fast=fast)
+            auth_signals = auth.get("signals") or {}
+            auth_text = ""
+            if auth.get("text_path"):
+                try:
+                    auth_text = Path(str(auth["text_path"])).read_text(encoding="utf-8")
+                except OSError:
+                    auth_text = ""
+            auth_html = ""
+            if auth.get("html_path"):
+                try:
+                    auth_html = Path(str(auth["html_path"])).read_text(encoding="utf-8")
+                except OSError:
+                    auth_html = ""
+            fetch_log.append(
+                {
+                    "stage": "match_authorized_prefetch",
+                    "platform": platform,
+                    "query": query_variant,
+                    "tool": "cdp_session",
+                    "status": "ok" if auth.get("ok") else "error",
+                    "platform_bias": platform_bias,
+                    "gated": bool(auth_signals.get("gated")),
+                    "authorized": True,
+                    "cache_hit": cache_hit,
+                    "offer_link_hits": auth_signals.get("offer_link_hits"),
+                    "detail_link_hits": auth_signals.get("detail_link_hits"),
+                    "usable_search_page": bool(auth_signals.get("usable_search_page")),
+                }
+            )
+            if auth.get("ok") and auth_text and bool(auth_signals.get("usable_search_page")):
+                auth_blob = "\n".join([str(auth.get("title") or ""), auth_text, auth_html[:12000]])
+                auth_row = _extract_source_candidate(platform, auth_blob, query_variant, "cdp_session")
+                auth_row.match_score = min(100.0, auth_row.match_score + platform_bias + 8.0)
+                auth_row = _with_supplier_similarity(candidate, auth_row, source_text=auth_row.title)
+                auth_row = _apply_supplier_weight_proxy(candidate, auth_row)
+                if best is None or auth_row.match_score > best.match_score:
+                    best = auth_row
+                if _source_row_viable(auth_row):
+                    break
         result = fetch_best(platform, url, max_tools=max_tools, fast=fast)
         gated = _is_source_access_gate(platform, result.text, url)
         fetch_log.append(
@@ -2407,46 +2461,6 @@ def _best_source_for_platform(
         if best is None or row.match_score > best.match_score:
             best = row
         if gated:
-            if platform == "1688":
-                auth = _1688_authorized_fetch(
-                    url=url,
-                    save_prefix=f"1688-auth-{_slug(query_variant)[:36]}",
-                    wait_seconds=1.8 if fast else 3.0,
-                )
-                auth_signals = auth.get("signals") or {}
-                auth_text = ""
-                if auth.get("text_path"):
-                    try:
-                        auth_text = Path(str(auth["text_path"])).read_text(encoding="utf-8")
-                    except OSError:
-                        auth_text = ""
-                auth_html = ""
-                if auth.get("html_path"):
-                    try:
-                        auth_html = Path(str(auth["html_path"])).read_text(encoding="utf-8")
-                    except OSError:
-                        auth_html = ""
-                fetch_log.append(
-                    {
-                        "stage": "match_authorized",
-                        "platform": platform,
-                        "query": query_variant,
-                        "tool": "cdp_session",
-                        "status": "ok" if auth.get("ok") else "error",
-                        "platform_bias": platform_bias,
-                        "gated": bool(auth_signals.get("gated")),
-                        "authorized": True,
-                        "offer_link_hits": auth_signals.get("offer_link_hits"),
-                        "detail_link_hits": auth_signals.get("detail_link_hits"),
-                    }
-                )
-                if auth.get("ok") and auth_text and bool(auth_signals.get("usable_search_page")):
-                    auth_blob = "\n".join([str(auth.get("title") or ""), auth_text, auth_html[:12000]])
-                    auth_row = _extract_source_candidate(platform, auth_blob, query_variant, "cdp_session")
-                    auth_row = _with_supplier_similarity(candidate, auth_row, source_text=auth_row.title)
-                    auth_row = _apply_supplier_weight_proxy(candidate, auth_row)
-                    if best is None or auth_row.match_score > best.match_score:
-                        best = auth_row
             # Search/login gates rarely improve by retrying more variants in the same cycle.
             break
         extra_links = _extract_source_links(platform, result.text)
@@ -3089,6 +3103,33 @@ def _1688_authorized_fetch(*, url: str, save_prefix: str, wait_seconds: float = 
     payload["returncode"] = proc.returncode
     payload["stderr"] = proc.stderr.strip()
     return payload
+
+
+def _cached_1688_authorized_fetch(*, url: str, query_variant: str, fast: bool) -> tuple[dict[str, Any], bool]:
+    cache = _load_1688_authorized_cache()
+    key = _slug(query_variant)
+    entry = (cache.get("entries") or {}).get(key) or {}
+    ttl_seconds = 15 * 60 if fast else 2 * 60 * 60
+    if entry.get("payload") and _seconds_since(str(entry.get("captured_at") or "")) is not None:
+        age = _seconds_since(str(entry.get("captured_at") or ""))
+        if age is not None and age <= ttl_seconds:
+            return dict(entry.get("payload") or {}), True
+    payload = _1688_authorized_fetch(
+        url=url,
+        save_prefix=f"1688-auth-{key[:36]}",
+        wait_seconds=1.8 if fast else 3.0,
+    )
+    cache.setdefault("entries", {})[key] = {
+        "query": query_variant,
+        "url": url,
+        "captured_at": _utc_now_iso(),
+        "payload": payload,
+    }
+    try:
+        _write_1688_authorized_cache(cache)
+    except OSError:
+        pass
+    return payload, False
 
 
 def _clean_seed_phrase(value: str) -> str:
