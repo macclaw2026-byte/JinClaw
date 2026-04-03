@@ -2280,6 +2280,23 @@ def _is_source_access_gate(platform: str, text: str, link: str = "") -> bool:
     return False
 
 
+def _source_log_has_gate(fetch_log: list[dict[str, Any]]) -> bool:
+    return any(bool(item.get("gated")) for item in fetch_log or [])
+
+
+def _source_row_viable(row: SourceCandidate) -> bool:
+    return bool(
+        row
+        and not row.blocked
+        and (
+            row.price_cny is not None
+            or row.weight_kg is not None
+            or row.supplier_similarity_grade in {"medium", "high"}
+            or row.supplier_similarity_score >= 58.0
+        )
+    )
+
+
 def _best_source_for_platform(
     platform: str,
     candidate: DemandCandidate,
@@ -2309,6 +2326,9 @@ def _best_source_for_platform(
         row = _extract_source_candidate(platform, result.text, query_variant, result.tool)
         row.match_score = min(100.0, row.match_score + platform_bias)
         row = _with_supplier_similarity(candidate, row, source_text=result.text[:8000])
+        if fast and platform == "made_in_china" and row.supplier_similarity_grade in {"medium", "high"}:
+            row = _enrich_source_candidate(platform, row)
+            row = _with_supplier_similarity(candidate, row, source_text=result.text[:8000])
         if not fast:
             row = _enrich_source_candidate(platform, row)
             row = _with_supplier_similarity(candidate, row, source_text=result.text[:8000])
@@ -4601,8 +4621,7 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
         sell_platforms = ["amazon", "temu"] if test else ["temu", "amazon", "walmart"]
         source_platforms = list((adaptive_profile.get("source_order") or []) or ["made_in_china", "1688", "yiwugo"])
         if test:
-            test_source_platforms = [platform for platform in source_platforms if platform == "1688"]
-            source_platforms = (test_source_platforms or source_platforms[:1])[:1]
+            source_platforms = ["1688", "made_in_china"]
         max_tools = 1 if test else None
 
         fetch_log: list[dict[str, Any]] = []
@@ -4650,6 +4669,10 @@ def run_once(*, test: bool = False) -> dict[str, Any]:
                 )
                 fetch_log.extend(best_log)
                 source_rows.append(best_row)
+                if test and _source_row_viable(best_row):
+                    break
+                if test and platform == "1688" and _source_log_has_gate(best_log):
+                    continue
             source_matches[candidate.candidate_id] = source_rows
 
         decisions = [_compute_decision(item, source_matches.get(item.candidate_id, [])) for item in demand_candidates]
@@ -4842,7 +4865,7 @@ def _match_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[str
     adaptive_profile = _adaptive_profile_from_state(state)
     source_platforms = list((adaptive_profile.get("source_order") or []) or ["made_in_china", "1688", "yiwugo"])
     if test:
-        source_platforms = source_platforms[:2]
+        source_platforms = ["1688", "made_in_china"]
     max_tools = 1 if test else None
     fetch_log: list[dict[str, Any]] = []
     decisions: list[ArbitrageDecision] = []
@@ -4866,6 +4889,10 @@ def _match_cycle(state: dict[str, Any], *, test: bool = False) -> tuple[dict[str
             )
             fetch_log.extend(best_log)
             rows.append(best_row)
+            if test and _source_row_viable(best_row):
+                break
+            if test and platform == "1688" and _source_log_has_gate(best_log):
+                continue
         payload["source_matches"] = [asdict(row) for row in rows]
         payload["last_matched_at"] = _utc_now_iso()
         decision = _compute_decision(candidate, rows)
