@@ -63,6 +63,7 @@ DEFAULT_PLATFORM_FEE = 0.15
 SELLERSPRITE_FETCHER = ROOT / "skills/cross-market-arbitrage-engine/scripts/sellersprite_session_fetch.py"
 SELLERSPRITE_KEYWORD_SUBMIT_PROBE = ROOT / "skills/cross-market-arbitrage-engine/scripts/sellersprite_keyword_submit_probe.py"
 SELLERSPRITE_PRODUCT_SUBMIT_PROBE = ROOT / "skills/cross-market-arbitrage-engine/scripts/sellersprite_product_submit_probe.py"
+ALIBABA_1688_FETCHER = ROOT / "skills/cross-market-arbitrage-engine/scripts/1688_session_fetch.py"
 SELLERSPRITE_PRODUCT_RESEARCH_URL = "https://www.sellersprite.com/v3/product-research"
 SELLERSPRITE_KEYWORD_RESEARCH_URL = "https://www.sellersprite.com/v2/keyword-research"
 
@@ -2396,6 +2397,46 @@ def _best_source_for_platform(
         if best is None or row.match_score > best.match_score:
             best = row
         if gated:
+            if platform == "1688":
+                auth = _1688_authorized_fetch(
+                    url=url,
+                    save_prefix=f"1688-auth-{_slug(query_variant)[:36]}",
+                    wait_seconds=1.8 if fast else 3.0,
+                )
+                auth_signals = auth.get("signals") or {}
+                auth_text = ""
+                if auth.get("text_path"):
+                    try:
+                        auth_text = Path(str(auth["text_path"])).read_text(encoding="utf-8")
+                    except OSError:
+                        auth_text = ""
+                auth_html = ""
+                if auth.get("html_path"):
+                    try:
+                        auth_html = Path(str(auth["html_path"])).read_text(encoding="utf-8")
+                    except OSError:
+                        auth_html = ""
+                fetch_log.append(
+                    {
+                        "stage": "match_authorized",
+                        "platform": platform,
+                        "query": query_variant,
+                        "tool": "cdp_session",
+                        "status": "ok" if auth.get("ok") else "error",
+                        "platform_bias": platform_bias,
+                        "gated": bool(auth_signals.get("gated")),
+                        "authorized": True,
+                        "offer_link_hits": auth_signals.get("offer_link_hits"),
+                        "detail_link_hits": auth_signals.get("detail_link_hits"),
+                    }
+                )
+                if auth.get("ok") and auth_text and bool(auth_signals.get("usable_search_page")):
+                    auth_blob = "\n".join([str(auth.get("title") or ""), auth_text, auth_html[:12000]])
+                    auth_row = _extract_source_candidate(platform, auth_blob, query_variant, "cdp_session")
+                    auth_row = _with_supplier_similarity(candidate, auth_row, source_text=auth_row.title)
+                    auth_row = _apply_supplier_weight_proxy(candidate, auth_row)
+                    if best is None or auth_row.match_score > best.match_score:
+                        best = auth_row
             # Search/login gates rarely improve by retrying more variants in the same cycle.
             break
         extra_links = _extract_source_links(platform, result.text)
@@ -3012,6 +3053,32 @@ def _sellersprite_probe_status(parsed: dict[str, Any]) -> tuple[str, str]:
     if isinstance(body, list):
         return "ok", f"rows:{len(body)}"
     return "unknown", ""
+
+
+def _1688_authorized_fetch(*, url: str, save_prefix: str, wait_seconds: float = 2.5) -> dict[str, Any]:
+    cmd = [
+        str(VENV_PY),
+        str(ALIBABA_1688_FETCHER),
+        "--url",
+        url,
+        "--save-prefix",
+        save_prefix,
+        "--wait-seconds",
+        str(wait_seconds),
+    ]
+    proc = _run(cmd, timeout=45)
+    payload = _parse_json_stdout(proc.stdout)
+    if not payload:
+        return {
+            "ok": False,
+            "returncode": proc.returncode,
+            "stdout": proc.stdout.strip(),
+            "stderr": proc.stderr.strip(),
+        }
+    payload["ok"] = proc.returncode == 0
+    payload["returncode"] = proc.returncode
+    payload["stderr"] = proc.stderr.strip()
+    return payload
 
 
 def _clean_seed_phrase(value: str) -> str:
