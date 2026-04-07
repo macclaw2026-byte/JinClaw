@@ -1,8 +1,8 @@
 {
   "target_count": 3,
-  "enabled_target_count": 42,
-  "discovered_count": 27,
-  "failure_count": 15,
+  "enabled_target_count": 43,
+  "discovered_count": 37,
+  "failure_count": 6,
   "failures": [
     {
       "target_url": "https://etisales.com",
@@ -17,51 +17,15 @@
       "error": "HTTP Error 403: Forbidden"
     },
     {
-      "target_url": "https://www.wayfair.com/lighting/cat/lighting-c215735.html",
-      "error": "HTTP Error 429: Too Many Requests (CDN PX)"
-    },
-    {
-      "target_url": "https://www.homedepot.com/b/Lighting/N-5yc1vZbvn5",
+      "target_url": "https://www.cityelectricsupply.com/branch/1086",
       "error": "HTTP Error 403: Forbidden"
     },
     {
-      "target_url": "https://www.wayfair.com/lighting/cat/lighting-c215735.html",
-      "error": "HTTP Error 429: Too Many Requests (CDN PX)"
-    },
-    {
-      "target_url": "https://www.homedepot.com/b/Lighting/N-5yc1vZbvn5",
+      "target_url": "https://www.yellowpages.com/pawtucket-ri/lighting-fixtures",
       "error": "HTTP Error 403: Forbidden"
     },
     {
-      "target_url": "https://www.wayfair.com/lighting/cat/lighting-c215735.html",
-      "error": "HTTP Error 429: Too Many Requests (CDN PX)"
-    },
-    {
-      "target_url": "https://www.homedepot.com/b/Lighting/N-5yc1vZbvn5",
-      "error": "HTTP Error 403: Forbidden"
-    },
-    {
-      "target_url": "https://www.wayfair.com/lighting/cat/lighting-c215735.html",
-      "error": "HTTP Error 429: Too Many Requests (CDN PX)"
-    },
-    {
-      "target_url": "https://www.homedepot.com/b/Lighting/N-5yc1vZbvn5",
-      "error": "HTTP Error 403: Forbidden"
-    },
-    {
-      "target_url": "https://www.wayfair.com/lighting/cat/lighting-c215735.html",
-      "error": "HTTP Error 429: Too Many Requests (CDN PX)"
-    },
-    {
-      "target_url": "https://www.homedepot.com/b/Lighting/N-5yc1vZbvn5",
-      "error": "HTTP Error 403: Forbidden"
-    },
-    {
-      "target_url": "https://www.wayfair.com/lighting/cat/lighting-c215735.html",
-      "error": "HTTP Error 429: Too Many Requests (CDN PX)"
-    },
-    {
-      "target_url": "https://www.homedepot.com/b/Lighting/N-5yc1vZbvn5",
+      "target_url": "https://www.chamberofcommerce.com/business-directory/rhode-island/pawtucket/electrical-supply-store/4823651-granite-city-electric-supply-showroom",
       "error": "HTTP Error 403: Forbidden"
     }
   ],

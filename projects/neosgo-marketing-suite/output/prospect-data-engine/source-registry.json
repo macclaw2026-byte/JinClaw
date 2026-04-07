@@ -12,7 +12,7 @@
       "duplicate_rate": 0.0,
       "average_source_confidence": 0.928,
       "quality_rating": "high",
-      "captured_at": "2026-04-07T00:49:26.379700+00:00"
+      "captured_at": "2026-04-07T09:49:19.737571+00:00"
     },
     {
       "source_id": "source-curated-top-architects-designers",
@@ -26,7 +26,7 @@
       "duplicate_rate": 0.07,
       "average_source_confidence": 1.0,
       "quality_rating": "high",
-      "captured_at": "2026-04-07T00:49:26.382303+00:00"
+      "captured_at": "2026-04-07T09:49:19.740021+00:00"
     },
     {
       "source_id": "source-curated-top-channel-buyers",
@@ -40,7 +40,7 @@
       "duplicate_rate": 0.13,
       "average_source_confidence": 0.95,
       "quality_rating": "high",
-      "captured_at": "2026-04-07T00:49:26.384601+00:00"
+      "captured_at": "2026-04-07T09:49:19.742223+00:00"
     },
     {
       "source_id": "source-curated-top-contractors",
@@ -54,7 +54,7 @@
       "duplicate_rate": 0.03,
       "average_source_confidence": 0.97,
       "quality_rating": "high",
-      "captured_at": "2026-04-07T00:49:26.386849+00:00"
+      "captured_at": "2026-04-07T09:49:19.744504+00:00"
     },
     {
       "source_id": "source-curated-top-electricians",
@@ -68,7 +68,7 @@
       "duplicate_rate": 0.11,
       "average_source_confidence": 0.95,
       "quality_rating": "high",
-      "captured_at": "2026-04-07T00:49:26.389034+00:00"
+      "captured_at": "2026-04-07T09:49:19.746727+00:00"
     },
     {
       "source_id": "source-discovered-google-business-profiles",
@@ -82,7 +82,7 @@
       "duplicate_rate": 0.0,
       "average_source_confidence": 0.66,
       "quality_rating": "high",
-      "captured_at": "2026-04-07T00:49:26.389221+00:00"
+      "captured_at": "2026-04-07T09:49:19.746973+00:00"
     },
     {
       "source_id": "source-discovered-industry-directory-accounts",
@@ -96,7 +96,7 @@
       "duplicate_rate": 0.0,
       "average_source_confidence": 0.66,
       "quality_rating": "high",
-      "captured_at": "2026-04-07T00:49:26.389335+00:00"
+      "captured_at": "2026-04-07T09:49:19.747090+00:00"
     },
     {
       "source_id": "source-discovered-linkedin-company-pages",
@@ -110,7 +110,7 @@
       "duplicate_rate": 0.0,
       "average_source_confidence": 0.66,
       "quality_rating": "high",
-      "captured_at": "2026-04-07T00:49:26.389459+00:00"
+      "captured_at": "2026-04-07T09:49:19.747212+00:00"
     },
     {
       "source_id": "source-discovered-public-accounts",
@@ -118,13 +118,13 @@
       "source_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/raw-imports/discovered-public-accounts.json",
       "source_family": "unclassified_public_source",
       "source_tier": 3,
-      "raw_record_count": 27,
-      "deduped_record_count": 11,
-      "duplicate_count": 16,
-      "duplicate_rate": 0.5926,
-      "average_source_confidence": 0.773,
+      "raw_record_count": 37,
+      "deduped_record_count": 17,
+      "duplicate_count": 20,
+      "duplicate_rate": 0.5405,
+      "average_source_confidence": 0.7311,
       "quality_rating": "review",
-      "captured_at": "2026-04-07T00:49:26.390580+00:00"
+      "captured_at": "2026-04-07T09:49:19.748634+00:00"
     },
     {
       "source_id": "source-sample-public-leads",
@@ -138,7 +138,7 @@
       "duplicate_rate": 0.0,
       "average_source_confidence": 0.825,
       "quality_rating": "high",
-      "captured_at": "2026-04-07T00:49:26.390937+00:00"
+      "captured_at": "2026-04-07T09:49:19.749040+00:00"
     }
   ]
 }

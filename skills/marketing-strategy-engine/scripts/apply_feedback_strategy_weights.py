@@ -37,6 +37,20 @@ def _adjust(weights: dict, bucket: str, key: str, delta: float) -> None:
     section[key] = round(section.get(key, 0.0) + delta, 3)
 
 
+CLASS_POLICY = {
+    "positive_interest": {"channel": 1.25, "path": 0.75, "angle": 0.75},
+    "referral": {"channel": 0.55, "path": 0.35, "angle": 0.2},
+    "neutral_question": {"channel": 0.35, "path": 0.25, "angle": 0.1},
+    "not_now": {"channel": -0.15, "path": -0.1, "angle": -0.05},
+    "not_fit": {"channel": -0.35, "path": -0.25, "angle": -0.6},
+    "invalid_contact": {"channel": -1.4, "path": 0.0, "angle": -0.4},
+    "hard_bounce": {"channel": -1.4, "path": 0.0, "angle": -0.4},
+    "unsubscribe": {"channel": -1.4, "path": -0.1, "angle": -0.4},
+    "spam_complaint_risk": {"channel": -3.0, "path": -1.2, "angle": -0.8},
+    "auto_reply": {"channel": -0.05, "path": 0.0, "angle": 0.0},
+}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Apply feedback patches into strategy weight biases.")
     parser.add_argument("--feedback-patches", required=True)
@@ -72,31 +86,13 @@ def main() -> int:
         path_type = task.get("path_type")
         angle_family = task.get("primary_angle_family") or _infer_angle_family(task.get("primary_angle", ""))
 
-        if classification == "positive_interest":
-            if channel:
-                _adjust(weights, "channel_bias", channel, 1.25)
-            if path_type:
-                _adjust(weights, "path_bias", path_type, 0.75)
-            if angle_family:
-                _adjust(weights, "angle_family_bias", angle_family, 0.75)
-        elif classification in {"referral", "neutral_question"}:
-            if channel:
-                _adjust(weights, "channel_bias", channel, 0.35)
-            if path_type:
-                _adjust(weights, "path_bias", path_type, 0.25)
-        elif classification in {"not_fit"}:
-            if angle_family:
-                _adjust(weights, "angle_family_bias", angle_family, -0.6)
-        elif classification in {"invalid_contact", "hard_bounce", "unsubscribe"}:
-            if channel:
-                _adjust(weights, "channel_bias", channel, -1.4)
-            if angle_family:
-                _adjust(weights, "angle_family_bias", angle_family, -0.4)
-        elif classification == "spam_complaint_risk":
-            if channel:
-                _adjust(weights, "channel_bias", channel, -3.0)
-            if path_type:
-                _adjust(weights, "path_bias", path_type, -1.2)
+        policy = CLASS_POLICY.get(classification, {})
+        if channel and policy.get("channel"):
+            _adjust(weights, "channel_bias", channel, float(policy["channel"]))
+        if path_type and policy.get("path"):
+            _adjust(weights, "path_bias", path_type, float(policy["path"]))
+        if angle_family and policy.get("angle"):
+            _adjust(weights, "angle_family_bias", angle_family, float(policy["angle"]))
 
         applied.append(
             {

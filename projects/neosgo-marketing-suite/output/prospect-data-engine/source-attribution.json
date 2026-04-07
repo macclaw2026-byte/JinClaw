@@ -4526,8 +4526,8 @@
     },
     {
       "source_id": "source-378",
-      "account_id": "account-interiordesign-net",
-      "source_url": "https://interiordesign.net/",
+      "account_id": "account-doi-gov",
+      "source_url": "https://www.doi.gov/",
       "source_family": "official_websites",
       "source_confidence": 0.77,
       "source_label": "discovered-public-accounts.json",
@@ -4538,6 +4538,90 @@
     },
     {
       "source_id": "source-379",
+      "account_id": "account-en-wikipedia-org",
+      "source_url": "https://en.wikipedia.org/wiki/United_States_Department_of_the_Interior",
+      "source_family": "official_websites",
+      "source_confidence": 0.92,
+      "source_label": "discovered-public-accounts.json",
+      "query_id": "",
+      "discovery_query": "\"interior design\" lighting Massachusetts trade",
+      "query_family": "official_search",
+      "generated_from_provider": "bing_rss"
+    },
+    {
+      "source_id": "source-380",
+      "account_id": "account-interiormatter-com",
+      "source_url": "https://interiormatter.com/",
+      "source_family": "official_websites",
+      "source_confidence": 0.82,
+      "source_label": "discovered-public-accounts.json",
+      "query_id": "",
+      "discovery_query": "\"interior design\" lighting Massachusetts trade",
+      "query_family": "official_search",
+      "generated_from_provider": "bing_rss"
+    },
+    {
+      "source_id": "source-381",
+      "account_id": "account-houzz-in",
+      "source_url": "https://www.houzz.in/photos/home-design-photos-phbr0-bp~",
+      "source_family": "official_websites",
+      "source_confidence": 0.92,
+      "source_label": "discovered-public-accounts.json",
+      "query_id": "",
+      "discovery_query": "\"interior design\" lighting Massachusetts trade",
+      "query_family": "official_search",
+      "generated_from_provider": "bing_rss"
+    },
+    {
+      "source_id": "source-382",
+      "account_id": "account-cooperlighting-com",
+      "source_url": "https://www.cooperlighting.com/global/resources/agent-locator",
+      "source_family": "official_websites",
+      "source_confidence": 0.67,
+      "source_label": "discovered-public-accounts.json",
+      "query_id": "",
+      "discovery_query": "\"lighting distributor\" \"New Hampshire\"",
+      "query_family": "official_search",
+      "generated_from_provider": "bing_rss"
+    },
+    {
+      "source_id": "source-383",
+      "account_id": "account-leviton-com",
+      "source_url": "https://leviton.com/support/resources/product-support/network-solutions/usa-rep-map",
+      "source_family": "official_websites",
+      "source_confidence": 0.67,
+      "source_label": "discovered-public-accounts.json",
+      "query_id": "",
+      "discovery_query": "\"lighting distributor\" \"New Hampshire\"",
+      "query_family": "official_search",
+      "generated_from_provider": "bing_rss"
+    },
+    {
+      "source_id": "source-384",
+      "account_id": "account-reflexlighting-com",
+      "source_url": "https://reflexlighting.com/",
+      "source_family": "official_websites",
+      "source_confidence": 0.92,
+      "source_label": "discovered-public-accounts.json",
+      "query_id": "",
+      "discovery_query": "\"lighting distributor\" \"New Hampshire\"",
+      "query_family": "official_search",
+      "generated_from_provider": "bing_rss"
+    },
+    {
+      "source_id": "source-385",
+      "account_id": "account-visalighting-com",
+      "source_url": "https://www.visalighting.com/sales/rep-locator",
+      "source_family": "official_websites",
+      "source_confidence": 0.77,
+      "source_label": "discovered-public-accounts.json",
+      "query_id": "",
+      "discovery_query": "\"lighting distributor\" \"New Hampshire\"",
+      "query_family": "official_search",
+      "generated_from_provider": "bing_rss"
+    },
+    {
+      "source_id": "source-386",
       "account_id": "account-blog-cityelectricsupply-com",
       "source_url": "https://blog.cityelectricsupply.com/the-ultimate-guide-to-electrical-safety/",
       "source_family": "official_websites",
@@ -4549,21 +4633,9 @@
       "generated_from_provider": "bing_rss"
     },
     {
-      "source_id": "source-380",
-      "account_id": "account-lampsplus-com",
-      "source_url": "https://www.lampsplus.com/",
-      "source_family": "official_websites",
-      "source_confidence": 0.82,
-      "source_label": "discovered-public-accounts.json",
-      "query_id": "showroom-ri-official_search-1",
-      "discovery_query": "\"lighting showroom\" RI",
-      "query_family": "official_search",
-      "generated_from_provider": "bing_rss"
-    },
-    {
-      "source_id": "source-381",
-      "account_id": "account-westelm-com",
-      "source_url": "https://www.westelm.com/shop/lighting/",
+      "source_id": "source-387",
+      "account_id": "account-shop-rockinghamlightingcenter-com",
+      "source_url": "https://shop.rockinghamlightingcenter.com/",
       "source_family": "official_websites",
       "source_confidence": 0.77,
       "source_label": "discovered-public-accounts.json",
@@ -4573,7 +4645,31 @@
       "generated_from_provider": "bing_rss"
     },
     {
-      "source_id": "source-382",
+      "source_id": "source-388",
+      "account_id": "account-frankwebb-com",
+      "source_url": "https://frankwebb.com/",
+      "source_family": "official_websites",
+      "source_confidence": 0.92,
+      "source_label": "discovered-public-accounts.json",
+      "query_id": "showroom-ri-official_search-1",
+      "discovery_query": "\"lighting showroom\" RI",
+      "query_family": "official_search",
+      "generated_from_provider": "bing_rss"
+    },
+    {
+      "source_id": "source-389",
+      "account_id": "account-citylighting-com",
+      "source_url": "https://www.citylighting.com/",
+      "source_family": "official_websites",
+      "source_confidence": 0.67,
+      "source_label": "discovered-public-accounts.json",
+      "query_id": "showroom-ri-official_search-2",
+      "discovery_query": "\"lighting gallery\" RI",
+      "query_family": "official_search",
+      "generated_from_provider": "bing_rss"
+    },
+    {
+      "source_id": "source-390",
       "account_id": "account-google-com",
       "source_url": "https://www.google.com/maps/search/site%3Agoogle.com%2Fmaps+%22lighting+showroom%22+RI",
       "source_family": "google_business_profile",
@@ -4585,33 +4681,9 @@
       "generated_from_provider": "maps_direct"
     },
     {
-      "source_id": "source-383",
-      "account_id": "account-pcmag-com",
-      "source_url": "https://www.pcmag.com/picks/the-best-pet-cameras",
-      "source_family": "official_websites",
-      "source_confidence": 0.92,
-      "source_label": "discovered-public-accounts.json",
-      "query_id": "distributor-ri-official_search-1",
-      "discovery_query": "\"lighting distributor\" RI",
-      "query_family": "official_search",
-      "generated_from_provider": "bing_rss"
-    },
-    {
-      "source_id": "source-384",
-      "account_id": "account-cnet-com",
-      "source_url": "https://www.cnet.com/home/security/best-home-pet-cams/",
-      "source_family": "official_websites",
-      "source_confidence": 0.82,
-      "source_label": "discovered-public-accounts.json",
-      "query_id": "distributor-ri-official_search-1",
-      "discovery_query": "\"lighting distributor\" RI",
-      "query_family": "official_search",
-      "generated_from_provider": "bing_rss"
-    },
-    {
-      "source_id": "source-385",
-      "account_id": "account-theconsumers-guide",
-      "source_url": "https://www.theconsumers.guide/reviews/best-ai-powered-pet-cameras-2025",
+      "source_id": "source-391",
+      "account_id": "account-mulelighting-com",
+      "source_url": "https://www.mulelighting.com/",
       "source_family": "official_websites",
       "source_confidence": 0.77,
       "source_label": "discovered-public-accounts.json",
@@ -4621,11 +4693,11 @@
       "generated_from_provider": "bing_rss"
     },
     {
-      "source_id": "source-386",
-      "account_id": "account-wired-com",
-      "source_url": "https://www.wired.com/gallery/best-pet-cameras/",
+      "source_id": "source-392",
+      "account_id": "account-rienergy-com",
+      "source_url": "https://rienergy.com/site/-/media/rie-jss-app/home/ways-to-save/rebates-and-savings-programs/commercial-savings/instant-commercial-rebates/commercial-lighting-rebates/rie-lighting_participating-distributors-and-locations.ashx",
       "source_family": "official_websites",
-      "source_confidence": 0.82,
+      "source_confidence": 0.55,
       "source_label": "discovered-public-accounts.json",
       "query_id": "distributor-ri-official_search-1",
       "discovery_query": "\"lighting distributor\" RI",
@@ -4633,7 +4705,7 @@
       "generated_from_provider": "bing_rss"
     },
     {
-      "source_id": "source-387",
+      "source_id": "source-393",
       "account_id": "account-exampledealer-com",
       "source_url": "https://exampledealer.com/partners",
       "source_family": "seed_fixture",
@@ -4645,7 +4717,7 @@
       "generated_from_provider": ""
     },
     {
-      "source_id": "source-388",
+      "source_id": "source-394",
       "account_id": "account-demo-contractor-com",
       "source_url": "https://demo-contractor.com/contact",
       "source_family": "seed_fixture",

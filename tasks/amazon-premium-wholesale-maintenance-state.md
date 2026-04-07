@@ -111,7 +111,167 @@ Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state
 Continuation mode: auto-continue
 
 ## Last Updated
-2026-04-06T18:11:00-0700
+2026-04-07T02:41:35-0700
+
+Current stage:
+- Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
+Completed:
+- Rechecked quiet-background liveness at 2026-04-07T02:10-07:00: wrapper PID `57728` is still alive (parent 1, elapsed `01-04:29:54`), pid file still points to the live wrapper, and `.state/amazon-premium-wholesale-maintenance.lock/` remains present
+- Raw/output/state/log artifacts advanced together through completed refresh `2026-04-07T01:58:28.436563-07:00`, leaving the loop only ~11.5 minutes into the next expected ~20 minute cycle window rather than stale
+- Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 43 pre-dedupe public candidates, 37 post-family-dedupe candidates, and 21 qualified post-filter candidates
+- Raw quality gate remains healthy (`field_completeness`: 1.0, `clean_dp_link_ratio`: 1.0, `brand_risk_ratio`: 0.0) with zero current query errors and no failed quality/backstop or restore-last-good signal present
+- Confirmed no current blocking failure threatens tonight's 8:00 PM America/Los_Angeles report
+Not completed:
+- Ongoing future cycles still pending naturally
+Risks / issues:
+- `output/amazon-premium-wholesale/latest-state.json` was still absent at inspection time; this is not currently blocking because the wrapper is alive, cadence is healthy, and primary quality/backstop signals remain green, but it should only be revisited if a later invocation also sees stale cadence or repeated state-artifact inconsistency
+Suggested next step:
+- Keep the existing background loop running without interruption; only intervene on future dead/stale/failed-quality conditions
+Continuation mode: auto-continue
+
+Current stage:
+- Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
+Completed:
+- Rechecked quiet-background liveness at 2026-04-07T01:41-07:00: wrapper PID `57728` is still alive (parent 1, elapsed `01-03:59:58`), pid file still points to the live wrapper, and `.state/amazon-premium-wholesale-maintenance.lock/` remains present
+- Raw/output/state/log artifacts advanced together through completed refresh `2026-04-07T01:37:12.031725-07:00`, leaving the loop only ~3.9 minutes into the next expected ~20 minute cycle window rather than stale
+- Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 43 pre-dedupe public candidates, 37 post-family-dedupe candidates, and 18 qualified post-filter candidates
+- Raw quality gate remains healthy (`field_completeness`: 1.0, `clean_dp_link_ratio`: 1.0, `brand_risk_ratio`: 0.0) with zero current query errors and no failed quality/backstop or restore-last-good signal present
+- Confirmed no current blocking failure threatens tonight's 8:00 PM America/Los_Angeles report
+Not completed:
+- Ongoing future cycles still pending naturally
+Risks / issues:
+- No blocking issues currently; only normal in-band candidate-count fluctuation between healthy cycles
+Suggested next step:
+- Keep the existing background loop running without interruption; only intervene on future dead/stale/failed-quality conditions
+Continuation mode: auto-continue
+
+Current stage:
+- Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
+Completed:
+- Rechecked overnight quiet-background liveness at 2026-04-07T01:10-07:00: wrapper PID `57728` is still alive (parent 1, elapsed `01-03:29:52`), pid file still points to the live wrapper, and `.state/amazon-premium-wholesale-maintenance.lock/` remains present
+- Raw/output/state/log artifacts remain synchronized through completed refresh `2026-04-07T00:54:38.281684-07:00`, leaving the loop only ~16.4 minutes into the next expected ~20 minute cycle window rather than stale
+- Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 43 pre-dedupe public candidates, 37 post-family-dedupe candidates, and 17 qualified post-filter candidates
+- Raw quality gate remains healthy (`field_completeness`: 1.0, `clean_dp_link_ratio`: 1.0, `brand_risk_ratio`: 0.0) with zero current query errors and no failed quality/backstop or restore-last-good signal present
+- Confirmed no current blocking failure threatens tonight's 8:00 PM America/Los_Angeles report
+Not completed:
+- Ongoing future cycles still pending naturally
+Risks / issues:
+- No blocking issues currently; only normal in-band candidate-count fluctuation between healthy cycles
+Suggested next step:
+- Keep the existing background loop running without interruption; only intervene on future dead/stale/failed-quality conditions
+Continuation mode: auto-continue
+
+Current stage:
+- Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
+Completed:
+- Rechecked quiet-background liveness at 2026-04-07T00:41-07:00: wrapper PID `57728` is still alive (parent 1, elapsed `01-02:59:46`), pid file still points to the live wrapper, and `.state/amazon-premium-wholesale-maintenance.lock/` remains present
+- Raw/output/state/log artifacts advanced together through completed refresh `2026-04-07T00:33:22.050614-07:00`, leaving the loop only ~7.8 minutes into the next expected ~20 minute cycle window rather than stale
+- Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 43 pre-dedupe public candidates, 37 post-family-dedupe candidates, and 20 qualified post-filter candidates
+- Raw quality gate remains healthy (`field_completeness`: 1.0, `clean_dp_link_ratio`: 1.0, `brand_risk_ratio`: 0.0) with zero current query errors and no failed quality/backstop or restore-last-good signal present
+- Confirmed no current blocking failure threatens tonight's 8:00 PM America/Los_Angeles report
+Not completed:
+- Ongoing future cycles still pending naturally
+Risks / issues:
+- No blocking issues currently; only normal in-band candidate-count fluctuation between healthy cycles
+Suggested next step:
+- Keep the existing background loop running without interruption; only intervene on future dead/stale/failed-quality conditions
+Continuation mode: auto-continue
+
+Current stage:
+- Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
+Completed:
+- Rechecked overnight quiet-background liveness at 2026-04-07T00:11-07:00: wrapper PID `57728` is still alive (parent 1, elapsed `01-02:30:28`), pid file still points to the live wrapper, and `.state/amazon-premium-wholesale-maintenance.lock/` remains present
+- Raw/output artifacts advanced together through completed refresh `2026-04-06T23:50:50.931456-07:00`, leaving the loop only ~20 minutes into the next expected cycle while the next cycle has already started in the log at `2026-04-07T00:10:51-07:00`
+- Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 43 pre-dedupe public candidates, 37 post-family-dedupe candidates, and 20 qualified post-filter candidates
+- Raw quality gate remains healthy (`field_completeness`: 1.0, `clean_dp_link_ratio`: 1.0, `brand_risk_ratio`: 0.0) with zero current query errors and no failed quality/backstop or restore-last-good signal present
+- Confirmed no current blocking failure threatens tonight's 8:00 PM America/Los_Angeles report
+Not completed:
+- Ongoing future cycles still pending naturally
+Risks / issues:
+- `output/amazon-premium-wholesale/latest-state.json` was absent at inspection time even though `latest.json` recorded fresh `state_mtime`; no current evidence of pipeline failure because the wrapper is alive, artifacts remain fresh, and no restore/quality-fail signal is present, but this is worth rechecking only if a later invocation also sees the state artifact missing or cadence slips
+Suggested next step:
+- Keep the existing background loop running without interruption; only intervene on future dead/stale/failed-quality conditions, and recheck the state artifact only if a later backstop sees persistent absence or stale cadence
+Continuation mode: auto-continue
+
+Current stage:
+- Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
+Completed:
+- Rechecked quiet-background liveness at 2026-04-06T23:41-07:00: wrapper PID `57728` is still alive (parent 1, elapsed `1-02:00:25`), pid file still points to the live wrapper, and `.state/amazon-premium-wholesale-maintenance.lock/` remains present
+- Raw/output/state/log artifacts advanced together through completed refresh `2026-04-06T23:29:37.475310-07:00`, leaving the loop only ~12 minutes into the next expected ~20 minute cycle window rather than stale
+- Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 43 pre-dedupe public candidates, 37 post-family-dedupe candidates, and 18 qualified post-filter candidates
+- Raw quality gate remains healthy (`field_completeness`: 1.0, `clean_dp_link_ratio`: 1.0, `brand_risk_ratio`: 0.0) with zero current query errors and no failed quality/backstop or restore-last-good signal present
+- Confirmed no current blocking failure threatens tomorrow night's 8:00 PM America/Los_Angeles report
+Not completed:
+- Ongoing future cycles still pending naturally
+Risks / issues:
+- No blocking issues currently; only normal in-band candidate-count fluctuation between healthy cycles
+Suggested next step:
+- Keep the existing background loop running without interruption; only intervene on future dead/stale/failed-quality conditions
+Continuation mode: auto-continue
+
+Current stage:
+- Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
+Completed:
+- Rechecked quiet-background liveness at 2026-04-06T22:10-07:00: wrapper PID `57728` is still alive (parent 1, elapsed `1-00:29:52`), pid file still points to the live wrapper, and `.state/amazon-premium-wholesale-maintenance.lock/` remains present
+- Raw/output/state/log artifacts advanced together through completed refresh `2026-04-06T22:04:04.946491-07:00`, leaving the loop only ~6.9 minutes into the next expected ~20 minute cycle window rather than stale
+- Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 43 pre-dedupe public candidates, 36 post-family-dedupe candidates, and 18 qualified post-filter candidates
+- Raw quality gate remains healthy (`field_completeness`: 1.0, `clean_dp_link_ratio`: 1.0, `brand_risk_ratio`: 0.0) with zero current query errors and no failed quality/backstop or restore-last-good signal present
+- Confirmed no current blocking failure threatens tomorrow night's 8:00 PM America/Los_Angeles report
+Not completed:
+- Ongoing future cycles still pending naturally
+Risks / issues:
+- No blocking issues currently; only normal in-band candidate-count fluctuation between healthy cycles
+Suggested next step:
+- Keep the existing background loop running without interruption; only intervene on future dead/stale/failed-quality conditions
+Continuation mode: auto-continue
+
+Current stage:
+- Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
+Completed:
+- Rechecked quiet-background liveness at 2026-04-06T21:41-07:00: wrapper PID `57728` is still alive (parent 1, elapsed `1-00:00:35`), pid file still points to the live wrapper, and `.state/amazon-premium-wholesale-maintenance.lock/` remains present
+- Latest completed refresh remains healthy through `2026-04-06T21:20:43.599802-07:00`, so raw/output/state artifacts are only ~20 minutes old and still within the expected cadence while the next cycle has already started in the log at `2026-04-06T21:40:43-07:00`
+- Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 43 pre-dedupe public candidates, 36 post-family-dedupe candidates, and 17 qualified post-filter candidates
+- Raw quality gate remains healthy (`field_completeness`: 1.0, `clean_dp_link_ratio`: 1.0, `brand_risk_ratio`: 0.0) with zero current query errors and no failed quality/backstop or restore-last-good signal present
+- Confirmed no current blocking failure threatens tomorrow night's 8:00 PM America/Los_Angeles report
+Not completed:
+- Ongoing future cycles still pending naturally
+Risks / issues:
+- No blocking issues currently; only normal in-band candidate-count fluctuation between healthy cycles
+Suggested next step:
+- Keep the existing background loop running without interruption; only intervene on future dead/stale/failed-quality conditions
+Continuation mode: auto-continue
+
+Current stage:
+- Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
+Completed:
+- Rechecked quiet-background liveness at 2026-04-06T20:41-07:00: wrapper PID `57728` is still alive (parent 1, elapsed `22:59:48`), pid file still points to the live wrapper, and `.state/amazon-premium-wholesale-maintenance.lock/` remains present
+- Raw/output/state/log artifacts advanced together through completed refresh `2026-04-06T20:37:13.959720-07:00`, leaving the loop only ~4 minutes into the next expected ~20 minute cycle window rather than stale
+- Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 43 pre-dedupe public candidates, 37 post-family-dedupe candidates, and 17 qualified post-filter candidates
+- Raw quality gate remains healthy (`field_completeness`: 1.0, `clean_dp_link_ratio`: 1.0, `brand_risk_ratio`: 0.0) with zero current query errors and no failed quality/backstop or restore-last-good signal present
+- Confirmed no current blocking failure threatens tomorrow night's 8:00 PM America/Los_Angeles report
+Not completed:
+- Ongoing future cycles still pending naturally
+Risks / issues:
+- No blocking issues currently; only normal in-band candidate-count fluctuation between healthy cycles
+Suggested next step:
+- Keep the existing background loop running without interruption; only intervene on future dead/stale/failed-quality conditions
+Continuation mode: auto-continue
+
+Current stage:
+- Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
+Completed:
+- Rechecked post-report-window quiet-background liveness at 2026-04-06T20:10-07:00: wrapper PID `57728` is still alive (parent 1, elapsed `22:30:10`), pid file still points to the live wrapper, and `.state/amazon-premium-wholesale-maintenance.lock/` remains present
+- Raw/output/state/log artifacts advanced together through completed refresh `2026-04-06T19:53:51.521513-07:00`, leaving the loop only ~16 minutes into the next expected ~20 minute cycle window rather than stale
+- Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 42 pre-dedupe public candidates, 36 post-family-dedupe candidates, and 19 qualified post-filter candidates
+- Raw quality gate remains healthy (`field_completeness`: 1.0, `clean_dp_link_ratio`: 1.0, `brand_risk_ratio`: 0.0) with zero current query errors and no failed quality/backstop or restore-last-good signal present
+- Confirmed no current blocking failure threatens tonight's 8:00 PM America/Los_Angeles report
+Not completed:
+- Ongoing future cycles still pending naturally
+Risks / issues:
+- No blocking issues currently; only normal in-band candidate-count fluctuation between healthy cycles
+Suggested next step:
+- Keep the existing background loop running without interruption; only intervene on future dead/stale/failed-quality conditions
+Continuation mode: auto-continue
 
 Current stage:
 - Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
@@ -968,8 +1128,73 @@ Continuation mode: auto-continue
 Current stage:
 - Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
 Completed:
+- Rechecked quiet-background liveness at 2026-04-06T19:40-07:00: wrapper PID `57728` is still alive (parent 1, elapsed `22:00:01`), pid file still points to the live wrapper, and `.state/amazon-premium-wholesale-maintenance.lock/` remains present
+- Raw/output/state/log artifacts advanced together through completed refresh `2026-04-06T19:32:05.534444-07:00`, leaving the loop only ~8 minutes into the next expected ~20 minute cycle window rather than stale
+- Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 43 pre-dedupe public candidates, 37 post-family-dedupe candidates, and 20 qualified post-filter candidates
+- Raw quality gate remains healthy (`field_completeness`: 1.0, `clean_dp_link_ratio`: 1.0, `brand_risk_ratio`: 0.0) with zero current query errors and no failed quality/backstop or restore-last-good signal present
+- Confirmed no current blocking failure threatens tonight's 8:00 PM America/Los_Angeles report
+Not completed:
+- Ongoing future cycles still pending naturally
+Risks / issues:
+- No blocking issues currently; only normal in-band candidate-count fluctuation between healthy cycles
+Suggested next step:
+- Keep the existing background loop running without interruption; only intervene on future dead/stale/failed-quality conditions
+Continuation mode: auto-continue
+
+Current stage:
+- Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
+Completed:
+- Rechecked quiet-background liveness at 2026-04-06T19:12-07:00: wrapper PID `57728` is still alive (parent 1, elapsed `21:29:47`), pid file still points to the live wrapper, and `.state/amazon-premium-wholesale-maintenance.lock/` remains present
+- Raw/output/state/log artifacts advanced together through completed refresh `2026-04-06T19:10:28.982953-07:00`, leaving the loop only ~1 minute into the next expected ~20 minute cycle window rather than stale
+- Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 43 pre-dedupe public candidates, 37 post-family-dedupe candidates, and 20 qualified post-filter candidates
+- Raw quality gate remains healthy (`field_completeness`: 1.0, `clean_dp_link_ratio`: 1.0, `brand_risk_ratio`: 0.0) with zero current query errors and no failed quality/backstop or restore-last-good signal present
+- Confirmed no current blocking failure threatens tonight's 8:00 PM America/Los_Angeles report
+Not completed:
+- Ongoing future cycles still pending naturally
+Risks / issues:
+- No blocking issues currently; only normal in-band candidate-count fluctuation between healthy cycles
+Suggested next step:
+- Keep the existing background loop running without interruption; only intervene on future dead/stale/failed-quality conditions
+Continuation mode: auto-continue
+
+Current stage:
+- Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
+Completed:
+- Rechecked quiet-background liveness at 2026-04-06T18:41-07:00: wrapper PID `57728` is still alive (parent 1, elapsed `20:59:55`), pid file still points to the live wrapper, and `.state/amazon-premium-wholesale-maintenance.lock/` remains present
+- Raw/output/state/log artifacts advanced together through completed refresh `2026-04-06T18:27:06.085099-07:00`, leaving the loop only ~14 minutes into the next expected ~20 minute cycle window rather than stale
+- Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 44 pre-dedupe public candidates, 37 post-family-dedupe candidates, and 21 qualified post-filter candidates
+- Raw quality gate remains healthy (`field_completeness`: 1.0, `clean_dp_link_ratio`: 1.0, `brand_risk_ratio`: 0.0) with zero current query errors and no failed quality/backstop or restore-last-good signal present
+- Confirmed no current blocking failure threatens tonight's 8:00 PM America/Los_Angeles report
+Not completed:
+- Ongoing future cycles still pending naturally
+Risks / issues:
+- No blocking issues currently; only normal in-band candidate-count fluctuation between healthy cycles
+Suggested next step:
+- Keep the existing background loop running without interruption; only intervene on future dead/stale/failed-quality conditions
+Continuation mode: auto-continue
+
+Current stage:
+- Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
+Completed:
 - Rechecked quiet-background liveness at 2026-04-06T18:11-07:00: wrapper PID `57728` is still alive (parent 1, elapsed `20:30:05`), pid file still points to the live wrapper, and `.state/amazon-premium-wholesale-maintenance.lock/` remains present
 - Raw/output/log artifacts advanced together through completed refresh `2026-04-06T18:05:26.087753-07:00`, leaving the loop only ~5.8 minutes into the next expected ~20 minute cycle window rather than stale
+- Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 43 pre-dedupe public candidates, 37 post-family-dedupe candidates, and 21 qualified post-filter candidates
+- Raw quality gate remains healthy (`field_completeness`: 1.0, `clean_dp_link_ratio`: 1.0, `brand_risk_ratio`: 0.0) with zero current query errors and no failed quality/backstop or restore-last-good signal present
+- Confirmed no current blocking failure threatens tonight's 8:00 PM America/Los_Angeles report
+Not completed:
+- Ongoing future cycles still pending naturally
+Risks / issues:
+- No blocking issues currently; only normal in-band candidate-count fluctuation between healthy cycles
+Suggested next step:
+- Keep the existing background loop running without interruption; only intervene on future dead/stale/failed-quality conditions
+Continuation mode: auto-continue
+
+
+Current stage:
+- Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
+Completed:
+- Rechecked quiet-background liveness at 2026-04-07T02:41-07:00: wrapper PID `57728` is still alive (parent 1, elapsed `01-05:00:28`), pid file still points to the live wrapper, and `.state/amazon-premium-wholesale-maintenance.lock/` remains present
+- Raw/output/state/log artifacts advanced together through completed refresh `2026-04-07T02:40:58.053797-07:00`, leaving the loop under one minute into the next expected ~20 minute cycle window rather than stale
 - Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 43 pre-dedupe public candidates, 37 post-family-dedupe candidates, and 21 qualified post-filter candidates
 - Raw quality gate remains healthy (`field_completeness`: 1.0, `clean_dp_link_ratio`: 1.0, `brand_risk_ratio`: 0.0) with zero current query errors and no failed quality/backstop or restore-last-good signal present
 - Confirmed no current blocking failure threatens tonight's 8:00 PM America/Los_Angeles report

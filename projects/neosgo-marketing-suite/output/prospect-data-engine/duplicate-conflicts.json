@@ -345,75 +345,107 @@
       "conflict_type": "duplicate_domain_or_company"
     },
     {
-      "dedupe_key": "domain:interiordesign.net",
-      "kept_company_name": "Interior Design Magazine",
-      "dropped_company_name": "Projects",
-      "kept_source_url": "https://interiordesign.net/",
-      "dropped_source_url": "https://interiordesign.net/projects/",
+      "dedupe_key": "domain:citylighting.com",
+      "kept_company_name": "City Lighting Products",
+      "dropped_company_name": "About City Lighting Products",
+      "kept_source_url": "https://www.citylighting.com/",
+      "dropped_source_url": "https://www.citylighting.com/about/",
       "conflict_type": "duplicate_domain_or_company"
     },
     {
-      "dedupe_key": "domain:interiordesign.net",
-      "kept_company_name": "Interior Design Magazine",
-      "dropped_company_name": "A Look At Interior Design's 2026 Top 100 Giants",
-      "kept_source_url": "https://interiordesign.net/",
-      "dropped_source_url": "https://interiordesign.net/research/a-look-at-interior-designs-2026-top-100-giants/",
+      "dedupe_key": "domain:citylighting.com",
+      "kept_company_name": "City Lighting Products",
+      "dropped_company_name": "Office Commercial Lighting",
+      "kept_source_url": "https://www.citylighting.com/",
+      "dropped_source_url": "https://www.citylighting.com/markets/office/",
       "conflict_type": "duplicate_domain_or_company"
     },
     {
-      "dedupe_key": "domain:interiordesign.net",
-      "kept_company_name": "Interior Design Magazine",
-      "dropped_company_name": "HOMES",
-      "kept_source_url": "https://interiordesign.net/",
-      "dropped_source_url": "https://interiordesign.net/homes/",
+      "dedupe_key": "domain:citylighting.com",
+      "kept_company_name": "City Lighting Products",
+      "dropped_company_name": "Theatre Commercial Lighting",
+      "kept_source_url": "https://www.citylighting.com/",
+      "dropped_source_url": "https://www.citylighting.com/markets/theatre/",
       "conflict_type": "duplicate_domain_or_company"
     },
     {
-      "dedupe_key": "domain:lampsplus.com",
-      "kept_company_name": "Site Maintenance",
-      "dropped_company_name": "Site Maintenance",
-      "kept_source_url": "https://www.lampsplus.com/",
-      "dropped_source_url": "https://www.lampsplus.com/",
+      "dedupe_key": "domain:citylighting.com",
+      "kept_company_name": "City Lighting Products",
+      "dropped_company_name": "City Lighting Products",
+      "kept_source_url": "https://www.citylighting.com/",
+      "dropped_source_url": "https://www.citylighting.com/",
       "conflict_type": "duplicate_domain_or_company"
     },
     {
-      "dedupe_key": "domain:westelm.com",
-      "kept_company_name": "Shop Lighting & Light Fixtures",
-      "dropped_company_name": "Shop Lighting & Light Fixtures",
-      "kept_source_url": "https://www.westelm.com/shop/lighting/",
-      "dropped_source_url": "https://www.westelm.com/shop/lighting/",
+      "dedupe_key": "domain:citylighting.com",
+      "kept_company_name": "City Lighting Products",
+      "dropped_company_name": "About City Lighting Products",
+      "kept_source_url": "https://www.citylighting.com/",
+      "dropped_source_url": "https://www.citylighting.com/about/",
       "conflict_type": "duplicate_domain_or_company"
     },
     {
-      "dedupe_key": "domain:lampsplus.com",
-      "kept_company_name": "Site Maintenance",
-      "dropped_company_name": "Site Maintenance",
-      "kept_source_url": "https://www.lampsplus.com/",
-      "dropped_source_url": "https://www.lampsplus.com/",
+      "dedupe_key": "domain:citylighting.com",
+      "kept_company_name": "City Lighting Products",
+      "dropped_company_name": "Office Commercial Lighting",
+      "kept_source_url": "https://www.citylighting.com/",
+      "dropped_source_url": "https://www.citylighting.com/markets/office/",
       "conflict_type": "duplicate_domain_or_company"
     },
     {
-      "dedupe_key": "domain:westelm.com",
-      "kept_company_name": "Shop Lighting & Light Fixtures",
-      "dropped_company_name": "Shop Lighting & Light Fixtures",
-      "kept_source_url": "https://www.westelm.com/shop/lighting/",
-      "dropped_source_url": "https://www.westelm.com/shop/lighting/",
+      "dedupe_key": "domain:citylighting.com",
+      "kept_company_name": "City Lighting Products",
+      "dropped_company_name": "Theatre Commercial Lighting",
+      "kept_source_url": "https://www.citylighting.com/",
+      "dropped_source_url": "https://www.citylighting.com/markets/theatre/",
       "conflict_type": "duplicate_domain_or_company"
     },
     {
-      "dedupe_key": "domain:lampsplus.com",
-      "kept_company_name": "Site Maintenance",
-      "dropped_company_name": "Site Maintenance",
-      "kept_source_url": "https://www.lampsplus.com/",
-      "dropped_source_url": "https://www.lampsplus.com/",
+      "dedupe_key": "domain:citylighting.com",
+      "kept_company_name": "City Lighting Products",
+      "dropped_company_name": "City Lighting Products",
+      "kept_source_url": "https://www.citylighting.com/",
+      "dropped_source_url": "https://www.citylighting.com/",
       "conflict_type": "duplicate_domain_or_company"
     },
     {
-      "dedupe_key": "domain:westelm.com",
-      "kept_company_name": "Shop Lighting & Light Fixtures",
-      "dropped_company_name": "Shop Lighting & Light Fixtures",
-      "kept_source_url": "https://www.westelm.com/shop/lighting/",
-      "dropped_source_url": "https://www.westelm.com/shop/lighting/",
+      "dedupe_key": "domain:citylighting.com",
+      "kept_company_name": "City Lighting Products",
+      "dropped_company_name": "About City Lighting Products",
+      "kept_source_url": "https://www.citylighting.com/",
+      "dropped_source_url": "https://www.citylighting.com/about/",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:citylighting.com",
+      "kept_company_name": "City Lighting Products",
+      "dropped_company_name": "Office Commercial Lighting",
+      "kept_source_url": "https://www.citylighting.com/",
+      "dropped_source_url": "https://www.citylighting.com/markets/office/",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:citylighting.com",
+      "kept_company_name": "City Lighting Products",
+      "dropped_company_name": "Theatre Commercial Lighting",
+      "kept_source_url": "https://www.citylighting.com/",
+      "dropped_source_url": "https://www.citylighting.com/markets/theatre/",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:cooperlighting.com",
+      "kept_company_name": "Lighting Agent & Distributor Locator",
+      "dropped_company_name": "Lighting Agent & Distributor Locator",
+      "kept_source_url": "https://www.cooperlighting.com/global/resources/agent-locator",
+      "dropped_source_url": "https://www.cooperlighting.com/global/resources/agent-locator",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:cooperlighting.com",
+      "kept_company_name": "Lighting Agent & Distributor Locator",
+      "dropped_company_name": "Commercial Lighting Company",
+      "kept_source_url": "https://www.cooperlighting.com/global/resources/agent-locator",
+      "dropped_source_url": "https://www.cooperlighting.com/global",
       "conflict_type": "duplicate_domain_or_company"
     },
     {
@@ -441,35 +473,35 @@
       "conflict_type": "duplicate_domain_or_company"
     },
     {
-      "dedupe_key": "domain:lampsplus.com",
-      "kept_company_name": "Site Maintenance",
-      "dropped_company_name": "Site Maintenance",
-      "kept_source_url": "https://www.lampsplus.com/",
-      "dropped_source_url": "https://www.lampsplus.com/",
+      "dedupe_key": "domain:citylighting.com",
+      "kept_company_name": "City Lighting Products",
+      "dropped_company_name": "City Lighting Products",
+      "kept_source_url": "https://www.citylighting.com/",
+      "dropped_source_url": "https://www.citylighting.com/",
       "conflict_type": "duplicate_domain_or_company"
     },
     {
-      "dedupe_key": "domain:westelm.com",
-      "kept_company_name": "Shop Lighting & Light Fixtures",
-      "dropped_company_name": "Shop Lighting & Light Fixtures",
-      "kept_source_url": "https://www.westelm.com/shop/lighting/",
-      "dropped_source_url": "https://www.westelm.com/shop/lighting/",
+      "dedupe_key": "domain:citylighting.com",
+      "kept_company_name": "City Lighting Products",
+      "dropped_company_name": "About City Lighting Products",
+      "kept_source_url": "https://www.citylighting.com/",
+      "dropped_source_url": "https://www.citylighting.com/about/",
       "conflict_type": "duplicate_domain_or_company"
     },
     {
-      "dedupe_key": "domain:lampsplus.com",
-      "kept_company_name": "Site Maintenance",
-      "dropped_company_name": "Site Maintenance",
-      "kept_source_url": "https://www.lampsplus.com/",
-      "dropped_source_url": "https://www.lampsplus.com/",
+      "dedupe_key": "domain:citylighting.com",
+      "kept_company_name": "City Lighting Products",
+      "dropped_company_name": "Office Commercial Lighting",
+      "kept_source_url": "https://www.citylighting.com/",
+      "dropped_source_url": "https://www.citylighting.com/markets/office/",
       "conflict_type": "duplicate_domain_or_company"
     },
     {
-      "dedupe_key": "domain:westelm.com",
-      "kept_company_name": "Shop Lighting & Light Fixtures",
-      "dropped_company_name": "Shop Lighting & Light Fixtures",
-      "kept_source_url": "https://www.westelm.com/shop/lighting/",
-      "dropped_source_url": "https://www.westelm.com/shop/lighting/",
+      "dedupe_key": "domain:citylighting.com",
+      "kept_company_name": "City Lighting Products",
+      "dropped_company_name": "Theatre Commercial Lighting",
+      "kept_source_url": "https://www.citylighting.com/",
+      "dropped_source_url": "https://www.citylighting.com/markets/theatre/",
       "conflict_type": "duplicate_domain_or_company"
     }
   ]

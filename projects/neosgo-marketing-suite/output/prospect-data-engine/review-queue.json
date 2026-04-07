@@ -9,8 +9,8 @@
       "source_label": "discovered-public-accounts.json",
       "reason": "quality_rating=review",
       "evidence": {
-        "duplicate_rate": 0.5926,
-        "average_source_confidence": 0.773
+        "duplicate_rate": 0.5405,
+        "average_source_confidence": 0.7311
       }
     }
   ]

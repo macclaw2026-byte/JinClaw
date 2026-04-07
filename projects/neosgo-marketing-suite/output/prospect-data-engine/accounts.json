@@ -2640,11 +2640,60 @@
       "geo": "RI"
     },
     {
-      "account_id": "account-interiordesign-net",
-      "company_name": "Interior Design Magazine",
-      "website_root_domain": "interiordesign.net",
+      "account_id": "account-doi-gov",
+      "company_name": "U.S. Department of the Interior",
+      "website_root_domain": "doi.gov",
       "account_type": "designer",
       "geo": "MA"
+    },
+    {
+      "account_id": "account-en-wikipedia-org",
+      "company_name": "United States Department of the Interior",
+      "website_root_domain": "en.wikipedia.org",
+      "account_type": "designer",
+      "geo": "MA"
+    },
+    {
+      "account_id": "account-interiormatter-com",
+      "company_name": "Home",
+      "website_root_domain": "interiormatter.com",
+      "account_type": "designer",
+      "geo": "MA"
+    },
+    {
+      "account_id": "account-houzz-in",
+      "company_name": "Home Design Ideas, Pictures, Remodel and Decor",
+      "website_root_domain": "houzz.in",
+      "account_type": "designer",
+      "geo": "MA"
+    },
+    {
+      "account_id": "account-cooperlighting-com",
+      "company_name": "Lighting Agent & Distributor Locator",
+      "website_root_domain": "cooperlighting.com",
+      "account_type": "distributor",
+      "geo": "NH"
+    },
+    {
+      "account_id": "account-leviton-com",
+      "company_name": "USA Rep Map",
+      "website_root_domain": "leviton.com",
+      "account_type": "distributor",
+      "geo": "NH"
+    },
+    {
+      "account_id": "account-reflexlighting-com",
+      "company_name": "Reflex Lighting",
+      "website_root_domain": "reflexlighting.com",
+      "account_type": "distributor",
+      "geo": "NH"
+    },
+    {
+      "account_id": "account-visalighting-com",
+      "company_name": "Find a Representative Agency",
+      "website_root_domain": "visalighting.com",
+      "account_type": "distributor",
+      "geo": "NH"
     },
     {
       "account_id": "account-blog-cityelectricsupply-com",
@@ -2654,16 +2703,23 @@
       "geo": "CT"
     },
     {
-      "account_id": "account-lampsplus-com",
-      "company_name": "Site Maintenance",
-      "website_root_domain": "lampsplus.com",
+      "account_id": "account-shop-rockinghamlightingcenter-com",
+      "company_name": "The Lighting Center At Rockingham Electric",
+      "website_root_domain": "shop.rockinghamlightingcenter.com",
       "account_type": "showroom",
       "geo": "RI"
     },
     {
-      "account_id": "account-westelm-com",
-      "company_name": "Shop Lighting & Light Fixtures",
-      "website_root_domain": "westelm.com",
+      "account_id": "account-frankwebb-com",
+      "company_name": "Luxury Kitchen, Bath & Lighting Showrooms",
+      "website_root_domain": "frankwebb.com",
+      "account_type": "showroom",
+      "geo": "RI"
+    },
+    {
+      "account_id": "account-citylighting-com",
+      "company_name": "City Lighting Products",
+      "website_root_domain": "citylighting.com",
       "account_type": "showroom",
       "geo": "RI"
     },
@@ -2675,30 +2731,16 @@
       "geo": "RI"
     },
     {
-      "account_id": "account-pcmag-com",
-      "company_name": "The Best Pet Cameras We've Tested for 2026",
-      "website_root_domain": "pcmag.com",
+      "account_id": "account-mulelighting-com",
+      "company_name": "Mule Lighting",
+      "website_root_domain": "mulelighting.com",
       "account_type": "distributor",
       "geo": "RI"
     },
     {
-      "account_id": "account-cnet-com",
-      "company_name": "Best Home Pet Cameras of 2026: Watch From Anywhere",
-      "website_root_domain": "cnet.com",
-      "account_type": "distributor",
-      "geo": "RI"
-    },
-    {
-      "account_id": "account-theconsumers-guide",
-      "company_name": "The Best AI",
-      "website_root_domain": "theconsumers.guide",
-      "account_type": "distributor",
-      "geo": "RI"
-    },
-    {
-      "account_id": "account-wired-com",
-      "company_name": "10 Best Pet Cameras (2026), Tested With Our Pets",
-      "website_root_domain": "wired.com",
+      "account_id": "account-rienergy-com",
+      "company_name": "rienergy.com",
+      "website_root_domain": "rienergy.com",
       "account_type": "distributor",
       "geo": "RI"
     },

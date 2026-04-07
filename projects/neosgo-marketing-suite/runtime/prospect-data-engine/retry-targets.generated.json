@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-04-07T00:49:26.465764+00:00",
+  "generated_at": "2026-04-07T09:49:19.805787+00:00",
   "items": [
     {
       "target_url": "https://etisales.com",
@@ -14,11 +14,11 @@
       "enabled": true,
       "retry_attempts": 1,
       "retry_reason": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: Hostname mismatch, certificate is not valid for 'etisales.com'. (_ssl.c:1129)>",
-      "retry_not_before": "2026-04-07T06:49:26.458606+00:00"
+      "retry_not_before": "2026-04-07T15:49:19.804740+00:00"
     },
     {
       "target_url": "https://www.cityelectricsupply.com/c/conduit-ducts-strut",
-      "target_id": "generated-target-2-1",
+      "target_id": "generated-target-3-1",
       "account_type": "electrician",
       "persona_type": "operations_manager",
       "geo": "CT",
@@ -39,15 +39,15 @@
       "generated_rank": 1,
       "query_bias": 0.33,
       "provider_hits": {
-        "bing_rss": 3
+        "bing_rss": 4
       },
       "retry_attempts": 1,
       "retry_reason": "HTTP Error 403: Forbidden",
-      "retry_not_before": "2026-04-07T06:49:26.458606+00:00"
+      "retry_not_before": "2026-04-07T15:49:19.804740+00:00"
     },
     {
       "target_url": "https://www.cityelectricsupply.com/",
-      "target_id": "generated-target-2-2",
+      "target_id": "generated-target-3-2",
       "account_type": "electrician",
       "persona_type": "operations_manager",
       "geo": "CT",
@@ -68,28 +68,59 @@
       "generated_rank": 2,
       "query_bias": 0.33,
       "provider_hits": {
-        "bing_rss": 3
+        "bing_rss": 4
       },
       "retry_attempts": 1,
       "retry_reason": "HTTP Error 403: Forbidden",
-      "retry_not_before": "2026-04-07T06:49:26.458606+00:00"
+      "retry_not_before": "2026-04-07T15:49:19.804740+00:00"
     },
     {
-      "target_url": "https://www.wayfair.com/lighting/cat/lighting-c215735.html",
-      "target_id": "generated-target-22-1",
-      "account_type": "distributor",
-      "persona_type": "buyer",
-      "geo": "NH",
+      "target_url": "https://www.cityelectricsupply.com/branch/1086",
+      "target_id": "generated-target-3-4",
+      "account_type": "electrician",
+      "persona_type": "operations_manager",
+      "geo": "CT",
       "query_id": null,
       "query_family": "official_search",
       "source_family": "official_websites",
       "signal_hints": [
         "search_discovery",
-        "dealer_program_fit",
+        "installation_trade_fit",
         "query_discovery"
       ],
       "enabled": true,
-      "generated_from_query": "\"lighting distributor\" \"New Hampshire\"",
+      "generated_from_query": "\"electrical contractor\" \"Connecticut\" commercial residential",
+      "generated_from_providers": [
+        "bing_rss"
+      ],
+      "generated_from_provider": "bing_rss",
+      "generated_rank": 4,
+      "query_bias": 0.33,
+      "provider_hits": {
+        "bing_rss": 4
+      },
+      "retry_attempts": 1,
+      "retry_reason": "HTTP Error 403: Forbidden",
+      "retry_not_before": "2026-04-07T15:49:19.804740+00:00"
+    },
+    {
+      "target_url": "https://www.yellowpages.com/pawtucket-ri/lighting-fixtures",
+      "target_id": "generated-target-4-1",
+      "account_type": "showroom",
+      "persona_type": "buyer",
+      "geo": "RI",
+      "query_id": "showroom-ri-official_search-1",
+      "query_family": "official_search",
+      "source_family": "official_websites",
+      "signal_hints": [
+        "search_discovery",
+        "recipe_showroom",
+        "region_ri",
+        "query_family_official_search",
+        "query_discovery"
+      ],
+      "enabled": true,
+      "generated_from_query": "\"lighting showroom\" RI",
       "generated_from_providers": [
         "bing_rss"
       ],
@@ -99,26 +130,28 @@
       "provider_hits": {
         "bing_rss": 4
       },
-      "retry_attempts": 6,
-      "retry_reason": "HTTP Error 429: Too Many Requests (CDN PX)",
-      "retry_not_before": "2026-04-07T06:49:26.458606+00:00"
+      "retry_attempts": 1,
+      "retry_reason": "HTTP Error 403: Forbidden",
+      "retry_not_before": "2026-04-07T15:49:19.804740+00:00"
     },
     {
-      "target_url": "https://www.homedepot.com/b/Lighting/N-5yc1vZbvn5",
-      "target_id": "generated-target-22-3",
-      "account_type": "distributor",
+      "target_url": "https://www.chamberofcommerce.com/business-directory/rhode-island/pawtucket/electrical-supply-store/4823651-granite-city-electric-supply-showroom",
+      "target_id": "generated-target-4-3",
+      "account_type": "showroom",
       "persona_type": "buyer",
-      "geo": "NH",
-      "query_id": null,
+      "geo": "RI",
+      "query_id": "showroom-ri-official_search-1",
       "query_family": "official_search",
       "source_family": "official_websites",
       "signal_hints": [
         "search_discovery",
-        "dealer_program_fit",
+        "recipe_showroom",
+        "region_ri",
+        "query_family_official_search",
         "query_discovery"
       ],
       "enabled": true,
-      "generated_from_query": "\"lighting distributor\" \"New Hampshire\"",
+      "generated_from_query": "\"lighting showroom\" RI",
       "generated_from_providers": [
         "bing_rss"
       ],
@@ -128,9 +161,9 @@
       "provider_hits": {
         "bing_rss": 4
       },
-      "retry_attempts": 6,
+      "retry_attempts": 1,
       "retry_reason": "HTTP Error 403: Forbidden",
-      "retry_not_before": "2026-04-07T06:49:26.458606+00:00"
+      "retry_not_before": "2026-04-07T15:49:19.804740+00:00"
     }
   ]
 }

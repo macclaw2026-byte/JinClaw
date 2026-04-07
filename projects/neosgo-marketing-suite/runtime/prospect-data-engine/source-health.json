@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-04-07T00:49:26.465434+00:00",
+  "updated_at": "2026-04-07T09:49:19.805166+00:00",
   "items": [
     {
       "source_label": "prospect-seeds.json",
@@ -70,8 +70,8 @@
       "source_family": "unclassified_public_source",
       "quality_rating": "review",
       "health_score": 0.63,
-      "duplicate_rate": 0.5926,
-      "average_source_confidence": 0.773
+      "duplicate_rate": 0.5405,
+      "average_source_confidence": 0.7311
     },
     {
       "source_label": "sample-public-leads.csv",

@@ -10665,9 +10665,9 @@
       "generated_from_provider": ""
     },
     {
-      "source_url": "https://interiordesign.net/",
-      "company_name": "Interior Design Magazine",
-      "website_root_domain": "interiordesign.net",
+      "source_url": "https://www.doi.gov/",
+      "company_name": "U.S. Department of the Interior",
+      "website_root_domain": "doi.gov",
       "account_type": "designer",
       "persona_type": "founder",
       "geo": "MA",
@@ -10679,7 +10679,7 @@
         "contact_form_detected"
       ],
       "contact": {
-        "contact_id": "contact-interior-design-magazine",
+        "contact_id": "contact-u-s--department-of-the-interior",
         "full_name": "",
         "email": "",
         "reachability_status": "form_available"
@@ -10689,6 +10689,195 @@
       "source_family": "official_websites",
       "query_id": "",
       "discovery_query": "\"interior design\" lighting Massachusetts trade",
+      "query_family": "official_search",
+      "generated_from_provider": "bing_rss"
+    },
+    {
+      "source_url": "https://en.wikipedia.org/wiki/United_States_Department_of_the_Interior",
+      "company_name": "United States Department of the Interior",
+      "website_root_domain": "en.wikipedia.org",
+      "account_type": "designer",
+      "persona_type": "founder",
+      "geo": "MA",
+      "signals": [
+        "search_discovery",
+        "design_led_projects",
+        "trade_program_fit",
+        "query_discovery",
+        "contact_form_detected"
+      ],
+      "contact": {
+        "contact_id": "contact-united-states-department-of-the-interior",
+        "full_name": "",
+        "email": "270x200@2x.png",
+        "reachability_status": "email_unverified"
+      },
+      "source_confidence": 0.92,
+      "source_label": "discovered-public-accounts.json",
+      "source_family": "official_websites",
+      "query_id": "",
+      "discovery_query": "\"interior design\" lighting Massachusetts trade",
+      "query_family": "official_search",
+      "generated_from_provider": "bing_rss"
+    },
+    {
+      "source_url": "https://interiormatter.com/",
+      "company_name": "Home",
+      "website_root_domain": "interiormatter.com",
+      "account_type": "designer",
+      "persona_type": "founder",
+      "geo": "MA",
+      "signals": [
+        "search_discovery",
+        "design_led_projects",
+        "trade_program_fit",
+        "query_discovery"
+      ],
+      "contact": {
+        "contact_id": "contact-home",
+        "full_name": "",
+        "email": "info@interiormatter.com",
+        "reachability_status": "email_unverified"
+      },
+      "source_confidence": 0.82,
+      "source_label": "discovered-public-accounts.json",
+      "source_family": "official_websites",
+      "query_id": "",
+      "discovery_query": "\"interior design\" lighting Massachusetts trade",
+      "query_family": "official_search",
+      "generated_from_provider": "bing_rss"
+    },
+    {
+      "source_url": "https://www.houzz.in/photos/home-design-photos-phbr0-bp~",
+      "company_name": "Home Design Ideas, Pictures, Remodel and Decor",
+      "website_root_domain": "houzz.in",
+      "account_type": "designer",
+      "persona_type": "founder",
+      "geo": "MA",
+      "signals": [
+        "search_discovery",
+        "design_led_projects",
+        "trade_program_fit",
+        "query_discovery",
+        "contact_form_detected"
+      ],
+      "contact": {
+        "contact_id": "contact-home-design-ideas--pictures--remodel-and-decor",
+        "full_name": "",
+        "email": "1_1_Build_your_profile@2x.png",
+        "reachability_status": "email_unverified"
+      },
+      "source_confidence": 0.92,
+      "source_label": "discovered-public-accounts.json",
+      "source_family": "official_websites",
+      "query_id": "",
+      "discovery_query": "\"interior design\" lighting Massachusetts trade",
+      "query_family": "official_search",
+      "generated_from_provider": "bing_rss"
+    },
+    {
+      "source_url": "https://www.cooperlighting.com/global/resources/agent-locator",
+      "company_name": "Lighting Agent & Distributor Locator",
+      "website_root_domain": "cooperlighting.com",
+      "account_type": "distributor",
+      "persona_type": "buyer",
+      "geo": "NH",
+      "signals": [
+        "search_discovery",
+        "dealer_program_fit",
+        "query_discovery"
+      ],
+      "contact": {
+        "contact_id": "contact-lighting-agent---distributor-locator",
+        "full_name": "",
+        "email": "",
+        "reachability_status": "unknown"
+      },
+      "source_confidence": 0.67,
+      "source_label": "discovered-public-accounts.json",
+      "source_family": "official_websites",
+      "query_id": "",
+      "discovery_query": "\"lighting distributor\" \"New Hampshire\"",
+      "query_family": "official_search",
+      "generated_from_provider": "bing_rss"
+    },
+    {
+      "source_url": "https://leviton.com/support/resources/product-support/network-solutions/usa-rep-map",
+      "company_name": "USA Rep Map",
+      "website_root_domain": "leviton.com",
+      "account_type": "distributor",
+      "persona_type": "buyer",
+      "geo": "NH",
+      "signals": [
+        "search_discovery",
+        "dealer_program_fit",
+        "query_discovery"
+      ],
+      "contact": {
+        "contact_id": "contact-usa-rep-map",
+        "full_name": "",
+        "email": "",
+        "reachability_status": "unknown"
+      },
+      "source_confidence": 0.67,
+      "source_label": "discovered-public-accounts.json",
+      "source_family": "official_websites",
+      "query_id": "",
+      "discovery_query": "\"lighting distributor\" \"New Hampshire\"",
+      "query_family": "official_search",
+      "generated_from_provider": "bing_rss"
+    },
+    {
+      "source_url": "https://reflexlighting.com/",
+      "company_name": "Reflex Lighting",
+      "website_root_domain": "reflexlighting.com",
+      "account_type": "distributor",
+      "persona_type": "buyer",
+      "geo": "NH",
+      "signals": [
+        "search_discovery",
+        "dealer_program_fit",
+        "query_discovery",
+        "contact_form_detected"
+      ],
+      "contact": {
+        "contact_id": "contact-reflex-lighting",
+        "full_name": "",
+        "email": "controls@reflexlighting.com",
+        "reachability_status": "email_unverified"
+      },
+      "source_confidence": 0.92,
+      "source_label": "discovered-public-accounts.json",
+      "source_family": "official_websites",
+      "query_id": "",
+      "discovery_query": "\"lighting distributor\" \"New Hampshire\"",
+      "query_family": "official_search",
+      "generated_from_provider": "bing_rss"
+    },
+    {
+      "source_url": "https://www.visalighting.com/sales/rep-locator",
+      "company_name": "Find a Representative Agency",
+      "website_root_domain": "visalighting.com",
+      "account_type": "distributor",
+      "persona_type": "buyer",
+      "geo": "NH",
+      "signals": [
+        "search_discovery",
+        "dealer_program_fit",
+        "query_discovery",
+        "contact_form_detected"
+      ],
+      "contact": {
+        "contact_id": "contact-find-a-representative-agency",
+        "full_name": "",
+        "email": "",
+        "reachability_status": "form_available"
+      },
+      "source_confidence": 0.77,
+      "source_label": "discovered-public-accounts.json",
+      "source_family": "official_websites",
+      "query_id": "",
+      "discovery_query": "\"lighting distributor\" \"New Hampshire\"",
       "query_family": "official_search",
       "generated_from_provider": "bing_rss"
     },
@@ -10720,37 +10909,9 @@
       "generated_from_provider": "bing_rss"
     },
     {
-      "source_url": "https://www.lampsplus.com/",
-      "company_name": "Site Maintenance",
-      "website_root_domain": "lampsplus.com",
-      "account_type": "showroom",
-      "persona_type": "buyer",
-      "geo": "RI",
-      "signals": [
-        "search_discovery",
-        "recipe_showroom",
-        "region_ri",
-        "query_family_official_search",
-        "query_discovery"
-      ],
-      "contact": {
-        "contact_id": "contact-site-maintenance",
-        "full_name": "",
-        "email": "reportaproblem@lampsplus.com",
-        "reachability_status": "email_unverified"
-      },
-      "source_confidence": 0.82,
-      "source_label": "discovered-public-accounts.json",
-      "source_family": "official_websites",
-      "query_id": "showroom-ri-official_search-1",
-      "discovery_query": "\"lighting showroom\" RI",
-      "query_family": "official_search",
-      "generated_from_provider": "bing_rss"
-    },
-    {
-      "source_url": "https://www.westelm.com/shop/lighting/",
-      "company_name": "Shop Lighting & Light Fixtures",
-      "website_root_domain": "westelm.com",
+      "source_url": "https://shop.rockinghamlightingcenter.com/",
+      "company_name": "The Lighting Center At Rockingham Electric",
+      "website_root_domain": "shop.rockinghamlightingcenter.com",
       "account_type": "showroom",
       "persona_type": "buyer",
       "geo": "RI",
@@ -10763,7 +10924,7 @@
         "contact_form_detected"
       ],
       "contact": {
-        "contact_id": "contact-shop-lighting---light-fixtures",
+        "contact_id": "contact-the-lighting-center-at-rockingham-electric",
         "full_name": "",
         "email": "",
         "reachability_status": "form_available"
@@ -10773,6 +10934,63 @@
       "source_family": "official_websites",
       "query_id": "showroom-ri-official_search-1",
       "discovery_query": "\"lighting showroom\" RI",
+      "query_family": "official_search",
+      "generated_from_provider": "bing_rss"
+    },
+    {
+      "source_url": "https://frankwebb.com/",
+      "company_name": "Luxury Kitchen, Bath & Lighting Showrooms",
+      "website_root_domain": "frankwebb.com",
+      "account_type": "showroom",
+      "persona_type": "buyer",
+      "geo": "RI",
+      "signals": [
+        "search_discovery",
+        "recipe_showroom",
+        "region_ri",
+        "query_family_official_search",
+        "query_discovery",
+        "contact_form_detected"
+      ],
+      "contact": {
+        "contact_id": "contact-luxury-kitchen--bath---lighting-showrooms",
+        "full_name": "",
+        "email": "help@frankwebb.com",
+        "reachability_status": "email_unverified"
+      },
+      "source_confidence": 0.92,
+      "source_label": "discovered-public-accounts.json",
+      "source_family": "official_websites",
+      "query_id": "showroom-ri-official_search-1",
+      "discovery_query": "\"lighting showroom\" RI",
+      "query_family": "official_search",
+      "generated_from_provider": "bing_rss"
+    },
+    {
+      "source_url": "https://www.citylighting.com/",
+      "company_name": "City Lighting Products",
+      "website_root_domain": "citylighting.com",
+      "account_type": "showroom",
+      "persona_type": "buyer",
+      "geo": "RI",
+      "signals": [
+        "search_discovery",
+        "recipe_showroom",
+        "region_ri",
+        "query_family_official_search",
+        "query_discovery"
+      ],
+      "contact": {
+        "contact_id": "contact-city-lighting-products",
+        "full_name": "",
+        "email": "",
+        "reachability_status": "unknown"
+      },
+      "source_confidence": 0.67,
+      "source_label": "discovered-public-accounts.json",
+      "source_family": "official_websites",
+      "query_id": "showroom-ri-official_search-2",
+      "discovery_query": "\"lighting gallery\" RI",
       "query_family": "official_search",
       "generated_from_provider": "bing_rss"
     },
@@ -10805,9 +11023,9 @@
       "generated_from_provider": "maps_direct"
     },
     {
-      "source_url": "https://www.pcmag.com/picks/the-best-pet-cameras",
-      "company_name": "The Best Pet Cameras We've Tested for 2026",
-      "website_root_domain": "pcmag.com",
+      "source_url": "https://www.mulelighting.com/",
+      "company_name": "Mule Lighting",
+      "website_root_domain": "mulelighting.com",
       "account_type": "distributor",
       "persona_type": "buyer",
       "geo": "RI",
@@ -10820,64 +11038,7 @@
         "contact_form_detected"
       ],
       "contact": {
-        "contact_id": "contact-the-best-pet-cameras-we-ve-tested-for-2026",
-        "full_name": "",
-        "email": "alex_colon@pcmag.com",
-        "reachability_status": "email_unverified"
-      },
-      "source_confidence": 0.92,
-      "source_label": "discovered-public-accounts.json",
-      "source_family": "official_websites",
-      "query_id": "distributor-ri-official_search-1",
-      "discovery_query": "\"lighting distributor\" RI",
-      "query_family": "official_search",
-      "generated_from_provider": "bing_rss"
-    },
-    {
-      "source_url": "https://www.cnet.com/home/security/best-home-pet-cams/",
-      "company_name": "Best Home Pet Cameras of 2026: Watch From Anywhere",
-      "website_root_domain": "cnet.com",
-      "account_type": "distributor",
-      "persona_type": "buyer",
-      "geo": "RI",
-      "signals": [
-        "search_discovery",
-        "recipe_distributor",
-        "region_ri",
-        "query_family_official_search",
-        "query_discovery"
-      ],
-      "contact": {
-        "contact_id": "contact-best-home-pet-cameras-of-2026--watch-from-anywhere",
-        "full_name": "",
-        "email": "brand_licensing@ziffdavis.com",
-        "reachability_status": "email_unverified"
-      },
-      "source_confidence": 0.82,
-      "source_label": "discovered-public-accounts.json",
-      "source_family": "official_websites",
-      "query_id": "distributor-ri-official_search-1",
-      "discovery_query": "\"lighting distributor\" RI",
-      "query_family": "official_search",
-      "generated_from_provider": "bing_rss"
-    },
-    {
-      "source_url": "https://www.theconsumers.guide/reviews/best-ai-powered-pet-cameras-2025",
-      "company_name": "The Best AI",
-      "website_root_domain": "theconsumers.guide",
-      "account_type": "distributor",
-      "persona_type": "buyer",
-      "geo": "RI",
-      "signals": [
-        "search_discovery",
-        "recipe_distributor",
-        "region_ri",
-        "query_family_official_search",
-        "query_discovery",
-        "contact_form_detected"
-      ],
-      "contact": {
-        "contact_id": "contact-the-best-ai",
+        "contact_id": "contact-mule-lighting",
         "full_name": "",
         "email": "",
         "reachability_status": "form_available"
@@ -10891,9 +11052,9 @@
       "generated_from_provider": "bing_rss"
     },
     {
-      "source_url": "https://www.wired.com/gallery/best-pet-cameras/",
-      "company_name": "10 Best Pet Cameras (2026), Tested With Our Pets",
-      "website_root_domain": "wired.com",
+      "source_url": "https://rienergy.com/site/-/media/rie-jss-app/home/ways-to-save/rebates-and-savings-programs/commercial-savings/instant-commercial-rebates/commercial-lighting-rebates/rie-lighting_participating-distributors-and-locations.ashx",
+      "company_name": "rienergy.com",
+      "website_root_domain": "rienergy.com",
       "account_type": "distributor",
       "persona_type": "buyer",
       "geo": "RI",
@@ -10905,12 +11066,12 @@
         "query_discovery"
       ],
       "contact": {
-        "contact_id": "contact-10-best-pet-cameras--2026---tested-with-our-pets",
+        "contact_id": "contact-rienergy-com",
         "full_name": "",
-        "email": "help@newyorker.com",
-        "reachability_status": "email_unverified"
+        "email": "",
+        "reachability_status": "unknown"
       },
-      "source_confidence": 0.82,
+      "source_confidence": 0.55,
       "source_label": "discovered-public-accounts.json",
       "source_family": "official_websites",
       "query_id": "distributor-ri-official_search-1",

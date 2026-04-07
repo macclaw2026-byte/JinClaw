@@ -3771,8 +3771,78 @@
       "score_tier": "B"
     },
     {
-      "account_id": "account-interiordesign-net",
-      "contact_id": "contact-interior-design-magazine",
+      "account_id": "account-doi-gov",
+      "contact_id": "contact-u-s--department-of-the-interior",
+      "fit_score": 40.0,
+      "intent_score": 28.0,
+      "reachability_score": 15.0,
+      "data_quality_score": 8.5,
+      "total_score": 91.5,
+      "score_tier": "A"
+    },
+    {
+      "account_id": "account-en-wikipedia-org",
+      "contact_id": "contact-united-states-department-of-the-interior",
+      "fit_score": 40.0,
+      "intent_score": 28.0,
+      "reachability_score": 12.0,
+      "data_quality_score": 8.5,
+      "total_score": 88.5,
+      "score_tier": "A"
+    },
+    {
+      "account_id": "account-interiormatter-com",
+      "contact_id": "contact-home",
+      "fit_score": 40.0,
+      "intent_score": 28.0,
+      "reachability_score": 12.0,
+      "data_quality_score": 8.5,
+      "total_score": 88.5,
+      "score_tier": "A"
+    },
+    {
+      "account_id": "account-houzz-in",
+      "contact_id": "contact-home-design-ideas--pictures--remodel-and-decor",
+      "fit_score": 40.0,
+      "intent_score": 28.0,
+      "reachability_score": 12.0,
+      "data_quality_score": 8.5,
+      "total_score": 88.5,
+      "score_tier": "A"
+    },
+    {
+      "account_id": "account-cooperlighting-com",
+      "contact_id": "contact-lighting-agent---distributor-locator",
+      "fit_score": 40.0,
+      "intent_score": 28.0,
+      "reachability_score": 6.0,
+      "data_quality_score": 8.5,
+      "total_score": 82.5,
+      "score_tier": "B"
+    },
+    {
+      "account_id": "account-leviton-com",
+      "contact_id": "contact-usa-rep-map",
+      "fit_score": 40.0,
+      "intent_score": 28.0,
+      "reachability_score": 6.0,
+      "data_quality_score": 8.5,
+      "total_score": 82.5,
+      "score_tier": "B"
+    },
+    {
+      "account_id": "account-reflexlighting-com",
+      "contact_id": "contact-reflex-lighting",
+      "fit_score": 40.0,
+      "intent_score": 28.0,
+      "reachability_score": 12.0,
+      "data_quality_score": 8.5,
+      "total_score": 88.5,
+      "score_tier": "A"
+    },
+    {
+      "account_id": "account-visalighting-com",
+      "contact_id": "contact-find-a-representative-agency",
       "fit_score": 40.0,
       "intent_score": 28.0,
       "reachability_score": 15.0,
@@ -3791,8 +3861,18 @@
       "score_tier": "A"
     },
     {
-      "account_id": "account-lampsplus-com",
-      "contact_id": "contact-site-maintenance",
+      "account_id": "account-shop-rockinghamlightingcenter-com",
+      "contact_id": "contact-the-lighting-center-at-rockingham-electric",
+      "fit_score": 40.0,
+      "intent_score": 26.0,
+      "reachability_score": 15.0,
+      "data_quality_score": 8.5,
+      "total_score": 89.5,
+      "score_tier": "A"
+    },
+    {
+      "account_id": "account-frankwebb-com",
+      "contact_id": "contact-luxury-kitchen--bath---lighting-showrooms",
       "fit_score": 40.0,
       "intent_score": 26.0,
       "reachability_score": 12.0,
@@ -3801,14 +3881,14 @@
       "score_tier": "A"
     },
     {
-      "account_id": "account-westelm-com",
-      "contact_id": "contact-shop-lighting---light-fixtures",
+      "account_id": "account-citylighting-com",
+      "contact_id": "contact-city-lighting-products",
       "fit_score": 40.0,
       "intent_score": 26.0,
-      "reachability_score": 15.0,
+      "reachability_score": 6.0,
       "data_quality_score": 8.5,
-      "total_score": 89.5,
-      "score_tier": "A"
+      "total_score": 80.5,
+      "score_tier": "B"
     },
     {
       "account_id": "account-google-com",
@@ -3821,28 +3901,8 @@
       "score_tier": "B"
     },
     {
-      "account_id": "account-pcmag-com",
-      "contact_id": "contact-the-best-pet-cameras-we-ve-tested-for-2026",
-      "fit_score": 40.0,
-      "intent_score": 26.0,
-      "reachability_score": 12.0,
-      "data_quality_score": 8.5,
-      "total_score": 86.5,
-      "score_tier": "A"
-    },
-    {
-      "account_id": "account-cnet-com",
-      "contact_id": "contact-best-home-pet-cameras-of-2026--watch-from-anywhere",
-      "fit_score": 40.0,
-      "intent_score": 26.0,
-      "reachability_score": 12.0,
-      "data_quality_score": 8.5,
-      "total_score": 86.5,
-      "score_tier": "A"
-    },
-    {
-      "account_id": "account-theconsumers-guide",
-      "contact_id": "contact-the-best-ai",
+      "account_id": "account-mulelighting-com",
+      "contact_id": "contact-mule-lighting",
       "fit_score": 40.0,
       "intent_score": 26.0,
       "reachability_score": 15.0,
@@ -3851,14 +3911,14 @@
       "score_tier": "A"
     },
     {
-      "account_id": "account-wired-com",
-      "contact_id": "contact-10-best-pet-cameras--2026---tested-with-our-pets",
+      "account_id": "account-rienergy-com",
+      "contact_id": "contact-rienergy-com",
       "fit_score": 40.0,
       "intent_score": 26.0,
-      "reachability_score": 12.0,
+      "reachability_score": 6.0,
       "data_quality_score": 8.5,
-      "total_score": 86.5,
-      "score_tier": "A"
+      "total_score": 80.5,
+      "score_tier": "B"
     },
     {
       "account_id": "account-exampledealer-com",
