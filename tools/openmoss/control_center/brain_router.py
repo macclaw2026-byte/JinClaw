@@ -127,6 +127,41 @@ FOLLOW_UP_ACTION_PATTERNS = (
 
 TERMINAL_TASK_STATUSES = {"completed", "failed"}
 
+PROJECT_TASK_ALIASES = (
+    {
+        "task_id": "neosgo-seller-maintenance",
+        "canonical_goal": "持续运行 NEOSGO seller GIGA 产品维护工作流：每天扫描 GIGA 新品并导入 seller draft，按稳定 API 规则优化 draft 后提交审核，重新优化并重提 rejected listing，同时每日同步已上传 listing 的库存。",
+        "include_any": [
+            "neosgo seller",
+            "seller.neosgo",
+            "giga",
+            "seller后台",
+            "seller 后台",
+            "listing",
+            "draft",
+            "rejected",
+            "库存",
+            "提审",
+            "提交审核",
+        ],
+        "exclude_any": [
+            "lead",
+            "marketing",
+            "seo",
+            "geo",
+            "客户开发",
+            "潜在客户",
+            "营销",
+            "google search console",
+        ],
+        "metadata": {
+            "project": "neosgo",
+            "canonical_project_task": True,
+            "mission_profile": "seller_maintenance",
+        },
+    },
+)
+
 
 def _is_internal_runtime_request_text(text: str) -> bool:
     """
@@ -237,6 +272,20 @@ def _looks_like_followup_goal(text: str, intent: Dict[str, object]) -> bool:
     if any(intent.get(key) for key in ("needs_browser", "needs_verification", "requires_external_information")):
         return True
     return intent.get("task_types", ["general"]) != ["general"]
+
+
+def _detect_canonical_project_task(text: str) -> Dict[str, object] | None:
+    normalized = re.sub(r"\s+", " ", text.strip().lower())
+    condensed = re.sub(r"\s+", "", normalized)
+    for entry in PROJECT_TASK_ALIASES:
+        include_any = entry.get("include_any", []) or []
+        exclude_any = entry.get("exclude_any", []) or []
+        if not any(token.replace(" ", "") in condensed or token in normalized for token in include_any):
+            continue
+        if any(token.replace(" ", "") in condensed or token in normalized for token in exclude_any):
+            continue
+        return entry
+    return None
 
 
 def _safe_load_contract(task_id: str):
@@ -551,6 +600,7 @@ def route_instruction(
     goal = _strip_transport_wrapper(text)
     intent = analyze_intent(goal, source=source)
     mission_profile = detect_root_mission_profile(goal, intent=intent)
+    canonical_project_task = _detect_canonical_project_task(goal)
     existing = read_link(provider, conversation_id)
     route: Dict[str, object] = {
         "routed_at": utc_now_iso(),
@@ -569,7 +619,49 @@ def route_instruction(
         "attached_existing": bool(existing),
         "brain_required": True,
         "mission_profile": mission_profile,
+        "canonical_project_task": canonical_project_task,
     }
+
+    if canonical_project_task:
+        canonical_task_id = str(canonical_project_task.get("task_id", "")).strip()
+        canonical_goal = str(canonical_project_task.get("canonical_goal", "")).strip() or goal
+        if canonical_task_id and not contract_path(canonical_task_id).exists():
+            _build_task(
+                canonical_task_id,
+                canonical_goal,
+                source=f"{source}:canonical_project_task",
+                metadata_extra=dict(canonical_project_task.get("metadata", {}) or {}),
+            )
+            route["created_task"] = True
+        payload = {
+            "provider": provider,
+            "conversation_id": conversation_id,
+            "conversation_type": conversation_type,
+            "task_id": canonical_task_id,
+            "goal": canonical_goal,
+            "updated_at": utc_now_iso(),
+            "last_message_id": message_id,
+            "last_sender_id": sender_id,
+            "last_sender_name": sender_name,
+            "brain_source": source,
+            "canonical_project_task": True,
+        }
+        if session_key:
+            payload["session_key"] = session_key
+        elif str(existing.get("session_key", "")).strip():
+            payload["session_key"] = str(existing.get("session_key", "")).strip()
+        if _looks_like_status_query(goal) and not _looks_actionable(goal, intent):
+            snapshot = build_task_status_snapshot(canonical_task_id)
+            route["mode"] = "authoritative_task_status"
+            route["authoritative_task_status"] = snapshot
+            route["governance_attention"] = summarize_snapshot_governance(snapshot)
+        else:
+            route["mode"] = "append_to_existing_task" if existing else "create_new_root_task"
+        route["task_id"] = canonical_task_id
+        route["attached_existing"] = bool(existing)
+        route["link_path"] = write_link(provider, conversation_id, payload)
+        route["route_path"] = _write_json(BRAIN_ROUTES_ROOT / provider / f"{conversation_id}.json", route)
+        return route
 
     if existing:
         # 如果当前会话已经绑过任务，先把它解析到真正活跃的 canonical task。
