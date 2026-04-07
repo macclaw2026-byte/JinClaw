@@ -19,8 +19,12 @@ Key folders:
 Useful operational commands:
 - Run one full cycle:
   `python3 /Users/mac_claw/.openclaw/workspace/skills/marketing-automation-suite/scripts/run_marketing_suite_cycle.py --project-root /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite`
+- Run one full feedback loop:
+  `python3 /Users/mac_claw/.openclaw/workspace/skills/marketing-automation-suite/scripts/run_feedback_loop.py --project-root /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite`
 - Build a feedback template from the latest execution queue:
   `python3 /Users/mac_claw/.openclaw/workspace/skills/outreach-feedback-engine/scripts/build_feedback_event_template.py --execution-queue /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/<cycle_id>/execution-queue.json --output /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/feedback-events.template.json`
+- Validate completed feedback rows before merge:
+  `python3 /Users/mac_claw/.openclaw/workspace/skills/outreach-feedback-engine/scripts/validate_feedback_events.py --source /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/feedback-events.template.json --output /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/feedback-loop/validation.json`
 - Merge completed operator feedback rows back into the live feedback file:
   `python3 /Users/mac_claw/.openclaw/workspace/skills/outreach-feedback-engine/scripts/merge_feedback_events.py --source /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/feedback-events.template.json --target /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/feedback-events.json --archive /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/feedback-events.template.archive.json`
 - Check whether the current repo state is safe for a scoped PR:

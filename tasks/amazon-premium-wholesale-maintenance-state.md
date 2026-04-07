@@ -111,7 +111,7 @@ Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state
 Continuation mode: auto-continue
 
 ## Last Updated
-2026-04-07T02:41:35-0700
+2026-04-07T03:11:03-0700
 
 Current stage:
 - Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
@@ -1193,9 +1193,9 @@ Continuation mode: auto-continue
 Current stage:
 - Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
 Completed:
-- Rechecked quiet-background liveness at 2026-04-07T02:41-07:00: wrapper PID `57728` is still alive (parent 1, elapsed `01-05:00:28`), pid file still points to the live wrapper, and `.state/amazon-premium-wholesale-maintenance.lock/` remains present
-- Raw/output/state/log artifacts advanced together through completed refresh `2026-04-07T02:40:58.053797-07:00`, leaving the loop under one minute into the next expected ~20 minute cycle window rather than stale
-- Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 43 pre-dedupe public candidates, 37 post-family-dedupe candidates, and 21 qualified post-filter candidates
+- Rechecked quiet-background liveness at 2026-04-07T03:11-07:00: wrapper PID `57728` is still alive (parent 1, elapsed `01-05:29:56`), pid file still points to the live wrapper, and `.state/amazon-premium-wholesale-maintenance.lock/` remains present
+- Raw/output/state/log artifacts remain synchronized through completed refresh `2026-04-07T03:02:30.446702-07:00`, leaving the loop only ~8.5 minutes into the next expected ~20 minute cycle window rather than stale
+- Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 43 pre-dedupe public candidates, 37 post-family-dedupe candidates, and 17 qualified post-filter candidates
 - Raw quality gate remains healthy (`field_completeness`: 1.0, `clean_dp_link_ratio`: 1.0, `brand_risk_ratio`: 0.0) with zero current query errors and no failed quality/backstop or restore-last-good signal present
 - Confirmed no current blocking failure threatens tonight's 8:00 PM America/Los_Angeles report
 Not completed:

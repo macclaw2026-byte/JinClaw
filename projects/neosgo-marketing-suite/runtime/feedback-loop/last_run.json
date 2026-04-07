@@ -1,0 +1,24 @@
+{
+  "status": "waiting_for_feedback",
+  "ran_at": "2026-04-07T10:18:47.540576+00:00",
+  "project_root": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite",
+  "reason": "no_completed_feedback_rows",
+  "validation": {
+    "ok": true,
+    "returncode": 0,
+    "stdout": "{\n  \"status\": \"ok\",\n  \"source\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/feedback-events.template.json\",\n  \"item_count\": 40,\n  \"completed_count\": 0,\n  \"pending_count\": 40,\n  \"error_count\": 0,\n  \"warning_count\": 0,\n  \"errors\": [],\n  \"warnings\": []\n}",
+    "stderr": "",
+    "payload": {
+      "status": "ok",
+      "source": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/feedback-events.template.json",
+      "item_count": 40,
+      "completed_count": 0,
+      "pending_count": 40,
+      "error_count": 0,
+      "warning_count": 0,
+      "errors": [],
+      "warnings": []
+    },
+    "script": "/Users/mac_claw/.openclaw/workspace/skills/outreach-feedback-engine/scripts/validate_feedback_events.py"
+  }
+}

@@ -88,7 +88,17 @@ For each touched row, fill:
   - `outcome_type = complaint_risk`
   - `classification = spam_complaint_risk`
 
-## Step 4. Merge completed rows into live feedback
+## Step 4. Validate completed rows
+
+```bash
+python3 /Users/mac_claw/.openclaw/workspace/skills/outreach-feedback-engine/scripts/validate_feedback_events.py \
+  --source /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/feedback-events.template.json \
+  --output /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/feedback-loop/validation.json
+```
+
+If validation returns `blocked`, fix the rows before merging.
+
+## Step 5. Merge completed rows into live feedback
 
 ```bash
 python3 /Users/mac_claw/.openclaw/workspace/skills/outreach-feedback-engine/scripts/merge_feedback_events.py \
@@ -97,12 +107,26 @@ python3 /Users/mac_claw/.openclaw/workspace/skills/outreach-feedback-engine/scri
   --archive /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/feedback-events.template.archive.json
 ```
 
-## Step 5. Run a new suite cycle
+## Step 6. Run a new suite cycle
 
 ```bash
 python3 /Users/mac_claw/.openclaw/workspace/skills/marketing-automation-suite/scripts/run_marketing_suite_cycle.py \
   --project-root /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite
 ```
+
+## One-command version
+
+```bash
+python3 /Users/mac_claw/.openclaw/workspace/skills/marketing-automation-suite/scripts/run_feedback_loop.py \
+  --project-root /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite
+```
+
+This command will:
+
+- validate completed rows
+- merge valid rows
+- rerun the full marketing suite cycle
+- rebuild the next feedback template from the new execution queue
 
 ## What should change after a healthy feedback cycle
 

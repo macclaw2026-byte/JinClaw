@@ -22,13 +22,21 @@ def _git(repo_root: Path, *args: str) -> str:
 
 
 def _status_entries(repo_root: Path) -> list[dict]:
-    lines = _git(repo_root, "status", "--porcelain").splitlines()
+    result = subprocess.run(
+        ["git", "-C", str(repo_root), "status", "--porcelain=v1", "-z"],
+        check=True,
+        capture_output=True,
+        text=False,
+    )
     entries = []
-    for line in lines:
-        if not line.strip():
+    for raw in result.stdout.split(b"\x00"):
+        if not raw:
             continue
+        line = raw.decode("utf-8", errors="replace")
         status = line[:2]
         path = line[3:]
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
         entries.append({"status": status, "path": path})
     return entries
 
