@@ -365,16 +365,14 @@ def _sync_uploaded_inventory(base: str, token: str, candidates_by_sku: dict[str,
             continue
         if candidate_qty <= 0:
             continue
-        listing = _fetch_listing_detail(base, token, product_id)
-        status_payload = _fetch_listing_status(base, token, product_id)
-        current_qty = ((listing.get("inventory") or {}).get("quantityAvailable"))
+        current_qty = ((item.get("inventory") or {}).get("quantityAvailable"))
         row: dict[str, Any] = {
             "product_id": product_id,
             "sku": sku,
             "listing_status": item.get("status"),
             "current_quantity": current_qty,
             "candidate_quantity": candidate_qty,
-            "inventory_editable": bool(status_payload.get("inventoryEditableViaAutomation")),
+            "inventory_editable": bool(item.get("inventoryEditableViaAutomation")),
         }
         if not row["inventory_editable"] or current_qty == candidate_qty:
             row["patched"] = False
