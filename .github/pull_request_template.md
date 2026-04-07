@@ -39,6 +39,7 @@ Retrofit owner:
 - [ ] `jinclaw-status`
 - [ ] `jinclaw-doctor`
 - [ ] `jinclaw-upgrade-check`
+- [ ] `jinclaw-pr-ready` (or equivalent scoped PR readiness check)
 - [ ] targeted smoke test for changed behavior
 - [ ] live-wiring/runtime validation if applicable
 
@@ -61,5 +62,7 @@ Details:
 
 ## Merge Checklist
 
+- [ ] All intended local changes are committed on a dedicated PR branch
+- [ ] Remote branch reflects local source-of-truth before merge
 - [ ] Ready for `Squash and merge`
 - [ ] Safe to land on `main`

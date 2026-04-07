@@ -40,6 +40,18 @@ python3 scripts/run_marketing_suite_cycle.py \
   --project-root /Users/mac_claw/.openclaw/workspace/projects/my-growth-project
 ```
 
+### Check PR readiness before opening a PR
+
+```bash
+python3 scripts/check_pr_readiness.py \
+  --repo-root /Users/mac_claw/.openclaw/workspace \
+  --allow-prefix skills/marketing-automation-suite \
+  --allow-prefix skills/prospect-data-engine \
+  --allow-prefix skills/marketing-strategy-engine \
+  --allow-prefix skills/outreach-feedback-engine \
+  --allow-prefix projects/my-growth-project
+```
+
 ## Design principle
 
 Keep the suite reusable across projects by only swapping:

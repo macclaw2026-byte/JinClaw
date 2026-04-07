@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+python3 /Users/mac_claw/.openclaw/workspace/skills/marketing-automation-suite/scripts/check_pr_readiness.py "$@"

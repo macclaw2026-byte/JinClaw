@@ -33,6 +33,24 @@ def _status_entries(repo_root: Path) -> list[dict]:
     return entries
 
 
+def _match_prefix(path: str, prefix: str) -> bool:
+    candidates = {path}
+    if path.startswith("./"):
+        candidates.add(path[2:])
+    if path.startswith("."):
+        candidates.add(path[1:])
+    prefixes = {prefix}
+    if prefix.startswith("./"):
+        prefixes.add(prefix[2:])
+    if prefix.startswith("."):
+        prefixes.add(prefix[1:])
+    for candidate in candidates:
+        for item in prefixes:
+            if candidate == item or candidate.startswith(item + "/"):
+                return True
+    return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check whether a scoped PR can be prepared cleanly.")
     parser.add_argument("--repo-root", required=True)
@@ -49,7 +67,7 @@ def main() -> int:
     inside_scope = []
     for entry in entries:
         path = entry["path"]
-        if allow_prefixes and any(path == prefix or path.startswith(prefix + "/") for prefix in allow_prefixes):
+        if allow_prefixes and any(_match_prefix(path, prefix) for prefix in allow_prefixes):
             inside_scope.append(entry)
         elif allow_prefixes:
             outside_scope.append(entry)

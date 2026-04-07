@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -lt 4 ]]; then
+  echo "usage: jinclaw-open-pr <repo-root> <base> <head> <title> [body-file]" >&2
+  exit 2
+fi
+
+REPO_ROOT="$1"
+BASE_BRANCH="$2"
+HEAD_BRANCH="$3"
+PR_TITLE="$4"
+BODY_FILE="${5:-}"
+
+if [[ -n "$BODY_FILE" ]]; then
+  gh -R macclaw2026-byte/JinClaw pr create --repo macclaw2026-byte/JinClaw --base "$BASE_BRANCH" --head "$HEAD_BRANCH" --title "$PR_TITLE" --body-file "$BODY_FILE"
+else
+  gh -R macclaw2026-byte/JinClaw pr create --repo macclaw2026-byte/JinClaw --base "$BASE_BRANCH" --head "$HEAD_BRANCH" --title "$PR_TITLE" --fill
+fi

@@ -111,7 +111,7 @@ Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state
 Continuation mode: auto-continue
 
 ## Last Updated
-2026-04-06T17:40:00-0700
+2026-04-06T18:11:00-0700
 
 Current stage:
 - Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
@@ -956,6 +956,23 @@ Completed:
 - Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 44 pre-dedupe public candidates, 38 post-family-dedupe candidates, and 18 qualified post-filter candidates
 - Raw quality gate remains healthy (`field_completeness`: 1.0, `clean_dp_link_ratio`: 1.0, `brand_risk_ratio`: 0.0) with zero current query errors and no failed quality/backstop or restore-last-good signal present
 - Confirmed no current blocking failure threatens the next nightly 8:00 PM America/Los_Angeles report
+Not completed:
+- Ongoing future cycles still pending naturally
+Risks / issues:
+- No blocking issues currently; only normal in-band candidate-count fluctuation between healthy cycles
+Suggested next step:
+- Keep the existing background loop running without interruption; only intervene on future dead/stale/failed-quality conditions
+Continuation mode: auto-continue
+
+
+Current stage:
+- Stage 1/8 running: public Amazon harvest → clean/filter/dedupe → local state/output refresh
+Completed:
+- Rechecked quiet-background liveness at 2026-04-06T18:11-07:00: wrapper PID `57728` is still alive (parent 1, elapsed `20:30:05`), pid file still points to the live wrapper, and `.state/amazon-premium-wholesale-maintenance.lock/` remains present
+- Raw/output/log artifacts advanced together through completed refresh `2026-04-06T18:05:26.087753-07:00`, leaving the loop only ~5.8 minutes into the next expected ~20 minute cycle window rather than stale
+- Latest completed cycle still passed on public/raw input (`input_mode: raw_input`) with 43 pre-dedupe public candidates, 37 post-family-dedupe candidates, and 21 qualified post-filter candidates
+- Raw quality gate remains healthy (`field_completeness`: 1.0, `clean_dp_link_ratio`: 1.0, `brand_risk_ratio`: 0.0) with zero current query errors and no failed quality/backstop or restore-last-good signal present
+- Confirmed no current blocking failure threatens tonight's 8:00 PM America/Los_Angeles report
 Not completed:
 - Ongoing future cycles still pending naturally
 Risks / issues:
