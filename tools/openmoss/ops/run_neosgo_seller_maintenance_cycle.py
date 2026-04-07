@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 import fcntl
+from datetime import timedelta
 
 
 WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
@@ -17,11 +18,15 @@ DESCRIPTION_OPTIMIZER_PATH = WORKSPACE_ROOT / "tools/bin/neosgo_listing_descript
 OUTPUT_ROOT = WORKSPACE_ROOT / "output/neosgo-seller-maintenance"
 STATE_PATH = WORKSPACE_ROOT / "data/neosgo-seller-maintenance-state.json"
 LOCK_PATH = WORKSPACE_ROOT / "data/neosgo-seller-maintenance.lock"
+CANDIDATE_SCAN_STATE_PATH = WORKSPACE_ROOT / "data/neosgo-seller-maintenance-candidate-scan.json"
 
 DEFAULT_PAGE_SIZE = 100
 DEFAULT_MAX_PAGES = 50
 DEFAULT_IMPORT_LIMIT = 500
 DEFAULT_SLEEP_SECONDS = 0.4
+DEFAULT_INCREMENTAL_WARM_PAGES = 5
+DEFAULT_INCREMENTAL_STABLE_PAGES = 3
+DEFAULT_FULL_RESCAN_DAYS = 7
 
 
 def _utc_now_iso() -> str:
@@ -63,8 +68,123 @@ def _load_env() -> tuple[str, str]:
     return env["NEOSGO_SELLER_API_BASE_URL"], env["NEOSGO_SELLER_AUTOMATION_KEY"]
 
 
-def _fetch_all_candidates(base: str, token: str, page_size: int = DEFAULT_PAGE_SIZE, max_pages: int = DEFAULT_MAX_PAGES) -> list[dict]:
-    return RUNNER.fetch_candidates(base, token, page_size, max_pages, target_skus=None)
+def _candidate_fingerprint(candidate: dict) -> str:
+    return "|".join(
+        [
+            str(candidate.get("sku") or "").strip(),
+            str(candidate.get("candidateStatus") or "").strip(),
+            str(candidate.get("canImport")),
+            str(candidate.get("importedProductStatus") or "").strip(),
+            str(candidate.get("importedProductId") or "").strip(),
+            str(candidate.get("quantityAvailable") or "").strip(),
+        ]
+    )
+
+
+def _parse_iso_datetime(value: str) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _fetch_candidate_page(base: str, token: str, page: int, page_size: int) -> dict:
+    return RUNNER.request_with_retry(
+        "GET",
+        base,
+        token,
+        f"/api/automation/seller/giga/candidates?page={page}&pageSize={page_size}",
+        attempts=2,
+        sleep_seconds=0.5,
+        timeout=30,
+    )
+
+
+def _load_candidate_scan_state() -> dict:
+    return _read_json(
+        CANDIDATE_SCAN_STATE_PATH,
+        {
+            "last_full_scan_at": "",
+            "known_candidate_fingerprints": {},
+            "last_scan_meta": {},
+        },
+    )
+
+
+def _write_candidate_scan_state(payload: dict) -> None:
+    _write_json(CANDIDATE_SCAN_STATE_PATH, payload)
+
+
+def _fetch_all_candidates(base: str, token: str, page_size: int = DEFAULT_PAGE_SIZE, max_pages: int = DEFAULT_MAX_PAGES) -> tuple[list[dict], dict]:
+    scan_state = _load_candidate_scan_state()
+    known_fingerprints = dict(scan_state.get("known_candidate_fingerprints") or {})
+    now = datetime.now(timezone.utc)
+    last_full_scan_at = _parse_iso_datetime(str(scan_state.get("last_full_scan_at") or ""))
+    full_scan_required = (
+        not last_full_scan_at
+        or now - last_full_scan_at >= timedelta(days=DEFAULT_FULL_RESCAN_DAYS)
+    )
+    candidates: list[dict] = []
+    pages_scanned = 0
+    consecutive_stable_pages = 0
+    newly_changed_count = 0
+    mode = "full" if full_scan_required else "incremental"
+    updated_fingerprints = dict(known_fingerprints)
+    for page in range(1, max_pages + 1):
+        payload = _fetch_candidate_page(base, token, page, page_size)
+        if not payload.get("ok"):
+            break
+        data = (payload.get("resp") or {}).get("data", {}) or {}
+        items = data.get("candidates") or []
+        if not items:
+            break
+        pages_scanned += 1
+        candidates.extend(items)
+        page_has_change_signal = False
+        for item in items:
+            sku = str(item.get("sku") or "").strip()
+            if not sku:
+                continue
+            fingerprint = _candidate_fingerprint(item)
+            if known_fingerprints.get(sku) != fingerprint:
+                page_has_change_signal = True
+                newly_changed_count += 1
+            if item.get("canImport") or RUNNER.is_new_import_candidate(item):
+                page_has_change_signal = True
+            updated_fingerprints[sku] = fingerprint
+        if mode == "incremental":
+            if page_has_change_signal:
+                consecutive_stable_pages = 0
+            else:
+                consecutive_stable_pages += 1
+            if page >= DEFAULT_INCREMENTAL_WARM_PAGES and consecutive_stable_pages >= DEFAULT_INCREMENTAL_STABLE_PAGES:
+                break
+        if not data.get("hasNextPage"):
+            break
+    _write_candidate_scan_state(
+        {
+            "last_full_scan_at": now.isoformat() if mode == "full" else str(scan_state.get("last_full_scan_at") or ""),
+            "known_candidate_fingerprints": updated_fingerprints,
+            "last_scan_meta": {
+                "mode": mode,
+                "pages_scanned": pages_scanned,
+                "newly_changed_count": newly_changed_count,
+                "consecutive_stable_pages": consecutive_stable_pages,
+                "candidate_count": len(candidates),
+                "updated_at": now.isoformat(),
+            },
+        }
+    )
+    return candidates, {
+        "mode": mode,
+        "pages_scanned": pages_scanned,
+        "newly_changed_count": newly_changed_count,
+        "consecutive_stable_pages": consecutive_stable_pages,
+        "candidate_count": len(candidates),
+    }
 
 
 def _candidate_map(candidates: list[dict]) -> dict[str, dict]:
@@ -460,13 +580,14 @@ def main() -> int:
             ],
         }
         _write_progress({"stage": "fetch_candidates"})
-        candidates = _fetch_all_candidates(base, token)
+        candidates, candidate_scan_meta = _fetch_all_candidates(base, token)
         candidates_by_sku = _candidate_map(candidates)
         report["candidate_summary"] = {
             "candidate_count": len(candidates),
             "new_import_count": sum(1 for item in candidates if item.get("canImport") and RUNNER.is_new_import_candidate(item)),
             "approved_count": sum(1 for item in candidates if str(item.get("candidateStatus") or "").strip().upper() == "APPROVED"),
         }
+        report["candidate_scan_meta"] = candidate_scan_meta
         _write_progress({"stage": "import_phase", "candidate_summary": report["candidate_summary"]})
         report["import_phase"] = _run_import_phase(base, token, candidates, DEFAULT_IMPORT_LIMIT)
         _write_progress({"stage": "draft_phase", "import_phase": report["import_phase"]["bulk_state"]})
@@ -504,6 +625,7 @@ def main() -> int:
                 "last_report_json": str(json_path),
                 "last_report_md": str(md_path),
                 "candidate_summary": report["candidate_summary"],
+                "candidate_scan_meta": report.get("candidate_scan_meta", {}),
                 "import_phase": report["import_phase"]["bulk_state"],
                 "draft_phase": {
                     "enumerated_count": report["draft_phase"]["enumerated_count"],
