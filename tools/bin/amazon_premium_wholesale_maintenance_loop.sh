@@ -68,11 +68,17 @@ run_attempt() {
 }
 
 inspect_cycle() {
-  python3 - <<'PY'
-import json, pathlib, sys
+  local prev_raw_mtime="$1"
+  local prev_out_mtime="$2"
+  local prev_state_mtime="$3"
+  PREV_RAW_MTIME="$prev_raw_mtime" PREV_OUT_MTIME="$prev_out_mtime" PREV_STATE_MTIME="$prev_state_mtime" python3 - <<'PY'
+import json, os, pathlib, sys
 root = pathlib.Path('/Users/mac_claw/.openclaw/workspace')
-raw = json.loads((root/'data/amazon-premium-wholesale/raw_candidates.json').read_text())
-out = json.loads((root/'output/amazon-premium-wholesale/latest.json').read_text())
+raw_path = root/'data/amazon-premium-wholesale/raw_candidates.json'
+out_path = root/'output/amazon-premium-wholesale/latest.json'
+state_path = root/'.state/amazon-premium-wholesale.json'
+raw = json.loads(raw_path.read_text())
+out = json.loads(out_path.read_text())
 summary = {
   'summary': 'cycle-complete',
   'raw_candidate_count': raw.get('candidate_count'),
@@ -81,23 +87,52 @@ summary = {
   'pre_dedupe_count': out.get('pre_dedupe_count'),
   'post_family_dedupe_count': out.get('post_family_dedupe_count'),
   'input_mode': out.get('input_mode'),
-  'run_at': out.get('run_at')
+  'run_at': out.get('run_at'),
+  'artifact_freshness': {
+    'raw_mtime': raw_path.stat().st_mtime,
+    'out_mtime': out_path.stat().st_mtime,
+    'state_mtime': state_path.stat().st_mtime,
+  },
 }
 print(json.dumps(summary, ensure_ascii=False))
-passed = bool(raw.get('quality_gate', {}).get('passed')) and out.get('input_mode') == 'raw_input'
+prev_raw = float(os.environ.get('PREV_RAW_MTIME', '0') or 0)
+prev_out = float(os.environ.get('PREV_OUT_MTIME', '0') or 0)
+prev_state = float(os.environ.get('PREV_STATE_MTIME', '0') or 0)
+raw_advanced = raw_path.stat().st_mtime > prev_raw
+out_advanced = out_path.stat().st_mtime > prev_out
+state_advanced = state_path.stat().st_mtime > prev_state
+passed = bool(raw.get('quality_gate', {}).get('passed')) and out.get('input_mode') == 'raw_input' and raw_advanced and out_advanced and state_advanced
 sys.exit(0 if passed else 1)
 PY
 }
 
 run_cycle() {
-  local stamp attempt ok
+  local stamp attempt ok prev_raw_mtime prev_out_mtime prev_state_mtime
   stamp="$(date -Iseconds)"
   ok=0
+  prev_raw_mtime=$(python3 - <<PY
+import pathlib
+p = pathlib.Path(r'''$RAW_FILE''')
+print(p.stat().st_mtime if p.exists() else 0)
+PY
+)
+  prev_out_mtime=$(python3 - <<PY
+import pathlib
+p = pathlib.Path(r'''$OUT_FILE''')
+print(p.stat().st_mtime if p.exists() else 0)
+PY
+)
+  prev_state_mtime=$(python3 - <<PY
+import pathlib
+p = pathlib.Path(r'''$STATE_FILE''')
+print(p.stat().st_mtime if p.exists() else 0)
+PY
+)
   {
     echo "[$stamp] cycle-start"
     for attempt in 1 2; do
       echo "[$(date -Iseconds)] attempt-$attempt-start"
-      if run_attempt && inspect_cycle; then
+      if run_attempt && inspect_cycle "$prev_raw_mtime" "$prev_out_mtime" "$prev_state_mtime"; then
         snapshot_last_good
         echo "[$(date -Iseconds)] attempt-$attempt-passed"
         ok=1

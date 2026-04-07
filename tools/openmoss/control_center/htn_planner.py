@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/htn_planner.py`
+- 文件作用：负责控制中心中与 `htn_planner` 相关的编排、分析或决策逻辑。
+- 顶层函数：build_htn_tree、select_htn_focus、select_htn_focus_by_cursor、main。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import json
@@ -7,6 +15,12 @@ from typing import Dict, List
 
 
 def build_htn_tree(intent: Dict[str, object], selected_plan: Dict[str, object], topology: Dict[str, object], fractal: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `build_htn_tree` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     execute_children = []
     for loop in fractal.get("loops", []):
         execute_children.append(
@@ -67,10 +81,22 @@ def build_htn_tree(intent: Dict[str, object], selected_plan: Dict[str, object], 
 
 
 def select_htn_focus(htn: Dict[str, object], stage_name: str, stage_attempts: int = 0) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `select_htn_focus` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return select_htn_focus_by_cursor(htn, stage_name, stage_attempts)
 
 
 def select_htn_focus_by_cursor(htn: Dict[str, object], stage_name: str, subtask_cursor: int = 0) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `select_htn_focus_by_cursor` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     children = htn.get("root", {}).get("children", [])
     stage_node = next((child for child in children if child.get("node_id") == f"stage-{stage_name}"), {})
     if not stage_node:
@@ -102,6 +128,12 @@ def select_htn_focus_by_cursor(htn: Dict[str, object], stage_name: str, subtask_
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     import argparse
 
     parser = argparse.ArgumentParser(description="Build and inspect a simple HTN tree for a mission")

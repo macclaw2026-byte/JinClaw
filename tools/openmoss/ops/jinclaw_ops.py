@@ -319,6 +319,7 @@ def _session_tail_summary(session_file: Path) -> Dict[str, Any]:
     assistant_after_latest_user = False
     assistant_substantive_after_latest_user = False
     internal_flow_leak_detected = False
+    pending_internal_flow = False
     assistant_preview = ""
     try:
         lines = session_file.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -339,6 +340,8 @@ def _session_tail_summary(session_file: Path) -> Dict[str, Any]:
             latest_user_at = timestamp or latest_user_at
             assistant_after_latest_user = False
             assistant_substantive_after_latest_user = False
+            internal_flow_leak_detected = False
+            pending_internal_flow = False
             assistant_preview = ""
             continue
         if role != "assistant":
@@ -349,12 +352,14 @@ def _session_tail_summary(session_file: Path) -> Dict[str, Any]:
         if isinstance(content, list) and any(
             isinstance(item, dict) and item.get("type") == "toolCall" for item in content
         ):
-            internal_flow_leak_detected = True
+            pending_internal_flow = True
         if latest_user_at and (not latest_assistant_at or (timestamp and timestamp >= latest_user_at)):
             assistant_after_latest_user = True
             assistant_preview = preview
             if _looks_substantive_assistant_text(text):
                 assistant_substantive_after_latest_user = True
+                pending_internal_flow = False
+    internal_flow_leak_detected = pending_internal_flow and not assistant_substantive_after_latest_user
     return {
         "exists": True,
         "latest_user_at": latest_user_at,
@@ -366,6 +371,14 @@ def _session_tail_summary(session_file: Path) -> Dict[str, Any]:
     }
 
 
+def _telegram_key_is_production(key: str) -> bool:
+    normalized = str(key or "").strip().lower()
+    if ":telegram:" not in normalized:
+        return False
+    noisy_tokens = ("smoke", "test", "brain-router", "brain-first")
+    return not any(token in normalized for token in noisy_tokens)
+
+
 def message_pipeline_summary() -> Dict[str, Any]:
     """
     中文注解：
@@ -375,9 +388,11 @@ def message_pipeline_summary() -> Dict[str, Any]:
     """
     sessions = _load_session_index()
     telegram_keys = [key for key in sessions.keys() if ":telegram:" in key]
+    production_telegram_keys = [key for key in telegram_keys if _telegram_key_is_production(key)]
     latest_telegram_key = ""
     latest_telegram_updated_at = 0
-    for key in telegram_keys:
+    selected_keys = production_telegram_keys or telegram_keys
+    for key in selected_keys:
         updated_at = int((sessions.get(key) or {}).get("updatedAt") or 0)
         if updated_at >= latest_telegram_updated_at:
             latest_telegram_updated_at = updated_at
@@ -388,8 +403,9 @@ def message_pipeline_summary() -> Dict[str, Any]:
     latest_telegram = sessions.get(latest_telegram_key) or {}
     latest_telegram_file = Path(latest_telegram.get("sessionFile") or "")
     telegram_tail = _session_tail_summary(latest_telegram_file) if latest_telegram_file else {}
-    latest_user_iso = main_tail.get("latest_user_at") or telegram_tail.get("latest_user_at") or ""
-    latest_assistant_iso = main_tail.get("latest_assistant_at") or ""
+    primary_tail = telegram_tail if telegram_tail.get("exists") else main_tail
+    latest_user_iso = primary_tail.get("latest_user_at") or main_tail.get("latest_user_at") or ""
+    latest_assistant_iso = primary_tail.get("latest_assistant_at") or main_tail.get("latest_assistant_at") or ""
     reply_gap_seconds = None
     user_dt = parse_iso(latest_user_iso)
     assistant_dt = parse_iso(latest_assistant_iso)
@@ -408,10 +424,10 @@ def message_pipeline_summary() -> Dict[str, Any]:
         "latest_assistant_at": latest_assistant_iso,
         "user_wait_seconds": user_wait_seconds,
         "reply_gap_seconds": reply_gap_seconds,
-        "assistant_after_latest_user": bool(main_tail.get("assistant_after_latest_user")),
-        "assistant_substantive_after_latest_user": bool(main_tail.get("assistant_substantive_after_latest_user")),
-        "internal_flow_leak_detected": bool(main_tail.get("internal_flow_leak_detected")),
-        "assistant_preview": main_tail.get("assistant_preview", ""),
+        "assistant_after_latest_user": bool(primary_tail.get("assistant_after_latest_user")),
+        "assistant_substantive_after_latest_user": bool(primary_tail.get("assistant_substantive_after_latest_user")),
+        "internal_flow_leak_detected": bool(primary_tail.get("internal_flow_leak_detected")),
+        "assistant_preview": primary_tail.get("assistant_preview", ""),
         "telegram_tail": telegram_tail,
     }
 
@@ -462,6 +478,10 @@ def doctor_payload() -> Dict[str, Any]:
     - 功能：实现 `doctor_payload` 对应的处理逻辑。
     - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+
+    Single-doctor rule:
+    - JinClaw only has one canonical doctor payload path.
+    - New subsystem monitoring should aggregate into this payload rather than creating a peer doctor authority.
     """
     payload = status_payload()
     issues: List[str] = []

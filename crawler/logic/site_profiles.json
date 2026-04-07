@@ -1,0 +1,79 @@
+{
+  "amazon": {
+    "lastEvaluated": "2026-03-30",
+    "confidence": "medium",
+    "mode": "anonymous-public",
+    "preferredTools": [
+      "crawl4ai-cli",
+      "local-agent-browser-cli",
+      "scrapy-cffi",
+      "playwright-stealth",
+      "playwright",
+      "curl-cffi",
+      "direct-http-html"
+    ],
+    "fallbackPolicy": "start-primary-then-fallback-ordered",
+    "notes": [
+      "browser-rendered and crawl4ai flows currently produce the strongest anonymous public results",
+      "direct-http-html fails outright in current tests",
+      "curl-cffi tends to hit Amazon automated-access defenses"
+    ]
+  },
+  "walmart": {
+    "lastEvaluated": "2026-03-30",
+    "confidence": "medium",
+    "mode": "anonymous-public-route-specific",
+    "preferredTools": [
+      "direct-http-html",
+      "crawl4ai-cli",
+      "curl-cffi",
+      "local-agent-browser-cli",
+      "playwright",
+      "playwright-stealth",
+      "scrapy-cffi"
+    ],
+    "fallbackPolicy": "start-direct-http-then-re-evaluate-early",
+    "notes": [
+      "direct-http-html is the only currently verified anonymous usable path in the latest matrix",
+      "most browser-style and cffi-style runs were blocked by human verification"
+    ]
+  },
+  "temu": {
+    "lastEvaluated": "2026-03-30",
+    "confidence": "medium",
+    "mode": "browser-first-anonymous",
+    "preferredTools": [
+      "local-agent-browser-cli",
+      "crawl4ai-cli",
+      "curl-cffi",
+      "direct-http-html",
+      "playwright",
+      "playwright-stealth",
+      "scrapy-cffi"
+    ],
+    "fallbackPolicy": "browser-first-then-light-probe-then-re-evaluate",
+    "notes": [
+      "local-agent-browser-cli is the only clearly usable route in the latest matrix",
+      "HTTP-oriented outputs trend shell-heavy or blocked and need stronger normalize-time validation"
+    ]
+  },
+  "1688": {
+    "lastEvaluated": "2026-03-30",
+    "confidence": "high",
+    "mode": "anonymous-blocked",
+    "preferredTools": [
+      "curl-cffi",
+      "scrapy-cffi",
+      "crawl4ai-cli",
+      "direct-http-html",
+      "local-agent-browser-cli",
+      "playwright",
+      "playwright-stealth"
+    ],
+    "fallbackPolicy": "do-not-run-as-normal-anonymous-production-target",
+    "notes": [
+      "anonymous access consistently falls into login, slider, punish, nocaptcha, or redirect flows",
+      "authenticated mode must be treated as a separate profile and separate run history"
+    ]
+  }
+}

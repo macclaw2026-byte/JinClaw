@@ -10,15 +10,6 @@
       "why_it_matters": "Primary upstream runtime and gateway substrate JinClaw still depends on."
     },
     {
-      "id": "openmoss-imclaw-skill",
-      "name": "OpenMOSS imclaw-skill",
-      "repo": "OpenMOSS/imclaw-skill",
-      "category": "borrowed-ideas",
-      "adoption_policy": "borrow_and_localize",
-      "priority": "high",
-      "why_it_matters": "Bridge, session, and message queue ideas already absorbed into JinClaw."
-    },
-    {
       "id": "openmoss-ourclaw",
       "name": "OpenMOSS OurClaw",
       "repo": "OpenMOSS/OurClaw",
@@ -74,4 +65,3 @@
     }
   ]
 }
-

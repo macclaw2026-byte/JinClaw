@@ -1,0 +1,20 @@
+{
+  "items": [
+    {
+      "outreach_task_id": "marketing-automation-demo-sample-1",
+      "account_id": "sample-account-1",
+      "contact_id": null,
+      "channel": "form",
+      "strategy_id": "marketing-automation-demo-strategy-seed",
+      "risk_level": "medium",
+      "approval_state": "awaiting_approval",
+      "status": "queued",
+      "stop_conditions": [
+        "unsubscribe",
+        "do_not_contact",
+        "hard_bounce",
+        "complaint_risk"
+      ]
+    }
+  ]
+}

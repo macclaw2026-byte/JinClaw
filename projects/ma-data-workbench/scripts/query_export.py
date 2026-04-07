@@ -13,6 +13,15 @@ def build_query(args):
     where = []
     params = []
 
+    if args.primary_profession != 'any':
+        where.append('primary_profession = ?')
+        params.append(args.primary_profession)
+    if args.min_score is not None:
+        where.append('total_score >= ?')
+        params.append(args.min_score)
+    if args.lead_grade != 'any':
+        where.append('lead_grade = ?')
+        params.append(args.lead_grade)
     if args.city:
         where.append('city ILIKE ?')
         params.append(f'%{args.city}%')
@@ -47,7 +56,7 @@ def build_query(args):
         where.append('annual_sales <= ?')
         params.append(args.max_sales)
 
-    sql = 'SELECT * FROM v_businesses'
+    sql = f'SELECT * FROM {args.view}'
     if where:
         sql += ' WHERE ' + ' AND '.join(where)
     sql += ' ORDER BY company_name NULLS LAST'
@@ -58,6 +67,10 @@ def build_query(args):
 
 def main():
     parser = argparse.ArgumentParser(description='Filter and export MA business data.')
+    parser.add_argument('--view', default='v_businesses', choices=['v_businesses', 'v_professional_leads', 'v_neosgo_priority_leads'])
+    parser.add_argument('--primary-profession', choices=['any', 'interior_designer', 'builder', 'real_estate', 'contractor', 'electrician', 'other'], default='any')
+    parser.add_argument('--lead-grade', choices=['any', 'A+', 'A', 'B', 'C', 'D'], default='any')
+    parser.add_argument('--min-score', type=int)
     parser.add_argument('--city')
     parser.add_argument('--county')
     parser.add_argument('--industry-keyword')

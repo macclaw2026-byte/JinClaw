@@ -1,0 +1,230 @@
+{
+  "site": "amazon",
+  "query": "wireless mouse",
+  "mode": "use-best-tool",
+  "first_run_rule": "run-all-known-tools-then-compare-normalize-and-record-order",
+  "repeat_run_rule": "start-with-primary-then-fallback-in-recorded-order-and-re-evaluate-on-degradation",
+  "auth_policy": {
+    "anonymous_mode": "allowed",
+    "authenticated_mode": "separate-profile-required",
+    "credential_use": "browser-login-only-with-explicit-user-authorization",
+    "captcha_policy": "do-not-bypass; require human intervention if challenged"
+  },
+  "tested_tools": [
+    "crawl4ai-cli",
+    "direct-http-html",
+    "curl-cffi",
+    "playwright",
+    "playwright-stealth",
+    "scrapy-cffi",
+    "local-agent-browser-cli"
+  ],
+  "preferred_tool_order": [
+    "crawl4ai-cli",
+    "local-agent-browser-cli",
+    "scrapy-cffi",
+    "playwright-stealth",
+    "playwright",
+    "curl-cffi",
+    "direct-http-html"
+  ],
+  "blocked_tools": [
+    "direct-http-html"
+  ],
+  "comparison_summary": {
+    "best_tool": "crawl4ai-cli",
+    "best_status": "usable",
+    "best_score": 75,
+    "usable_tools": [
+      {
+        "tool": "crawl4ai-cli",
+        "status": "usable",
+        "score": 75,
+        "product_signal_count": 144,
+        "block_signal_count": 0,
+        "stdout_chars": 301978,
+        "field_completeness": 0.5,
+        "false_positive_reasons": [
+          "none"
+        ],
+        "notes": "crawl4ai CLI markdown extraction"
+      },
+      {
+        "tool": "local-agent-browser-cli",
+        "status": "usable",
+        "score": 75,
+        "product_signal_count": 178,
+        "block_signal_count": 0,
+        "stdout_chars": 160454,
+        "field_completeness": 0.33,
+        "false_positive_reasons": [
+          "none"
+        ],
+        "notes": "local agent-browser CLI connected to Chrome CDP"
+      },
+      {
+        "tool": "scrapy-cffi",
+        "status": "usable",
+        "score": 75,
+        "product_signal_count": 152,
+        "block_signal_count": 0,
+        "stdout_chars": 300001,
+        "field_completeness": 0.17,
+        "false_positive_reasons": [
+          "none"
+        ],
+        "notes": "Scrapy-style extraction stack using curl_cffi + parsel"
+      },
+      {
+        "tool": "playwright-stealth",
+        "status": "usable",
+        "score": 75,
+        "product_signal_count": 67,
+        "block_signal_count": 0,
+        "stdout_chars": 300001,
+        "field_completeness": 0.17,
+        "false_positive_reasons": [
+          "none"
+        ],
+        "notes": "Playwright + playwright_stealth render"
+      },
+      {
+        "tool": "playwright",
+        "status": "usable",
+        "score": 75,
+        "product_signal_count": 54,
+        "block_signal_count": 0,
+        "stdout_chars": 300001,
+        "field_completeness": 0.17,
+        "false_positive_reasons": [
+          "none"
+        ],
+        "notes": "plain Playwright Chromium render"
+      },
+      {
+        "tool": "curl-cffi",
+        "status": "usable",
+        "score": 75,
+        "product_signal_count": 17,
+        "block_signal_count": 0,
+        "stdout_chars": 300000,
+        "field_completeness": 0.17,
+        "false_positive_reasons": [
+          "none"
+        ],
+        "notes": "curl_cffi browser-impersonated HTTP fetch"
+      }
+    ],
+    "all_tools": [
+      {
+        "tool": "crawl4ai-cli",
+        "status": "usable",
+        "score": 75,
+        "product_signal_count": 144,
+        "block_signal_count": 0,
+        "stdout_chars": 301978,
+        "field_completeness": 0.5,
+        "false_positive_reasons": [
+          "none"
+        ],
+        "notes": "crawl4ai CLI markdown extraction"
+      },
+      {
+        "tool": "local-agent-browser-cli",
+        "status": "usable",
+        "score": 75,
+        "product_signal_count": 178,
+        "block_signal_count": 0,
+        "stdout_chars": 160454,
+        "field_completeness": 0.33,
+        "false_positive_reasons": [
+          "none"
+        ],
+        "notes": "local agent-browser CLI connected to Chrome CDP"
+      },
+      {
+        "tool": "scrapy-cffi",
+        "status": "usable",
+        "score": 75,
+        "product_signal_count": 152,
+        "block_signal_count": 0,
+        "stdout_chars": 300001,
+        "field_completeness": 0.17,
+        "false_positive_reasons": [
+          "none"
+        ],
+        "notes": "Scrapy-style extraction stack using curl_cffi + parsel"
+      },
+      {
+        "tool": "playwright-stealth",
+        "status": "usable",
+        "score": 75,
+        "product_signal_count": 67,
+        "block_signal_count": 0,
+        "stdout_chars": 300001,
+        "field_completeness": 0.17,
+        "false_positive_reasons": [
+          "none"
+        ],
+        "notes": "Playwright + playwright_stealth render"
+      },
+      {
+        "tool": "playwright",
+        "status": "usable",
+        "score": 75,
+        "product_signal_count": 54,
+        "block_signal_count": 0,
+        "stdout_chars": 300001,
+        "field_completeness": 0.17,
+        "false_positive_reasons": [
+          "none"
+        ],
+        "notes": "plain Playwright Chromium render"
+      },
+      {
+        "tool": "curl-cffi",
+        "status": "usable",
+        "score": 75,
+        "product_signal_count": 17,
+        "block_signal_count": 0,
+        "stdout_chars": 300000,
+        "field_completeness": 0.17,
+        "false_positive_reasons": [
+          "none"
+        ],
+        "notes": "curl_cffi browser-impersonated HTTP fetch"
+      },
+      {
+        "tool": "direct-http-html",
+        "status": "failed",
+        "score": 0,
+        "product_signal_count": 0,
+        "block_signal_count": 0,
+        "stdout_chars": 0,
+        "field_completeness": 0.17,
+        "false_positive_reasons": [],
+        "notes": "raw urllib HTTP fetch"
+      }
+    ]
+  },
+  "task_ready_fields": {
+    "title": "![](https://fls-na.amazon.com/1/batch/1/OP/ATVPDKIKX0DER:137-9922944-5264529:AP8ST66RSVSJ90M49NH1$uedata=s:%2Frd%2Fuedata%3Fstaticb%26id%3DAP8ST66RSVSJ90M49NH1:0) ![](https://m.media-amazon.com/images/G/01/gno/sprites/nav-sprite-global-1x-r",
+    "price": "![](https://fls-na.amazon.com/1/batch/1/OP/ATVPDKIKX0DER:137-9922944-5264529:AP8ST66RSVSJ90M49NH1$uedata=s:%2Frd%2Fuedat",
+    "rating": "",
+    "reviews": "",
+    "link": "![](https://fls-na.amazon.com/1/batch/1/OP/ATVPDKIKX0DER:137-9922944-5264529:AP8ST66RSVSJ90M49NH1$uedata=s:%2Frd%2Fuedata%3Fstaticb%26id%3DAP8ST66RSVSJ90M49NH1:0) ![](https://m.media-amazon.com/images/G/01/gno/sprites/nav-sprite-global-1x-r",
+    "promo": "",
+    "evidence_excerpt": [
+      "![](https://fls-na.amazon.com/1/batch/1/OP/ATVPDKIKX0DER:137-9922944-5264529:AP8ST66RSVSJ90M49NH1$uedata=s:%2Frd%2Fuedata%3Fstaticb%26id%3DAP8ST66RSVSJ90M49NH1:0) ![](https://m.media-amazon.com/images/G/01/gno/sprites/nav-sprite-global-1x-reorg-privacy._CB779528203_.png)",
+      "## Skip to",
+      "* [ Main content ](https://www.amazon.com/s?k=wireless+mouse#skippedLink)",
+      "* [ Results ](https://www.amazon.com/.s-asin%20a:has\\(h2\\))",
+      "* [ Filters ](https://www.amazon.com/s?k=wireless+mouse#s-refinements%20>%20div.a-section%20>%20div:first-child)"
+    ]
+  },
+  "generated_at": "2026-03-30T09:52:20.244243-07:00",
+  "evidence_sources": [
+    "/Users/mac_claw/.openclaw/workspace/crawler/reports/amazon-latest-run.json",
+    "/Users/mac_claw/.openclaw/workspace/crawler/site-profiles/amazon.md"
+  ]
+}

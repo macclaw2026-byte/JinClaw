@@ -1,0 +1,109 @@
+{
+  "items": [
+    {
+      "outreach_task_id": "marketing-automation-demo-account-exampledesignstudio-com-form",
+      "account_id": "account-exampledesignstudio-com",
+      "contact_id": "contact-example-design-studio",
+      "channel": "form",
+      "strategy_id": "marketing-automation-demo-strategy-account-exampledesignstudio-com",
+      "risk_level": "medium",
+      "approval_state": "approved",
+      "status": "queued",
+      "stop_conditions": [
+        "unsubscribe",
+        "do_not_contact",
+        "hard_bounce",
+        "complaint_risk"
+      ],
+      "suppressed_by_feedback": false,
+      "path_type": "quote_path",
+      "primary_angle": "design-led fit and curated product selection",
+      "CTA": "quote_request"
+    },
+    {
+      "outreach_task_id": "marketing-automation-demo-account-samplebuildco-com-form",
+      "account_id": "account-samplebuildco-com",
+      "contact_id": "contact-sample-build-co",
+      "channel": "form",
+      "strategy_id": "marketing-automation-demo-strategy-account-samplebuildco-com",
+      "risk_level": "medium",
+      "approval_state": "approved",
+      "status": "queued",
+      "stop_conditions": [
+        "unsubscribe",
+        "do_not_contact",
+        "hard_bounce",
+        "complaint_risk"
+      ],
+      "suppressed_by_feedback": false,
+      "path_type": "quote_path",
+      "primary_angle": "project support, repeat ordering, and quoting efficiency",
+      "CTA": "quote_request"
+    },
+    {
+      "outreach_task_id": "marketing-automation-demo-account-regionaldistributor-example-form",
+      "account_id": "account-regionaldistributor-example",
+      "contact_id": "contact-regional-distributor-group",
+      "channel": "form",
+      "strategy_id": "marketing-automation-demo-strategy-account-regionaldistributor-example",
+      "risk_level": "medium",
+      "approval_state": "approved",
+      "status": "queued",
+      "stop_conditions": [
+        "unsubscribe",
+        "do_not_contact",
+        "hard_bounce",
+        "complaint_risk"
+      ],
+      "suppressed_by_feedback": false,
+      "path_type": "partner_path",
+      "primary_angle": "partner fit, assortment expansion, and channel upside",
+      "CTA": "partner_application"
+    },
+    {
+      "outreach_task_id": "marketing-automation-demo-account-exampledealer-com-email",
+      "account_id": "account-exampledealer-com",
+      "contact_id": "contact-example-dealer",
+      "channel": "email",
+      "strategy_id": "marketing-automation-demo-strategy-account-exampledealer-com",
+      "risk_level": "high",
+      "approval_state": "awaiting_approval",
+      "status": "queued",
+      "stop_conditions": [
+        "unsubscribe",
+        "do_not_contact",
+        "hard_bounce",
+        "complaint_risk"
+      ],
+      "suppressed_by_feedback": false,
+      "path_type": "partner_path",
+      "primary_angle": "partner fit, assortment expansion, and channel upside",
+      "CTA": "partner_application"
+    },
+    {
+      "outreach_task_id": "marketing-automation-demo-account-demo-contractor-com-form",
+      "account_id": "account-demo-contractor-com",
+      "contact_id": "contact-demo-contractor",
+      "channel": "form",
+      "strategy_id": "marketing-automation-demo-strategy-account-demo-contractor-com",
+      "risk_level": "high",
+      "approval_state": "awaiting_approval",
+      "status": "queued",
+      "stop_conditions": [
+        "unsubscribe",
+        "do_not_contact",
+        "hard_bounce",
+        "complaint_risk"
+      ],
+      "suppressed_by_feedback": false,
+      "path_type": "quote_path",
+      "primary_angle": "project support, repeat ordering, and quoting efficiency",
+      "CTA": "quote_request"
+    }
+  ],
+  "summary": {
+    "total": 5,
+    "queued": 5,
+    "suppressed": 0
+  }
+}

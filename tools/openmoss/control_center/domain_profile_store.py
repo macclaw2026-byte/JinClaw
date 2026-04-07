@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/domain_profile_store.py`
+- 文件作用：负责控制中心中与 `domain_profile_store` 相关的编排、分析或决策逻辑。
+- 顶层函数：_write_json、_build_profile_for_domain、build_domain_profile、main。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import json
@@ -10,11 +18,23 @@ from paths import DOMAIN_PROFILES_ROOT
 
 
 def _write_json(path: Path, payload: object) -> None:
+    """
+    中文注解：
+    - 功能：实现 `_write_json` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _build_profile_for_domain(domain: str) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_build_profile_for_domain` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     lowered = domain.lower()
     preferred_interfaces = ["official_docs", "public_html"]
     challenge_risk = "medium"
@@ -48,6 +68,12 @@ def _build_profile_for_domain(domain: str) -> Dict[str, object]:
 
 
 def build_domain_profile(task_id: str, intent: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `build_domain_profile` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     domains = [str(item) for item in intent.get("domains", [])]
     platforms = [str(item) for item in intent.get("likely_platforms", [])]
     synthetic_domains: List[str] = []
@@ -85,6 +111,12 @@ def build_domain_profile(task_id: str, intent: Dict[str, object]) -> Dict[str, o
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     import argparse
 
     parser = argparse.ArgumentParser(description="Build domain-specific fetch profiles for a task")

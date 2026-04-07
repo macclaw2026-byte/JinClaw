@@ -1,0 +1,10 @@
+{
+  "total_events": 0,
+  "segment_conversion": {},
+  "channel_win_rate": {},
+  "strategy_win_rate": {},
+  "data_quality_drift": {
+    "invalid_contact_count": 0,
+    "unsubscribe_count": 0
+  }
+}

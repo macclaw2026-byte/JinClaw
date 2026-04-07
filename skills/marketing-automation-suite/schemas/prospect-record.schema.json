@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Prospect Record",
+  "type": "object",
+  "required": [
+    "account_id",
+    "company_name",
+    "website_root_domain",
+    "fit_score",
+    "intent_score",
+    "reachability_status",
+    "source_confidence"
+  ],
+  "properties": {
+    "account_id": {"type": "string"},
+    "contact_id": {"type": ["string", "null"]},
+    "company_name": {"type": "string"},
+    "website_root_domain": {"type": "string"},
+    "persona_type": {"type": ["string", "null"]},
+    "geo": {"type": ["string", "null"]},
+    "fit_score": {"type": "number"},
+    "intent_score": {"type": "number"},
+    "reachability_status": {"type": "string"},
+    "top_signals": {"type": "array", "items": {"type": "string"}},
+    "score_tier": {"type": ["string", "null"]},
+    "source_confidence": {"type": "number"}
+  }
+}
+

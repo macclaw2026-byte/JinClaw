@@ -1,27 +1,38 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/autonomy/telegram_binding.py`
+- 文件作用：负责Telegram 消息接入与任务绑定入口。
+- 顶层函数：bind_telegram_message、main。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import argparse
 import json
-import sys
-from pathlib import Path
 
 from manager import build_args, contract_path, create_task, log_ingress, read_link, utc_now_iso, write_link
 from task_ingress import slugify
 
-BRIDGE_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/bridge")
-if str(BRIDGE_DIR) not in sys.path:
-    sys.path.insert(0, str(BRIDGE_DIR))
-from common import conversation_session_key, load_bridge_config
-
-CONTROL_CENTER_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/control_center")
-if str(CONTROL_CENTER_DIR) not in sys.path:
-    sys.path.insert(0, str(CONTROL_CENTER_DIR))
-
 from brain_router import route_instruction
 from route_guardrails import persist_route, reroot_route_if_needed
 from task_receipt_engine import emit_route_receipt
+
+
+def telegram_session_key(chat_id: str, chat_type: str) -> str:
+    """
+    中文注解：
+    - 功能：根据 Telegram 会话信息直接生成 OpenClaw/JinClaw 使用的 session key。
+    - 角色：这是 Telegram 接入的本地辅助函数，用来替代已经退役的 bridge `conversation_session_key` 依赖。
+    - 调用关系：仅由 `bind_telegram_message` 调用，避免主接入链再依赖 `tools/openmoss/bridge/`。
+    """
+    convo_type = (chat_type or "group").strip().lower()
+    chat_norm = str(chat_id).strip()
+    if chat_norm.startswith("-") or convo_type == "group":
+        return f"agent:main:telegram:group:{chat_norm}"
+    return f"agent:main:telegram:direct:{chat_norm}"
 
 
 def bind_telegram_message(
@@ -32,6 +43,12 @@ def bind_telegram_message(
     message_id: str,
     text: str,
 ) -> dict:
+    """
+    中文注解：
+    - 功能：实现 `bind_telegram_message` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     ingress = {
         "provider": "telegram",
         "conversation_id": chat_id,
@@ -63,8 +80,7 @@ def bind_telegram_message(
         sender_name=sender_name,
         message_id=message_id,
     )
-    cfg = load_bridge_config()
-    session_key = conversation_session_key(cfg, "telegram", chat_id, chat_type)
+    session_key = telegram_session_key(chat_id, chat_type)
     brain_route = reroot_route_if_needed(
         route=brain_route,
         provider="telegram",
@@ -109,6 +125,12 @@ def bind_telegram_message(
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     parser = argparse.ArgumentParser(description="Bind Telegram ingress directly into the autonomy runtime")
     parser.add_argument("--chat-id", required=True)
     parser.add_argument("--chat-type", default="group")

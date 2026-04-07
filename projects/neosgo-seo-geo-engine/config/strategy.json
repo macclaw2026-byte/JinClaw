@@ -1,0 +1,449 @@
+{
+  "mode": "publish_live",
+  "publish_allowed": true,
+  "daily_create_limit": 2,
+  "daily_geo_variant_limit": 4,
+  "report_chat_id": "8528973600",
+  "feedback_ingestion": {
+    "enabled": true,
+    "search_paths": [
+      "/Users/mac_claw/.openclaw/workspace/projects/neosgo-seo-geo-engine/runtime/feedback"
+    ],
+    "accepted_fields": [
+      "slug",
+      "clicks",
+      "impressions",
+      "ctr",
+      "avgPosition",
+      "feedbackScore",
+      "conversionRate",
+      "city",
+      "state"
+    ]
+  },
+  "research_framework": {
+    "goal": "Use historical signal first, then market-gap research, then adapt note and GEO priorities before each write cycle.",
+    "topic_families": [
+      {
+        "key": "pendant",
+        "label": "Pendant sizing and spacing",
+        "signals": [
+          "kitchen island spacing",
+          "pendant count",
+          "hanging height"
+        ]
+      },
+      {
+        "key": "bathroom",
+        "label": "Bathroom vanity sizing and placement",
+        "signals": [
+          "mirror width fit",
+          "sconce placement",
+          "vanity light proportion"
+        ]
+      },
+      {
+        "key": "chandelier",
+        "label": "Dining chandelier scale and hanging rules",
+        "signals": [
+          "table-centered sizing",
+          "drop height",
+          "room proportion"
+        ]
+      },
+      {
+        "key": "living-room",
+        "label": "Layered living room lighting",
+        "signals": [
+          "ambient/task/accent balance",
+          "sconce placement",
+          "ceiling plus accent mix"
+        ]
+      }
+    ],
+    "geo_clusters": [
+      {
+        "key": "new_england",
+        "states": [
+          "RI",
+          "MA",
+          "CT",
+          "NH",
+          "ME",
+          "VT"
+        ],
+        "reason": "Regional cluster with coherent style overlap and strong early GEO compounding potential."
+      }
+    ]
+  },
+  "competitor_gap_framework": {
+    "method": "Use recurring SERP patterns to avoid commodity-style lighting guides and push every note toward stronger decision value.",
+    "topic_gaps": {
+      "pendant": {
+        "common_competitor_strengths": [
+          "basic pendant count guidance",
+          "basic hanging-height rules",
+          "simple spacing formulas"
+        ],
+        "common_competitor_gaps": [
+          "weak explanation of why proportion fails visually",
+          "little guidance on balancing fixture width, island length, and room openness together",
+          "minimal transition from educational answer to curated shopping path"
+        ],
+        "reference_urls": [
+          "https://www.toplightstore.com/blogs/news/kitchen-island-lighting-guide-size-height-spacing-style",
+          "https://artika.ca/pages/pendant-light-height-spacing-guide",
+          "https://www.edwardmartin.com/blogs/information/what-is-the-rule-of-three-for-kitchen-island-lighting"
+        ]
+      },
+      "bathroom": {
+        "common_competitor_strengths": [
+          "basic vanity width rules",
+          "mirror-side sconce placement tips"
+        ],
+        "common_competitor_gaps": [
+          "too generic for design-led spaces",
+          "weak explanation of flattering facial light versus harsh mirror light",
+          "little guidance on choosing between bar fixtures and sconces by room context"
+        ],
+        "reference_urls": [
+          "https://bathtubber.com/vanity-light-size-guidelines/",
+          "https://pdf.lowes.com/productdocuments/5ef75f04-1528-4def-b2b3-5f7a873f91ca/64519318.pdf"
+        ]
+      },
+      "chandelier": {
+        "common_competitor_strengths": [
+          "room-plus-table sizing formulas",
+          "basic hanging-height rules"
+        ],
+        "common_competitor_gaps": [
+          "over-reliance on old formulas without style interpretation",
+          "little help for readers choosing visual presence versus restraint",
+          "weak differentiation between room-centered and table-centered composition"
+        ],
+        "reference_urls": [
+          "https://www.delmarfans.com/educate/how-to-choose-chandelier-size",
+          "https://francismillar.com/pages/chandelier-size-guide"
+        ]
+      },
+      "living-room": {
+        "common_competitor_strengths": [
+          "ambient-task-accent layering basics",
+          "soft lifestyle-oriented inspiration"
+        ],
+        "common_competitor_gaps": [
+          "often inspirational instead of decision-oriented",
+          "weak connection between fixture planning and actual room use",
+          "limited guidance on what not to overdo in layered schemes"
+        ],
+        "reference_urls": [
+          "https://www.livingetc.com/advice/layered-lighting",
+          "https://www.homesandgardens.com/interior-design/the-library-all-the-lighting-basics-you-need-to-know"
+        ]
+      }
+    }
+  },
+  "adaptive_feedback": {
+    "enabled": true,
+    "weights": {
+      "clicks": 3.0,
+      "ctr": 2.0,
+      "feedbackScore": 2.5,
+      "conversionRate": 3.0,
+      "gapUrgency": 1.5,
+      "freshGeoNeed": 1.5
+    }
+  },
+  "editorial_framework": {
+    "goal": "Every note should be genuinely useful, expert-sounding, easy to read, and strong enough to function as both SEO entry content and a trust-building reference asset.",
+    "required_section_patterns": [
+      "why",
+      "mistake",
+      "choose",
+      "size",
+      "spacing",
+      "what to do next"
+    ],
+    "quality_gate": {
+      "minimum_score": 78,
+      "dimensions": [
+        "intent_alignment",
+        "decision_utility",
+        "professional_depth",
+        "readability_and_flow",
+        "brand_linkage"
+      ]
+    },
+    "voice_rules": [
+      "Write like a design-aware technical advisor, not a content farm.",
+      "Prefer decision guidance over generic inspiration language.",
+      "Use specific and calm language instead of exaggerated marketing copy.",
+      "Give readers a clear next step inside the Neosgo site."
+    ]
+  },
+  "site_positioning": {
+    "brand_name": "Neosgo Lighting",
+    "website_url": "https://neosgo.com",
+    "core_claim": "Curated lighting collections with refined finishes, modern silhouettes, and design-forward details.",
+    "commerce_angles": [
+      "Trade Program",
+      "room-based browsing",
+      "curated catalog for faster decisions",
+      "trade-focused pricing",
+      "project support",
+      "repeat ordering"
+    ]
+  },
+  "strategy_lineage": {
+    "source_project": "neosgo-growth-engine",
+    "lifted_principles": [
+      "geographic priorities",
+      "ICP-based prioritization",
+      "feedback-driven reweighting",
+      "daily progress reporting"
+    ]
+  },
+  "icp_framework": {
+    "priority_customer_profiles": [
+      "Interior designers / design studios",
+      "Builders / contractors / renovation firms",
+      "Trade buyers / sourcing teams / showroom buyers",
+      "High-value residential buyers with active renovation intent"
+    ],
+    "scoring_dimensions": [
+      "industry_fit_score",
+      "trade_signal_score",
+      "project_signal_score",
+      "website_quality_score",
+      "geo_fit_score",
+      "risk_penalty_score"
+    ]
+  },
+  "geo_priority_framework": {
+    "priority_order": [
+      "RI",
+      "MA",
+      "CT",
+      "NH",
+      "ME",
+      "VT",
+      "NY",
+      "CA",
+      "TX",
+      "FL"
+    ],
+    "selection_reason": "Prioritize New England first for regional concentration and easier early GEO clustering, then expand into larger design-led and trade-relevant states."
+  },
+  "internal_link_map": {
+    "pendant": "/products?category=pendant-lights",
+    "chandelier": "/products?category=chandeliers",
+    "wall-sconce": "/products?category=wall-sconces",
+    "bathroom": "/products?room=bathroom",
+    "kitchen": "/products?room=kitchen",
+    "dining": "/products?room=dining-room",
+    "bedroom": "/products?room=bedroom",
+    "living-room": "/products?room=living-room",
+    "outdoor": "/products?category=outdoor-lighting",
+    "trade-program": "/trade-program"
+  },
+  "geo_targets": [
+    {
+      "geoLabel": "Providence, Rhode Island",
+      "city": "Providence",
+      "state": "RI",
+      "geoGroup": "city",
+      "priority": 1,
+      "reason": "New England launch cluster with close regional relevance."
+    },
+    {
+      "geoLabel": "Boston, Massachusetts",
+      "city": "Boston",
+      "state": "MA",
+      "geoGroup": "city",
+      "priority": 2,
+      "reason": "Strong design, renovation, and trade-buyer density in New England."
+    },
+    {
+      "geoLabel": "New Haven, Connecticut",
+      "city": "New Haven",
+      "state": "CT",
+      "geoGroup": "city",
+      "priority": 3,
+      "reason": "Useful New England GEO bridge for residential and design-led search coverage."
+    },
+    {
+      "geoLabel": "Manchester, New Hampshire",
+      "city": "Manchester",
+      "state": "NH",
+      "geoGroup": "city",
+      "priority": 4,
+      "reason": "Supports New England cluster breadth and adjacent residential search intent."
+    },
+    {
+      "geoLabel": "Portland, Maine",
+      "city": "Portland",
+      "state": "ME",
+      "geoGroup": "city",
+      "priority": 5,
+      "reason": "Extends New England coverage with coastal residential style relevance."
+    },
+    {
+      "geoLabel": "Burlington, Vermont",
+      "city": "Burlington",
+      "state": "VT",
+      "geoGroup": "city",
+      "priority": 6,
+      "reason": "Completes the New England launch cluster with a smaller but distinct regional market."
+    },
+    {
+      "geoLabel": "New York, New York",
+      "city": "New York",
+      "state": "NY",
+      "geoGroup": "city",
+      "priority": 7,
+      "reason": "High design density and strong trade-buyer relevance."
+    },
+    {
+      "geoLabel": "Los Angeles, California",
+      "city": "Los Angeles",
+      "state": "CA",
+      "geoGroup": "city",
+      "priority": 8,
+      "reason": "Large design-led residential market with high style-search intent."
+    },
+    {
+      "geoLabel": "Austin, Texas",
+      "city": "Austin",
+      "state": "TX",
+      "geoGroup": "city",
+      "priority": 9,
+      "reason": "Strong remodel and builder overlap with modern residential demand."
+    },
+    {
+      "geoLabel": "Miami, Florida",
+      "city": "Miami",
+      "state": "FL",
+      "geoGroup": "city",
+      "priority": 10,
+      "reason": "High-value residential and hospitality-influenced lighting demand."
+    }
+  ],
+  "note_backlog": [
+    {
+      "slug": "kitchen-island-pendant-light-spacing-guide",
+      "title": "Kitchen Island Pendant Light Spacing Guide",
+      "description": "A practical guide to sizing, spacing, and hanging pendant lights over a kitchen island.",
+      "intentKeyword": "kitchen island pendant light spacing",
+      "quickAnswer": "Pendant spacing over a kitchen island should balance island length, fixture width, and visual breathing room between each light.",
+      "seoTitle": "Kitchen Island Pendant Light Spacing Guide | Neosgo Lighting",
+      "seoDescription": "Learn how to size and space pendant lights over a kitchen island with practical guidance for design-led kitchens.",
+      "targetAudience": "Homeowners, designers, and trade buyers",
+      "funnelStage": "Consideration",
+      "topic_key": "pendant",
+      "sections": [
+        {
+          "heading": "How many pendants should you use?",
+          "body": "Most kitchen islands are best served by two or three pendants, depending on island length and how much visual presence you want above the countertop."
+        },
+        {
+          "heading": "How wide should pendant spacing be?",
+          "body": "Keep enough space between pendants so they feel intentional rather than crowded, while still reading as one balanced composition over the island."
+        }
+      ],
+      "faq": [
+        {
+          "q": "How high should pendants hang above a kitchen island?",
+          "a": "A common starting point is 30 to 36 inches above the countertop, adjusted for fixture scale and ceiling height."
+        },
+        {
+          "q": "Should island pendants match the dining chandelier?",
+          "a": "They do not need to match exactly, but they should feel visually compatible in finish, scale, and design language."
+        }
+      ]
+    },
+    {
+      "slug": "bathroom-vanity-light-size-guide",
+      "title": "Bathroom Vanity Light Size Guide",
+      "description": "A sizing guide for bathroom vanity lighting with practical placement and proportion advice.",
+      "intentKeyword": "bathroom vanity light size guide",
+      "quickAnswer": "Vanity lighting should feel proportionate to the mirror width and provide even facial illumination without harsh glare.",
+      "seoTitle": "Bathroom Vanity Light Size Guide | Neosgo Lighting",
+      "seoDescription": "Understand bathroom vanity light sizing, placement, and proportion with a practical guide for refined spaces.",
+      "targetAudience": "Homeowners, designers, and remodel teams",
+      "funnelStage": "Consideration",
+      "topic_key": "bathroom",
+      "sections": [
+        {
+          "heading": "How wide should a vanity light be?",
+          "body": "Vanity lighting should align with mirror scale and overall bathroom balance rather than simply filling the wall width."
+        },
+        {
+          "heading": "Should you use one fixture or two sconces?",
+          "body": "Two sconces often create the most even light beside a mirror, while a single vanity fixture can work well when space or styling calls for a cleaner solution."
+        }
+      ],
+      "faq": [
+        {
+          "q": "Where should vanity sconces be placed?",
+          "a": "Vanity sconces are typically placed around eye level on each side of the mirror for more flattering and even light."
+        }
+      ]
+    },
+    {
+      "slug": "dining-room-chandelier-size-guide",
+      "title": "Dining Room Chandelier Size Guide",
+      "description": "A practical guide to choosing chandelier scale and hanging height over a dining table.",
+      "intentKeyword": "dining room chandelier size guide",
+      "quickAnswer": "A dining chandelier should feel centered to the table, proportionate to the room, and low enough to create intimacy without obstructing views.",
+      "seoTitle": "Dining Room Chandelier Size Guide | Neosgo Lighting",
+      "seoDescription": "Choose the right dining room chandelier size, scale, and hanging height with this practical guide.",
+      "targetAudience": "Homeowners, designers, and trade buyers",
+      "funnelStage": "Consideration",
+      "topic_key": "chandelier",
+      "sections": [
+        {
+          "heading": "How large should a dining chandelier be?",
+          "body": "Dining chandeliers should visually anchor the table while preserving enough breathing room around the fixture and the edge of the tabletop."
+        },
+        {
+          "heading": "How high should it hang?",
+          "body": "A chandelier should hang low enough to feel intimate over the table but high enough to preserve comfort and sightlines across the dining space."
+        }
+      ],
+      "faq": [
+        {
+          "q": "Should the chandelier be centered to the room or the table?",
+          "a": "In most dining spaces, the chandelier should be centered to the table because the table is the visual anchor."
+        }
+      ]
+    },
+    {
+      "slug": "living-room-layered-lighting-guide",
+      "title": "Living Room Layered Lighting Guide",
+      "description": "How to layer ambient, task, and accent lighting in a living room without making the space feel overlit.",
+      "intentKeyword": "living room layered lighting guide",
+      "quickAnswer": "The strongest living room lighting plans combine ambient, task, and accent lighting so the room feels balanced rather than flat or overlit.",
+      "seoTitle": "Living Room Layered Lighting Guide | Neosgo Lighting",
+      "seoDescription": "Learn how to combine ceiling fixtures, sconces, and accent lighting in a living room with better balance.",
+      "targetAudience": "Homeowners and designers",
+      "funnelStage": "Consideration",
+      "topic_key": "living-room",
+      "sections": [
+        {
+          "heading": "What should your base layer be?",
+          "body": "The base layer creates general visibility and establishes the visual mood of the room before task and accent lighting are introduced."
+        },
+        {
+          "heading": "Where do sconces and accent lights help most?",
+          "body": "Sconces, table lamps, and accent lights help bring depth, softness, and visual rhythm to seating zones and architectural moments."
+        }
+      ],
+      "faq": [
+        {
+          "q": "Do living rooms need recessed lights everywhere?",
+          "a": "Not always. A layered approach often feels more intentional and more comfortable than relying entirely on one ceiling solution."
+        }
+      ]
+    }
+  ]
+}

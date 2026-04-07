@@ -1,15 +1,37 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/proposal_judge.py`
+- 文件作用：负责给候选方案打分并选定执行方案。
+- 顶层函数：_estimate_plan_risk、_estimate_plan_efficiency、_score_plan、judge_proposals、main。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 from typing import Dict, List
 
 from necessity_prover import prove_plan_necessity
 from plan_history import load_history_profile
 
+AUTONOMY_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy")
+if str(AUTONOMY_DIR) not in sys.path:
+    sys.path.insert(0, str(AUTONOMY_DIR))
+
+from promotion_engine import doctor_strategy_bias
+
 
 def _estimate_plan_risk(plan: Dict[str, object]) -> float:
+    """
+    中文注解：
+    - 功能：实现 `_estimate_plan_risk` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     risk = 0.0
     for action in plan.get("external_actions", []):
         action_type = str(action.get("type", ""))
@@ -25,6 +47,12 @@ def _estimate_plan_risk(plan: Dict[str, object]) -> float:
 
 
 def _estimate_plan_efficiency(plan: Dict[str, object], intent: Dict[str, object], capabilities: Dict[str, object]) -> float:
+    """
+    中文注解：
+    - 功能：实现 `_estimate_plan_efficiency` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     task_types = set(str(item) for item in intent.get("task_types", []))
     plan_id = str(plan.get("plan_id", ""))
     capability_tags = set(str(item) for item in capabilities.get("capability_tags", []))
@@ -57,6 +85,12 @@ def _estimate_plan_efficiency(plan: Dict[str, object], intent: Dict[str, object]
 
 
 def _score_plan(plan: Dict[str, object], intent: Dict[str, object], capabilities: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_score_plan` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     external_actions = plan.get("external_actions", [])
     task_types = [str(item) for item in intent.get("task_types", [])]
     risk_level = str(intent.get("risk_level", ""))
@@ -83,7 +117,9 @@ def _score_plan(plan: Dict[str, object], intent: Dict[str, object], capabilities
     confidence_gate_penalty = 2 if external_actions and necessity.get("confidence") == "low" else 0
     efficiency_bonus = round(plan_efficiency * 1.6, 2)
     safety_penalty = round(plan_risk * 1.8, 2)
-    score = 10 + local_skill_matches + confidence_bonus + browser_bonus + image_pipeline_bonus - local_first_penalty - external_penalty - install_penalty + history_bonus + necessity_bonus - necessity_penalty - confidence_gate_penalty + efficiency_bonus - safety_penalty
+    strategy_bias = doctor_strategy_bias(intent, plan)
+    strategy_bonus = float(strategy_bias.get("score_adjustment", 0.0) or 0.0)
+    score = 10 + local_skill_matches + confidence_bonus + browser_bonus + image_pipeline_bonus - local_first_penalty - external_penalty - install_penalty + history_bonus + necessity_bonus - necessity_penalty - confidence_gate_penalty + efficiency_bonus - safety_penalty + strategy_bonus
     rationale = []
     if local_skill_matches:
         rationale.append("matches existing local skills")
@@ -103,6 +139,7 @@ def _score_plan(plan: Dict[str, object], intent: Dict[str, object], capabilities
         rationale.append("keeps the useful external ideas while rebuilding the capability locally")
     if history_profile.get("active_weight", 0):
         rationale.append(f"scene-aware historical success rate {historical_success_rate:.2f}")
+    rationale.extend([str(item) for item in strategy_bias.get("rationale", []) if str(item).strip()])
     if external_actions:
         if necessity.get("required"):
             rationale.append("external extension necessity is justified for this task")
@@ -118,10 +155,17 @@ def _score_plan(plan: Dict[str, object], intent: Dict[str, object], capabilities
         "necessity": necessity,
         "efficiency_score": plan_efficiency,
         "risk_score": plan_risk,
+        "doctor_strategy_bias": strategy_bias,
     }
 
 
 def judge_proposals(intent: Dict[str, object], capabilities: Dict[str, object], candidate_plans: List[Dict[str, object]]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `judge_proposals` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     scored = [_score_plan(plan, intent, capabilities) for plan in candidate_plans]
     scored_by_id = {item["plan_id"]: item for item in scored}
     selected_score = sorted(scored, key=lambda item: (-int(item["score"]), item["plan_id"]))[0]
@@ -135,6 +179,12 @@ def judge_proposals(intent: Dict[str, object], capabilities: Dict[str, object], 
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     import argparse
 
     parser = argparse.ArgumentParser(description="Judge candidate plans and choose the best option")

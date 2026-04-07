@@ -349,6 +349,38 @@ def build_project_control_bundle() -> Dict[str, Any]:
     }
 
 
+def _build_doctor_coverage_bundle() -> Dict[str, Any]:
+    return {
+        "single_doctor_rule": True,
+        "authoritative_doctor": "tools/openmoss/control_center/system_doctor.py",
+        "required_for_stable_promotion": [
+            "doctor_coverage_registered",
+            "targeted_tests_present",
+            "governance_runtime_updated",
+        ],
+        "registered_integrations": [
+            {
+                "name": "jinclaw-gstack-compatibility",
+                "required_files": [
+                    "compat/gstack/README.md",
+                    "compat/gstack/intake-assessment.md",
+                    "compat/gstack/capability-map.md",
+                    "compat/gstack/routing-policy.md",
+                    "compat/gstack/prompts/jinclaw-gstack-lite.md",
+                    "tools/openmoss/control_center/coding_session_adapter.py",
+                    "tools/openmoss/control_center/acp_dispatch_builder.py",
+                ],
+                "doctor_checks": [
+                    "file_presence",
+                    "prompt_integrity",
+                    "coding_chain_continuity",
+                    "noncoding_anti_pollution",
+                ],
+            }
+        ],
+    }
+
+
 def build_governance_bundle(task_id: str, stage_name: str, contract: Dict[str, Any], state: Dict[str, Any], mission: Dict[str, Any]) -> Dict[str, Any]:
     security = build_security_bundle(task_id, contract, mission)
     policy = build_policy_bundle(task_id, contract, state, mission)
@@ -375,6 +407,7 @@ def build_governance_bundle(task_id: str, stage_name: str, contract: Dict[str, A
         ),
         "crawler_project": crawler_project,
         "project_control": build_project_control_bundle(),
+        "doctor_coverage": _build_doctor_coverage_bundle(),
         "hooks": hooks,
         "memory": build_memory_bundle(task_id, contract, state, mission),
     }

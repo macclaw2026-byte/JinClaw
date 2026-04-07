@@ -1,0 +1,4 @@
+queue_id,file_id,event_type,event_time,payload_json
+sample-queue-1,sample-file-1,sent,2026-04-01 09:00:00,"{\"channel\":\"email\",\"campaign_id\":\"trade_intro\",\"variant\":\"A\"}"
+sample-queue-1,sample-file-1,reply,2026-04-01 13:20:00,"{\"reply_type\":\"interested\",\"note\":\"asked for catalog\"}"
+sample-queue-1,sample-file-1,quote_request,2026-04-02 10:10:00,"{\"project_type\":\"residential\",\"note\":\"needs pricing\"}"

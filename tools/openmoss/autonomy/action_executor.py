@@ -31,6 +31,7 @@ if str(CONTROL_CENTER_DIR) not in sys.path:
     sys.path.insert(0, str(CONTROL_CENTER_DIR))
 
 from context_builder import build_stage_context
+from acp_dispatch_builder import build_acp_dispatch_request
 from browser_task_signals import collect_browser_task_signals
 from crawler_probe_runner import run_crawler_probe, run_crawler_retro
 from task_receipt_engine import emit_route_receipt
@@ -237,10 +238,12 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
     - 输入：task_id、stage_name。
     - 输出：一段完整 prompt 文本。
     - 调用关系：dispatch_stage 在真正发消息给 gateway.chat.send 之前必经这里；这一步决定 AI agent 看到的是“结构化执行工单”，而不是原始聊天消息。
+    - 集成说明：对于 coding task，这里会消费 control-center -> coding session adapter -> acp dispatch builder，确保 gstack-lite discipline 真正进入 runtime 主执行链。
     """
     contract = load_contract(task_id)
     state = load_state(task_id)
-    stage_context = build_stage_context(task_id, stage_name, contract.to_dict(), state.to_dict())
+    contract_dict = contract.to_dict()
+    stage_context = build_stage_context(task_id, stage_name, contract_dict, state.to_dict())
     stage_contract = next((stage for stage in contract.stages if stage.name == stage_name), None)
     verifier_requirements = stage_contract.verifier if stage_contract and stage_contract.verifier else {}
     prompt_lines = [
@@ -336,7 +339,22 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
                 "Prefer DOM evaluate/act on the Listings page over aria snapshot when chrome-relay snapshot is unstable.",
             ]
         )
-    return "\n".join(prompt_lines)
+    base_prompt = "\n".join(prompt_lines)
+    dispatch_request = build_acp_dispatch_request(
+        {
+            'user_goal': contract.user_goal,
+            'done_definition': contract.done_definition,
+            'allowed_tools': contract.allowed_tools,
+            'stages': contract_dict.get('stages', []),
+            'metadata': contract_dict.get('metadata', {}),
+        },
+        stage_context,
+    )
+    if dispatch_request.get('prompt_components', {}).get('methodology_prompt_included'):
+        final_prompt = dispatch_request.get('prompt', '').strip()
+        if final_prompt:
+            return final_prompt
+    return base_prompt
 
 
 def _finalize_stage_wait_result(task_id: str, stage_name: str, result: Dict, record_path: str) -> Dict:

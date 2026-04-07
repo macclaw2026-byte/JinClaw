@@ -1,0 +1,26 @@
+{
+  "amazon": {
+    "completed": true,
+    "completedAt": "2026-03-30T09:45:23.829812-07:00",
+    "query": "wireless mouse",
+    "matrix": "/Users/mac_claw/.openclaw/workspace/reports/site-tool-matrix/tool-matrix-v2.json"
+  },
+  "walmart": {
+    "completed": true,
+    "completedAt": "2026-03-30T09:47:11.160429-07:00",
+    "query": "wireless mouse",
+    "matrix": "/Users/mac_claw/.openclaw/workspace/reports/site-tool-matrix/tool-matrix-v2.json"
+  },
+  "temu": {
+    "completed": true,
+    "completedAt": "2026-03-30T09:50:15.479961-07:00",
+    "query": "wireless mouse",
+    "matrix": "/Users/mac_claw/.openclaw/workspace/reports/site-tool-matrix/tool-matrix-v2.json"
+  },
+  "1688": {
+    "completed": true,
+    "completedAt": "2026-03-30T09:52:10.203276-07:00",
+    "query": "wireless mouse",
+    "matrix": "/Users/mac_claw/.openclaw/workspace/reports/site-tool-matrix/tool-matrix-v2.json"
+  }
+}

@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/voice/generate_voice.py`
+- 文件作用：负责`generate_voice` 相关的一方系统逻辑。
+- 顶层函数：_stamp、cmd_summary、cmd_dialog、build_parser、main。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import argparse
@@ -21,10 +29,22 @@ from adapter import (
 
 
 def _stamp() -> str:
+    """
+    中文注解：
+    - 功能：实现 `_stamp` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return datetime.utcnow().strftime("%Y%m%dT%H%M%S")
 
 
 def cmd_summary(args: argparse.Namespace) -> int:
+    """
+    中文注解：
+    - 功能：实现 `cmd_summary` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     cfg = load_voice_config()
     ensure_voice_layout(cfg)
     out_path = cfg.output_dir / f"summary-{_stamp()}.wav"
@@ -40,6 +60,12 @@ def cmd_summary(args: argparse.Namespace) -> int:
 
 
 def cmd_dialog(args: argparse.Namespace) -> int:
+    """
+    中文注解：
+    - 功能：实现 `cmd_dialog` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     cfg = load_voice_config()
     ensure_voice_layout(cfg)
     save_dir = cfg.output_dir / f"dialog-{_stamp()}"
@@ -69,6 +95,12 @@ def cmd_dialog(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """
+    中文注解：
+    - 功能：实现 `build_parser` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     parser = argparse.ArgumentParser(description="Local OpenMOSS voice adapter")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -89,6 +121,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     parser = build_parser()
     args = parser.parse_args()
     if args.cmd == "summary":

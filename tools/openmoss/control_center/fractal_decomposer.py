@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/fractal_decomposer.py`
+- 文件作用：负责控制中心中与 `fractal_decomposer` 相关的编排、分析或决策逻辑。
+- 顶层函数：build_fractal_loops、select_loop_focus、main。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import json
@@ -7,6 +15,12 @@ from typing import Dict, List
 
 
 def build_fractal_loops(intent: Dict[str, object], selected_plan: Dict[str, object], topology: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `build_fractal_loops` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     steps = [str(item) for item in selected_plan.get("steps", [])]
     loops: List[Dict[str, object]] = []
     for index, step in enumerate(steps, start=1):
@@ -28,6 +42,12 @@ def build_fractal_loops(intent: Dict[str, object], selected_plan: Dict[str, obje
 
 
 def select_loop_focus(fractal: Dict[str, object], stage_name: str, stage_attempts: int = 0) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `select_loop_focus` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     loops = fractal.get("loops", [])
     if not loops:
         return {
@@ -51,6 +71,12 @@ def select_loop_focus(fractal: Dict[str, object], stage_name: str, stage_attempt
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     import argparse
 
     parser = argparse.ArgumentParser(description="Build fractal sub-loops for a selected plan")

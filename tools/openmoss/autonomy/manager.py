@@ -223,6 +223,77 @@ def _task_milestones(contract: TaskContract) -> List[Dict[str, Any]]:
     return [dict(item) for item in milestones if isinstance(item, dict)]
 
 
+def _record_stage_artifact(
+    task_id: str,
+    *,
+    contract: TaskContract | None = None,
+    state: TaskState | None = None,
+    stage_name: str,
+    summary: str = "",
+    evidence_ref: str = "",
+    extra: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：把阶段完成时的关键产物写入 `state.metadata.stage_artifacts`。
+    - 设计意图：让复杂任务后续能基于阶段产物做 verify、doctor 巡检和 release gate。
+    """
+    current_contract = contract or load_contract(task_id)
+    current_state = state or load_state(task_id)
+    stage = current_state.stages.get(stage_name)
+    stage_contract = next((item for item in current_contract.stages if item.name == stage_name), None)
+    artifacts = current_state.metadata.get("stage_artifacts", {}) or {}
+    existing = dict(artifacts.get(stage_name, {}) or {})
+    evidence_refs = list(existing.get("evidence_refs", []) or [])
+    if stage:
+        evidence_refs.extend([str(item) for item in stage.evidence_refs if str(item).strip()])
+        verification_status = stage.verification_status
+    else:
+        verification_status = str(existing.get("verification_status", "not-run"))
+    if evidence_ref and str(evidence_ref).strip():
+        evidence_refs.append(str(evidence_ref).strip())
+    payload = {
+        "stage": stage_name,
+        "written_at": utc_now_iso(),
+        "summary": summary or (stage.summary if stage else str(existing.get("summary", ""))),
+        "expected_output": stage_contract.expected_output if stage_contract else str(existing.get("expected_output", "")),
+        "acceptance_check": stage_contract.acceptance_check if stage_contract else str(existing.get("acceptance_check", "")),
+        "execution_policy": dict(stage_contract.execution_policy or {}) if stage_contract else dict(existing.get("execution_policy", {}) or {}),
+        "verification_status": verification_status,
+        "evidence_refs": sorted(dict.fromkeys([item for item in evidence_refs if item])),
+        "completed_subtasks": list(stage.completed_subtasks) if stage else list(existing.get("completed_subtasks", []) or []),
+        "artifact_status": "ready",
+    }
+    summary_text = str(payload.get("summary", "")).strip()
+    if stage_name == "understand":
+        payload.setdefault("mission_brief", summary_text)
+        payload.setdefault("scope_constraints", list(current_contract.hard_constraints or []))
+        payload.setdefault("success_definition", str(current_contract.done_definition or ""))
+    elif stage_name == "plan":
+        execute_titles = [
+            str(item.get("title", "")).strip()
+            for item in _task_milestones(current_contract)
+            if str(item.get("stage", "")).strip() == "execute" and str(item.get("title", "")).strip()
+        ]
+        payload.setdefault("execution_plan", summary_text)
+        payload.setdefault("module_breakdown", list(stage.completed_subtasks) if stage and stage.completed_subtasks else execute_titles)
+        payload.setdefault("test_strategy", "verify buildability, stage acceptance, and release readiness before final delivery")
+    elif stage_name == "execute":
+        payload.setdefault("delivery_evidence", summary_text or "implementation evidence recorded")
+        payload.setdefault("implementation_delta", summary_text or "implementation delta recorded")
+        payload.setdefault("test_signal", "verification_pending" if verification_status == "not-run" else verification_status)
+    elif stage_name == "learn":
+        postmortem = current_state.metadata.get("postmortem", {}) or {}
+        payload.setdefault("postmortem", str(postmortem.get("path", "")).strip())
+        payload.setdefault("reusable_rule", "do not close a complex task before staged artifacts, verification, and postmortem are all present")
+        payload.setdefault("followup_risks", list(current_state.learning_backlog or []))
+    if extra:
+        payload.update(extra)
+    artifacts[stage_name] = payload
+    current_state.metadata["stage_artifacts"] = artifacts
+    return payload
+
+
 def _initial_milestone_progress(contract: TaskContract) -> Dict[str, Dict[str, Any]]:
     """
     中文注解：
@@ -837,6 +908,13 @@ def complete_stage(args: argparse.Namespace) -> int:
     stage.updated_at = utc_now_iso()
     state.last_success_at = utc_now_iso()
     state.last_update_at = utc_now_iso()
+    artifact = _record_stage_artifact(
+        args.task_id,
+        contract=contract,
+        state=state,
+        stage_name=stage_name,
+        summary=args.summary,
+    )
     next_stage = None
     for name in state.stage_order:
         if state.stages[name].status != "completed":
@@ -851,7 +929,7 @@ def complete_stage(args: argparse.Namespace) -> int:
         state.current_stage = next_stage
         state.next_action = f"start_stage:{next_stage}"
     save_state(state)
-    log_event(args.task_id, "stage_completed", stage=stage_name, summary=args.summary)
+    log_event(args.task_id, "stage_completed", stage=stage_name, summary=args.summary, artifact=artifact)
     record_learning(args.task_id, f"Stage {stage_name} completed: {args.summary}")
     _refresh_task_summary(args.task_id, state=state, extra={"last_completed_stage": stage_name})
     print(json.dumps({"status": state.status, "next_action": state.next_action}, ensure_ascii=False, indent=2))
@@ -877,6 +955,15 @@ def complete_stage_internal(task_id: str, stage_name: str, summary: str, evidenc
         stage.evidence_refs.append(evidence_ref)
     state.last_success_at = utc_now_iso()
     state.last_update_at = utc_now_iso()
+    contract = load_contract(task_id)
+    artifact = _record_stage_artifact(
+        task_id,
+        contract=contract,
+        state=state,
+        stage_name=stage_name,
+        summary=summary,
+        evidence_ref=evidence_ref,
+    )
     next_stage = None
     for name in state.stage_order:
         if state.stages[name].status != "completed":
@@ -891,10 +978,9 @@ def complete_stage_internal(task_id: str, stage_name: str, summary: str, evidenc
         state.current_stage = next_stage
         state.next_action = f"start_stage:{next_stage}"
     save_state(state)
-    log_event(task_id, "stage_completed", stage=stage_name, summary=summary, evidence_ref=evidence_ref)
+    log_event(task_id, "stage_completed", stage=stage_name, summary=summary, evidence_ref=evidence_ref, artifact=artifact)
     record_learning(task_id, f"Stage {stage_name} completed: {summary}")
     if stage_name == "execute":
-        contract = load_contract(task_id)
         plan_id = str(contract.metadata.get("control_center", {}).get("selected_plan", {}).get("plan_id", ""))
         if plan_id:
             task_types, risk_level = _plan_bucket(contract)
@@ -1125,6 +1211,22 @@ def verify_task(args: argparse.Namespace) -> int:
             learn_stage.status = "failed"
             learn_stage.blocker = f"verification failed: {retro_result['status']}"
             learn_stage.updated_at = utc_now_iso()
+    verification_artifact = {
+        "results": results,
+        "verified_stages": verified_stages,
+        "verification_ok": all_ok,
+        "acceptance_decision": "accepted" if all_ok else "rework_required",
+        "remaining_risks": [] if all_ok else [f"verification_failure:{first_failed_stage or 'unknown'}"],
+        "artifact_status": "ready" if all_ok else "failed",
+    }
+    _record_stage_artifact(
+        args.task_id,
+        contract=contract,
+        state=state,
+        stage_name="verify",
+        summary="Verification passed and the task satisfied the current release gate." if all_ok else "Verification failed and the task must re-enter recovery.",
+        extra=verification_artifact,
+    )
     state.status = "completed" if all_ok else "recovering"
     state.next_action = "none" if all_ok else "repair_verification_failure"
     state.blockers = [] if all_ok else [f"verification_failure:{first_failed_stage or 'unknown'}"]

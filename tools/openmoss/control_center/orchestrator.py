@@ -15,9 +15,16 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List
+
+WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
+GSTACK_LITE_PROMPT_PATH = WORKSPACE_ROOT / "compat/gstack/prompts/jinclaw-gstack-lite.md"
+AUTONOMY_DIR = WORKSPACE_ROOT / "tools/openmoss/autonomy"
+if str(AUTONOMY_DIR) not in sys.path:
+    sys.path.insert(0, str(AUTONOMY_DIR))
 
 from approval_gate import review_plan
 from adoption_flow import build_adoption_flow
@@ -43,6 +50,7 @@ from stpa_auditor import audit_mission
 from topology_mapper import build_topology
 from workflow_planner import build_workflow_blueprint
 from mission_profiles import detect_root_mission_profile
+from promotion_engine import load_doctor_strategy_rules
 
 
 GOAL_SEQUENCE_TOKENS = (
@@ -59,6 +67,231 @@ GOAL_SEQUENCE_TOKENS = (
     "并且",
     "以及",
 )
+
+
+def _is_complex_delivery_task(
+    goal: str,
+    intent: Dict[str, object],
+    mission_profile: Dict[str, object],
+    coding_methodology: Dict[str, object],
+) -> bool:
+    """
+    中文注解：
+    - 功能：判断一个任务是否应进入“复杂任务总控流程”。
+    - 设计意图：把真正需要阶段产物、阶段验收、阶段测试和强放行门禁的任务识别出来。
+    """
+    normalized_goal = str(goal or "").lower()
+    task_types = {str(item).strip().lower() for item in intent.get("task_types", []) if str(item).strip()}
+    if mission_profile.get("matched"):
+        return True
+    if len(_derive_execute_deliverables(goal)) >= 3:
+        return True
+    complex_tokens = (
+        "app",
+        "application",
+        "platform",
+        "system",
+        "workflow",
+        "engine",
+        "dashboard",
+        "course",
+        "training",
+        "assessment",
+        "evaluation",
+        "产品",
+        "应用",
+        "平台",
+        "系统",
+        "工作流",
+        "引擎",
+        "课程",
+        "培训",
+        "评估",
+        "胜任力",
+        "交付",
+        "完整",
+    )
+    if sum(1 for token in complex_tokens if token in normalized_goal) >= 2:
+        return True
+    if coding_methodology.get("enabled") and (
+        {"code", "web", "data"} & task_types
+        or any(token in normalized_goal for token in ("build", "implement", "develop", "integrate", "构建", "实现", "开发", "接入"))
+    ):
+        return True
+    return False
+
+
+def _derive_complex_task_controller(
+    goal: str,
+    intent: Dict[str, object],
+    mission_profile: Dict[str, object],
+    coding_methodology: Dict[str, object],
+) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：生成复杂任务总控配置。
+    - 设计意图：让复杂任务天然带上阶段产物、阶段验收、阶段测试和不达标不放行的强约束。
+    """
+    enabled = _is_complex_delivery_task(goal, intent, mission_profile, coding_methodology)
+    return {
+        "enabled": enabled,
+        "controller": "complex_task_delivery_guard",
+        "require_stage_artifacts": enabled,
+        "require_stage_acceptance_before_progress": enabled,
+        "require_verify_stage_report": enabled,
+        "require_test_evidence_for_execute": enabled,
+        "require_postmortem_before_completion": True,
+        "strict_release_gate": enabled,
+        "stage_gate_policy": {
+            "understand": {
+                "required_artifact_keys": ["mission_brief", "scope_constraints", "success_definition"],
+                "require_summary_nonempty": True,
+            },
+            "plan": {
+                "required_artifact_keys": ["execution_plan", "module_breakdown", "test_strategy"],
+                "require_summary_nonempty": True,
+            },
+            "execute": {
+                "required_artifact_keys": ["delivery_evidence", "implementation_delta", "test_signal"],
+                "require_summary_nonempty": True,
+                "require_evidence_refs": True,
+            },
+            "verify": {
+                "required_artifact_keys": ["verification_report", "acceptance_decision", "remaining_risks"],
+                "require_summary_nonempty": True,
+            },
+            "learn": {
+                "required_artifact_keys": ["postmortem", "reusable_rule", "followup_risks"],
+                "require_summary_nonempty": True,
+            },
+        },
+    }
+
+
+def _is_coding_task(intent: Dict[str, object]) -> bool:
+    """
+    中文注解：
+    - 功能：判断当前任务是否属于应注入 JinClaw GStack-Lite 编码纪律的 coding task。
+    - 设计意图：只给代码型任务注入，不污染一般研究、业务执行或纯状态查询任务。
+    """
+    task_types = {str(item).strip().lower() for item in intent.get("task_types", []) if str(item).strip()}
+    goal = str(intent.get("goal", "") or "").lower()
+    if "code" in task_types:
+        return True
+    coding_tokens = (
+        "build",
+        "implement",
+        "fix",
+        "debug",
+        "refactor",
+        "test",
+        "optimize",
+        "optimization",
+        "improve",
+        "stabilize",
+        "harden",
+        "integrate",
+        "代码",
+        "修复",
+        "实现",
+        "重构",
+        "优化",
+        "改进",
+        "稳定",
+        "加固",
+        "融合",
+        "接入",
+    )
+    return any(token in goal for token in coding_tokens)
+
+
+def _load_gstack_lite_prompt() -> str:
+    """
+    中文注解：
+    - 功能：读取 JinClaw 自有的 gstack-lite discipline prompt。
+    - 设计意图：保持 prompt 为文件化资产，便于审阅、升级和替换。
+    """
+    if not GSTACK_LITE_PROMPT_PATH.exists():
+        return ""
+    return GSTACK_LITE_PROMPT_PATH.read_text(encoding="utf-8")
+
+
+def _derive_coding_methodology(intent: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：为 coding task 生成方法论注入包。
+    - 输出：供 runtime/context_builder/后续 ACP spawn 读取的结构化 metadata。
+    """
+    is_coding = _is_coding_task(intent)
+    if not is_coding:
+        return {
+            "enabled": False,
+            "methodology": "jinclaw-native",
+            "lifecycle": [],
+            "prompt_path": "",
+            "prompt_text": "",
+        }
+    lifecycle = ["think", "plan", "build", "review", "test", "ship", "reflect"]
+    prompt_text = _load_gstack_lite_prompt()
+    return {
+        "enabled": True,
+        "methodology": "jinclaw-gstack-lite",
+        "lifecycle": lifecycle,
+        "prompt_path": str(GSTACK_LITE_PROMPT_PATH) if GSTACK_LITE_PROMPT_PATH.exists() else "",
+        "prompt_text": prompt_text,
+        "reporting_contract": {
+            "require_stage_completion_status": True,
+            "require_evidence": True,
+            "require_unresolved_risks": True,
+            "require_recommended_next_step": True,
+        },
+    }
+
+
+def _derive_goal_guardian(
+    goal: str,
+    intent: Dict[str, object],
+    mission_profile: Dict[str, object],
+    coding_methodology: Dict[str, object],
+) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：为复杂任务生成“目标守护”配置。
+    - 设计意图：
+      1. 让医生与 runtime 明确知道：任务完成前不能静默停下；
+      2. 完成后必须写复盘，复盘未落盘前不算真正结束；
+      3. 优化类任务默认按一次 coding mission 处理，强制套用 gstack-lite 节奏。
+    """
+    normalized_goal = str(goal or "").lower()
+    optimization_task = any(
+        token in normalized_goal
+        for token in ("optimize", "optimization", "improve", "stabilize", "refactor", "优化", "改进", "稳定", "重构", "升级")
+    )
+    strict_goal = _goal_requires_strict_continuation(goal, intent, mission_profile)
+    return {
+        "enabled": True,
+        "guardian_process": "system_doctor",
+        "verify_every_step": True,
+        "strict_continuation_required": strict_goal,
+        "require_postmortem_before_completion": True,
+        "postmortem_stage": "learn",
+        "postmortem_required_fields": [
+            "goal",
+            "done_definition",
+            "what_worked",
+            "what_failed",
+            "remaining_risks",
+            "next_reusable_rule",
+        ],
+        "stuck_escalation_policy": {
+            "enabled": True,
+            "default_mode": "deep_research_then_ask_user",
+            "deep_research_first": True,
+            "ask_user_when_human_decision_required": True,
+        },
+        "optimization_task": optimization_task,
+        "optimization_requires_gstack": bool(optimization_task or coding_methodology.get("enabled")),
+    }
 
 
 def _utc_now_iso() -> str:
@@ -318,6 +551,7 @@ def _derive_stage_contracts(task_id: str, blueprint: Dict[str, object]) -> List[
     crawler_enabled = bool(crawler.get("enabled"))
     mission_profile = blueprint.get("mission_profile", {}) or {}
     strict_continuation_required = bool(blueprint.get("strict_continuation_required"))
+    complex_task_controller = blueprint.get("complex_task_controller", {}) or {}
     pending_approvals = approval.get("pending", [])
     require_business_proof = _requires_explicit_business_proof(intent, selected_plan)
     execute_policy = {
@@ -403,8 +637,8 @@ def _derive_stage_contracts(task_id: str, blueprint: Dict[str, object]) -> List[
             {
                 "name": "learn",
                 "goal": "Persist lead-engine lessons, scoring refinements, marketing improvements, and daily reporting guidance.",
-                "expected_output": "updated learning artifacts and reusable lead-engine guidance",
-                "acceptance_check": "learning artifacts and a truthful progress summary are written",
+                "expected_output": "updated learning artifacts, reusable lead-engine guidance, and a written postmortem",
+                "acceptance_check": "learning artifacts, truthful progress summary, and postmortem are written",
                 "execution_policy": {"auto_complete_on_wait_ok": True},
             },
         ]
@@ -418,7 +652,7 @@ def _derive_stage_contracts(task_id: str, blueprint: Dict[str, object]) -> List[
             ]
         )
         verify_verifier = {"type": "all", "checks": verify_checks}
-    return [
+    stages = [
         {
             "name": "understand",
             "goal": "Analyze the instruction, constraints, desired outcome, and security posture",
@@ -451,12 +685,66 @@ def _derive_stage_contracts(task_id: str, blueprint: Dict[str, object]) -> List[
         },
         {
             "name": "learn",
-            "goal": "Persist lessons, promoted rules, and reusable guidance",
-            "expected_output": "updated learning artifacts and task summary",
-            "acceptance_check": "learning artifacts written successfully",
+            "goal": "Persist lessons, promoted rules, reusable guidance, and a completion postmortem before closure",
+            "expected_output": "updated learning artifacts, task summary, and written postmortem",
+            "acceptance_check": "learning artifacts and postmortem are written successfully",
             "execution_policy": {"auto_complete_on_wait_ok": True},
         },
     ]
+    if not complex_task_controller.get("enabled"):
+        return stages
+    stage_gate_policy = complex_task_controller.get("stage_gate_policy", {}) or {}
+    enriched: List[Dict[str, object]] = []
+    for stage in stages:
+        stage_name = str(stage.get("name", "")).strip()
+        policy = dict(stage.get("execution_policy", {}) or {})
+        gate = dict(stage_gate_policy.get(stage_name, {}) or {})
+        policy["complex_task_controller"] = True
+        policy["require_stage_artifacts_before_complete"] = True
+        policy["required_artifact_keys"] = list(gate.get("required_artifact_keys", []))
+        policy["require_summary_nonempty"] = bool(gate.get("require_summary_nonempty", True))
+        if stage_name == "execute":
+            policy["require_evidence_refs_for_completion"] = bool(gate.get("require_evidence_refs", True))
+            policy["require_verifier_before_complete"] = True
+        stage["execution_policy"] = policy
+        if stage_name in {"understand", "plan", "execute"}:
+            stage["verifier"] = {
+                "type": "task_stage_artifacts_ready",
+                "task_id": task_id,
+                "stage": stage_name,
+            }
+        elif stage_name == "verify":
+            existing_checks = list(((stage.get("verifier", {}) or {}).get("checks", []) or []))
+            artifact_checks = [
+                {"type": "task_stage_artifacts_ready", "task_id": task_id, "stage": "understand"},
+                {"type": "task_stage_artifacts_ready", "task_id": task_id, "stage": "plan"},
+                {"type": "task_stage_artifacts_ready", "task_id": task_id, "stage": "execute"},
+            ]
+            stage["verifier"] = {
+                "type": "all",
+                "checks": [*existing_checks, *artifact_checks],
+            }
+            stage["goal"] = "Verify the goal is actually satisfied, tests/acceptance evidence are real, and the staged deliverables are consistent."
+            stage["expected_output"] = "verification report, acceptance decision, remaining risk digest"
+            stage["acceptance_check"] = "verification must confirm prior stage artifacts, execute evidence, and a truthful acceptance decision before release"
+        if stage_name == "understand":
+            stage["goal"] = "Understand the complex mission deeply enough to define scope, target users, constraints, and what counts as a real finished delivery."
+            stage["expected_output"] = "mission brief, scope constraints, and success definition"
+            stage["acceptance_check"] = "the mission brief clearly defines user goal, constraints, and done definition in a way later stages can execute against"
+        elif stage_name == "plan":
+            stage["goal"] = "Produce a buildable complex-task plan with module breakdown, implementation order, testing strategy, and release gate."
+            stage["expected_output"] = "execution plan, module breakdown, and test strategy"
+            stage["acceptance_check"] = "the plan names build order, testing path, and what evidence each stage must produce before moving on"
+        elif stage_name == "execute":
+            stage["goal"] = f"Build the complex delivery in a controlled way: {selected_plan.get('summary', '')}"
+            stage["expected_output"] = "implementation delta, delivery evidence, and test signal"
+            stage["acceptance_check"] = "execute cannot close until implementation evidence and a truthful test signal are both recorded"
+        elif stage_name == "learn":
+            stage["goal"] = "Write a true postmortem and reusable rule set before allowing the complex task to close."
+            stage["expected_output"] = "postmortem, reusable rule, and follow-up risk digest"
+            stage["acceptance_check"] = "learn only passes when postmortem and reusable lessons are written successfully"
+        enriched.append(stage)
+    return enriched
 
 
 def build_control_center_package(task_id: str, goal: str, *, source: str = "manual", inherited_intent: Dict[str, object] | None = None) -> Dict[str, object]:
@@ -474,6 +762,10 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
     raw_intent = analyze_intent(goal, source=source)
     intent = _merge_inherited_intent(raw_intent, inherited_intent)
     mission_profile = detect_root_mission_profile(goal, task_id=task_id, intent=intent)
+    coding_methodology = _derive_coding_methodology(intent)
+    goal_guardian = _derive_goal_guardian(goal, intent, mission_profile, coding_methodology)
+    complex_task_controller = _derive_complex_task_controller(goal, intent, mission_profile, coding_methodology)
+    doctor_strategy_hints = load_doctor_strategy_rules()[:8]
     strict_continuation_required = _goal_requires_strict_continuation(goal, intent, mission_profile)
     task_milestones = _derive_task_milestones(task_id, goal, intent, mission_profile)
     if mission_profile.get("matched"):
@@ -536,6 +828,10 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
         "arbitration": arbitration,
         "adoption_flow": adoption_flow,
         "mission_profile": mission_profile,
+        "coding_methodology": coding_methodology,
+        "goal_guardian": goal_guardian,
+        "complex_task_controller": complex_task_controller,
+        "doctor_strategy_hints": doctor_strategy_hints,
         "strict_continuation_required": strict_continuation_required,
         "task_milestones": task_milestones,
     }
@@ -581,6 +877,10 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
             "capability_clone": mission.get("capability_clone", {}),
             "mission_profile_id": mission_profile.get("profile_id", ""),
             "mission_profile": mission_profile,
+            "coding_methodology": coding_methodology,
+            "goal_guardian": goal_guardian,
+            "complex_task_controller": complex_task_controller,
+            "doctor_strategy_hints": doctor_strategy_hints,
         },
         "approval": approval,
         "security": {
@@ -595,7 +895,7 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
         "done_definition": intent["done_definition"],
         "hard_constraints": intent["hard_constraints"],
         "allowed_tools": _derive_allowed_tools({**blueprint, "intent": intent, "selected_plan": selected_plan}),
-        "stages": _derive_stage_contracts(task_id, {**blueprint, "approval": approval, "intent": intent, "selected_plan": selected_plan, "mission_profile": mission_profile, "strict_continuation_required": strict_continuation_required, "crawler": crawler}),
+        "stages": _derive_stage_contracts(task_id, {**blueprint, "approval": approval, "intent": intent, "selected_plan": selected_plan, "mission_profile": mission_profile, "strict_continuation_required": strict_continuation_required, "crawler": crawler, "complex_task_controller": complex_task_controller}),
         "metadata": metadata,
         "mission_path": str(MISSIONS_ROOT / f"{task_id}.json"),
     }

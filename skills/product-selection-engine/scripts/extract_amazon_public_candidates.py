@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 from datetime import datetime
+from hashlib import sha1
 from pathlib import Path
 from urllib.parse import quote_plus, unquote, urlparse, parse_qs
 
@@ -33,45 +34,79 @@ MIN_FIELD_COMPLETENESS = 0.80
 MIN_CLEAN_DP_LINK_RATIO = 0.85
 MAX_BRAND_RISK_RATIO = 0.15
 MAX_PER_QUERY = 8
+CRAWL_TIMEOUT_SECONDS = 120
+
+
+def _looks_like_amazon_error(markdown: str) -> bool:
+    sample = (markdown or '')[:4000].lower()
+    return any(
+        marker in sample
+        for marker in [
+            'sorry! something went wrong on our end',
+            'dogs of amazon',
+            'ref=cs_503',
+            '/images/g/01/error/',
+            'robot check',
+            'enter the characters you see below',
+        ]
+    )
+
+
+def _crawl_command_variants(url: str, query: str) -> list[list[str]]:
+    session_seed = sha1(f'{query}:{datetime.now().date().isoformat()}'.encode('utf-8')).hexdigest()[:12]
+    hardened_browser = 'user_agent_mode=random,java_script_enabled=true,text_mode=false'
+    hardened_crawler = (
+        'wait_until=domcontentloaded,'
+        'simulate_user=true,'
+        'override_navigator=true,'
+        'magic=true,'
+        'delay_before_return_html=2,'
+        'scan_full_page=true,'
+        'page_timeout=120000,'
+        f'session_id=amazon-public-{session_seed}'
+    )
+    medium_crawler = (
+        'wait_until=load,'
+        'simulate_user=true,'
+        'override_navigator=true,'
+        'delay_before_return_html=1.5,'
+        'page_timeout=90000,'
+        f'session_id=amazon-public-{session_seed}'
+    )
+    return [
+        [str(CRAWL4AI), url, '-o', 'markdown', '--bypass-cache', '-b', hardened_browser, '-c', hardened_crawler],
+        [str(CRAWL4AI), url, '-o', 'markdown', '--bypass-cache', '-b', 'user_agent_mode=random', '-c', medium_crawler],
+        [str(CRAWL4AI), url, '-o', 'markdown', '--bypass-cache', '-c', 'wait_until=load'],
+        [str(CRAWL4AI), url, '-o', 'markdown'],
+    ]
 
 
 def run_crawl(query: str) -> str:
     url = f'https://www.amazon.com/s?k={quote_plus(query)}'
-    command_variants = [
-        [
-            str(CRAWL4AI),
-            url,
-            '-o',
-            'markdown',
-            '--bypass-cache',
-            '-c',
-            'wait_until=networkidle',
-        ],
-        [
-            str(CRAWL4AI),
-            url,
-            '-o',
-            'markdown',
-            '--bypass-cache',
-            '-c',
-            'wait_until=load',
-        ],
-        [str(CRAWL4AI), url, '-o', 'markdown'],
-    ]
     last_error = None
-    for command in command_variants:
+    for command in _crawl_command_variants(url, query):
         try:
             proc = subprocess.run(
                 command,
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=CRAWL_TIMEOUT_SECONDS,
             )
+        except subprocess.TimeoutExpired as exc:
+            last_error = RuntimeError(f'crawl4ai timed out for query: {query} via {command}')
+            continue
         except subprocess.CalledProcessError as exc:
             last_error = exc
             continue
-        if len(proc.stdout.strip()) > 1000:
-            return proc.stdout
+        output = proc.stdout.strip()
+        if len(output) <= 1000:
+            last_error = RuntimeError(f'crawl4ai returned undersized output for query: {query}')
+            continue
+        if _looks_like_amazon_error(output):
+            last_error = RuntimeError(f'crawl4ai returned Amazon error page for query: {query}')
+            continue
+        return output
     if last_error:
         raise last_error
     raise RuntimeError(f'crawl4ai returned no usable output for query: {query}')
@@ -354,9 +389,14 @@ def main() -> int:
     queries = sys.argv[1:] or DEFAULT_QUERIES
     all_candidates = []
     per_query = {}
+    query_errors = {}
     for query in queries:
-        markdown = run_crawl(query)
-        extracted = extract_candidates(markdown, query)
+        try:
+            markdown = run_crawl(query)
+            extracted = extract_candidates(markdown, query)
+        except Exception as exc:
+            extracted = []
+            query_errors[query] = str(exc)
         per_query[query] = len(extracted)
         all_candidates.extend(extracted)
 
@@ -369,13 +409,14 @@ def main() -> int:
         'confidence': 'medium',
         'candidate_count': len(all_candidates),
         'per_query_count': per_query,
+        'query_errors': query_errors,
         'quality_gate': quality_gate,
         'candidates': all_candidates,
     }
     RAW_OUT.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
     print(RAW_OUT)
-    print(json.dumps({'candidate_count': len(all_candidates), 'queries': queries, 'per_query_count': per_query, 'quality_gate': quality_gate}, ensure_ascii=False))
-    return 0
+    print(json.dumps({'candidate_count': len(all_candidates), 'queries': queries, 'per_query_count': per_query, 'query_errors': query_errors, 'quality_gate': quality_gate}, ensure_ascii=False))
+    return 0 if quality_gate.get('passed') else 1
 
 
 if __name__ == '__main__':

@@ -331,6 +331,55 @@ def verify_task_conformance_ok(spec: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def verify_task_stage_artifacts_ready(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：验证某个阶段的产物记录是否完整，供复杂任务 release gate 使用。
+    """
+    task_id = str(spec.get("task_id", "")).strip()
+    stage_name = str(spec.get("stage", "")).strip()
+    contract_path = TASKS_ROOT / task_id / "contract.json"
+    state_path = TASKS_ROOT / task_id / "state.json"
+    if not contract_path.exists() or not state_path.exists():
+        return {"ok": False, "status": "task_artifact_missing", "task_id": task_id}
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    stages = list(contract.get("stages", []) or [])
+    stage_contract = next((item for item in stages if isinstance(item, dict) and str(item.get("name", "")).strip() == stage_name), None)
+    if not stage_contract:
+        return {"ok": False, "status": "stage_contract_missing", "task_id": task_id, "stage": stage_name}
+    policy = dict(stage_contract.get("execution_policy", {}) or {})
+    if not bool(policy.get("require_stage_artifacts_before_complete", False)):
+        return {"ok": True, "status": "not_required", "task_id": task_id, "stage": stage_name}
+    artifacts = ((state.get("metadata", {}) or {}).get("stage_artifacts", {}) or {})
+    artifact = dict(artifacts.get(stage_name, {}) or {})
+    if not artifact:
+        return {"ok": False, "status": "stage_artifact_missing", "task_id": task_id, "stage": stage_name}
+    missing = []
+    if bool(policy.get("require_summary_nonempty", False)):
+        if not str(artifact.get("summary", "")).strip():
+            missing.append("summary")
+    required_keys = [str(item).strip() for item in policy.get("required_artifact_keys", []) if str(item).strip()]
+    for key in required_keys:
+        value = artifact.get(key)
+        if value is None:
+            missing.append(key)
+        elif isinstance(value, str) and not value.strip():
+            missing.append(key)
+        elif isinstance(value, (list, tuple, set, dict)) and len(value) == 0:
+            missing.append(key)
+    if bool(policy.get("require_evidence_refs_for_completion", False)) and not list(artifact.get("evidence_refs", []) or []):
+        missing.append("evidence_refs")
+    return {
+        "ok": not missing,
+        "status": "ok" if not missing else "stage_artifact_incomplete",
+        "task_id": task_id,
+        "stage": stage_name,
+        "missing": missing,
+        "artifact_status": artifact.get("artifact_status", ""),
+    }
+
+
 def verify_crawler_report_complete(spec: Dict[str, Any]) -> Dict[str, Any]:
     """
     中文注解：
@@ -485,6 +534,7 @@ VERIFIERS = {
     "task_milestones_complete": verify_task_milestones_complete,
     "task_liveness_ok": verify_task_liveness_ok,
     "task_conformance_ok": verify_task_conformance_ok,
+    "task_stage_artifacts_ready": verify_task_stage_artifacts_ready,
     "crawler_report_complete": verify_crawler_report_complete,
     "crawler_retro_complete": verify_crawler_retro_complete,
     "command_exit_zero": verify_command_exit_zero,

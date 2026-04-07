@@ -1,4 +1,9 @@
 #!/bin/zsh
+# 中文说明：
+# - 文件路径：`tools/openmoss/ops/install_brain_enforcer_launch_agent.sh`
+# - 文件作用：负责运维脚本中与 `install_brain_enforcer_launch_agent` 相关的诊断、启动或修复逻辑。
+# - 包含 shell 函数：无显式 shell 函数。
+#
 set -euo pipefail
 
 SOURCE="/Users/mac_claw/.openclaw/workspace/tools/openmoss/ops/ai.openclaw.brain-enforcer.plist"

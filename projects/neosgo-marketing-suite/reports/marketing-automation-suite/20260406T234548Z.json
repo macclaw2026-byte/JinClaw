@@ -1,0 +1,288 @@
+{
+  "cycle_id": "20260406T234548Z",
+  "project_id": "neosgo-marketing-suite",
+  "ran_at": "2026-04-06T23:47:13.280547+00:00",
+  "inputs": {
+    "project_root": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite",
+    "config_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/config/project-config.json"
+  },
+  "steps": {
+    "discovery_recipe_library": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"status\": \"ok\",\n  \"generated_query_count\": 310,\n  \"active_generated_query_count\": 18,\n  \"output\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/discovery-recipe-library.json\",\n  \"generated_queries_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/discovery-queries.generated.json\"\n}",
+      "stderr": "",
+      "payload": {
+        "status": "ok",
+        "generated_query_count": 310,
+        "active_generated_query_count": 18,
+        "output": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/discovery-recipe-library.json",
+        "generated_queries_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/discovery-queries.generated.json"
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/prospect-data-engine/scripts/build_discovery_recipe_library.py"
+    },
+    "discovery_query_weight_update_pre": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"status\": \"ok\",\n  \"query_count\": 310,\n  \"top_bias_query\": \"\\\"architectural lighting\\\" CA\",\n  \"output\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/prospect-data-engine/query-weights.json\"\n}",
+      "stderr": "",
+      "payload": {
+        "status": "ok",
+        "query_count": 310,
+        "top_bias_query": "\"architectural lighting\" CA",
+        "output": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/prospect-data-engine/query-weights.json"
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/prospect-data-engine/scripts/apply_discovery_query_weights.py"
+    },
+    "prospect_search_discovery": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"status\": \"ok\",\n  \"enabled_query_count\": 22,\n  \"generated_target_count\": 108,\n  \"failure_count\": 2,\n  \"generated_targets_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/discovery-targets.generated.json\"\n}",
+      "stderr": "",
+      "payload": {
+        "status": "ok",
+        "enabled_query_count": 22,
+        "generated_target_count": 108,
+        "failure_count": 2,
+        "generated_targets_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/discovery-targets.generated.json"
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/prospect-data-engine/scripts/expand_search_discovery.py"
+    },
+    "prospect_discovery": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"status\": \"ok\",\n  \"enabled_target_count\": 111,\n  \"discovered_count\": 101,\n  \"failure_count\": 10,\n  \"raw_import_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/raw-imports/discovered-public-accounts.json\"\n}",
+      "stderr": "",
+      "payload": {
+        "status": "ok",
+        "enabled_target_count": 111,
+        "discovered_count": 101,
+        "failure_count": 10,
+        "raw_import_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/raw-imports/discovered-public-accounts.json"
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/prospect-data-engine/scripts/discover_public_accounts.py"
+    },
+    "industry_directory_discovery": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"status\": \"ok\",\n  \"enabled_target_count\": 10,\n  \"discovered_count\": 108,\n  \"failure_count\": 0,\n  \"raw_import_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/raw-imports/discovered-industry-directory-accounts.json\"\n}",
+      "stderr": "",
+      "payload": {
+        "status": "ok",
+        "enabled_target_count": 10,
+        "discovered_count": 108,
+        "failure_count": 0,
+        "raw_import_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/raw-imports/discovered-industry-directory-accounts.json"
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/prospect-data-engine/scripts/discover_industry_directory_accounts.py"
+    },
+    "google_business_profile_discovery": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"status\": \"ok\",\n  \"enabled_target_count\": 0,\n  \"discovered_count\": 0,\n  \"failure_count\": 0,\n  \"raw_import_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/raw-imports/discovered-google-business-profiles.json\"\n}",
+      "stderr": "",
+      "payload": {
+        "status": "ok",
+        "enabled_target_count": 0,
+        "discovered_count": 0,
+        "failure_count": 0,
+        "raw_import_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/raw-imports/discovered-google-business-profiles.json"
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/prospect-data-engine/scripts/discover_google_business_profiles.py"
+    },
+    "linkedin_company_page_discovery": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"status\": \"ok\",\n  \"enabled_target_count\": 2,\n  \"discovered_count\": 2,\n  \"failure_count\": 0,\n  \"raw_import_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/raw-imports/discovered-linkedin-company-pages.json\"\n}",
+      "stderr": "",
+      "payload": {
+        "status": "ok",
+        "enabled_target_count": 2,
+        "discovered_count": 2,
+        "failure_count": 0,
+        "raw_import_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/raw-imports/discovered-linkedin-company-pages.json"
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/prospect-data-engine/scripts/discover_linkedin_company_pages.py"
+    },
+    "prospect_import": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"status\": \"ok\",\n  \"source_count\": 10,\n  \"raw_record_count\": 618,\n  \"deduped_record_count\": 443,\n  \"merged_seed_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/merged-prospect-seeds.json\",\n  \"strategy_ready_seed_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/strategy-ready-seeds.json\",\n  \"quality_gate_status\": \"pass\",\n  \"allowed_for_strategy\": true,\n  \"source_registry_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/source-registry.json\",\n  \"duplicate_conflicts_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/duplicate-conflicts.json\",\n  \"review_queue_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/review-queue.json\",\n  \"review_queue_count\": 30\n}",
+      "stderr": "",
+      "payload": {
+        "status": "ok",
+        "source_count": 10,
+        "raw_record_count": 618,
+        "deduped_record_count": 443,
+        "merged_seed_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/merged-prospect-seeds.json",
+        "strategy_ready_seed_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/strategy-ready-seeds.json",
+        "quality_gate_status": "pass",
+        "allowed_for_strategy": true,
+        "source_registry_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/source-registry.json",
+        "duplicate_conflicts_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/duplicate-conflicts.json",
+        "review_queue_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/review-queue.json",
+        "review_queue_count": 30
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/prospect-data-engine/scripts/import_public_prospect_data.py"
+    },
+    "source_health_retry_update": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"status\": \"ok\",\n  \"provider_health_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/prospect-data-engine/provider-health.json\",\n  \"source_health_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/prospect-data-engine/source-health.json\",\n  \"retry_target_count\": 10,\n  \"retry_targets_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/prospect-data-engine/retry-targets.generated.json\"\n}",
+      "stderr": "",
+      "payload": {
+        "status": "ok",
+        "provider_health_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/prospect-data-engine/provider-health.json",
+        "source_health_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/prospect-data-engine/source-health.json",
+        "retry_target_count": 10,
+        "retry_targets_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/prospect-data-engine/retry-targets.generated.json"
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/prospect-data-engine/scripts/update_source_health_retry.py"
+    },
+    "prospect_data_engine": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"project_root\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite\",\n  \"status\": \"seeded\",\n  \"prospect_count\": 427,\n  \"prospect_records_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/prospect-records.json\"\n}",
+      "stderr": "",
+      "payload": {
+        "project_root": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite",
+        "status": "seeded",
+        "prospect_count": 427,
+        "prospect_records_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/prospect-records.json"
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/prospect-data-engine/scripts/bootstrap_prospect_workspace.py"
+    },
+    "strategy_weight_update": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"status\": \"ok\",\n  \"applied_count\": 0,\n  \"output\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/marketing-strategy-engine/strategy-weights.json\"\n}",
+      "stderr": "",
+      "payload": {
+        "status": "ok",
+        "applied_count": 0,
+        "output": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/marketing-strategy-engine/strategy-weights.json"
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/marketing-strategy-engine/scripts/apply_feedback_strategy_weights.py"
+    },
+    "discovery_query_weight_update_post": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"status\": \"ok\",\n  \"query_count\": 310,\n  \"top_bias_query\": \"\\\"general contractor\\\" directory RI\",\n  \"output\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/prospect-data-engine/query-weights.json\"\n}",
+      "stderr": "",
+      "payload": {
+        "status": "ok",
+        "query_count": 310,
+        "top_bias_query": "\"general contractor\" directory RI",
+        "output": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/prospect-data-engine/query-weights.json"
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/prospect-data-engine/scripts/apply_discovery_query_weights.py"
+    },
+    "marketing_strategy_engine": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"output\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/strategy-brief.json\",\n  \"status\": \"written\"\n}",
+      "stderr": "",
+      "payload": {
+        "output": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/strategy-brief.json",
+        "status": "written"
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/marketing-strategy-engine/scripts/build_strategy_brief.py"
+    },
+    "strategy_task_compilation": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"output\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/strategy-tasks.json\",\n  \"count\": 427\n}",
+      "stderr": "",
+      "payload": {
+        "output": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/strategy-tasks.json",
+        "count": 427
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/marketing-strategy-engine/scripts/build_strategy_tasks.py"
+    },
+    "strategy_card_generation": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"output\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/strategy-cards.json\",\n  \"count\": 427\n}",
+      "stderr": "",
+      "payload": {
+        "output": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/strategy-cards.json",
+        "count": 427
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/marketing-strategy-engine/scripts/build_strategy_cards.py"
+    },
+    "feedback_processing": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"status\": \"ok\",\n  \"event_count\": 0,\n  \"suppression_count\": 0,\n  \"human_review_count\": 0,\n  \"classified_feedback_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/feedback/classified-feedback.json\",\n  \"suppression_registry_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/feedback/suppression-registry.json\",\n  \"feedback_patches_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/feedback/feedback-patches.json\",\n  \"daily_report_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/feedback/daily-report.json\",\n  \"weekly_report_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/feedback/weekly-report.json\",\n  \"anomaly_report_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/feedback/anomaly-report.json\",\n  \"approval_queue_path\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/feedback/approval-queue.json\"\n}",
+      "stderr": "",
+      "payload": {
+        "status": "ok",
+        "event_count": 0,
+        "suppression_count": 0,
+        "human_review_count": 0,
+        "classified_feedback_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/feedback/classified-feedback.json",
+        "suppression_registry_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/feedback/suppression-registry.json",
+        "feedback_patches_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/feedback/feedback-patches.json",
+        "daily_report_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/feedback/daily-report.json",
+        "weekly_report_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/feedback/weekly-report.json",
+        "anomaly_report_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/feedback/anomaly-report.json",
+        "approval_queue_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/feedback/approval-queue.json"
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/outreach-feedback-engine/scripts/process_feedback_events.py"
+    },
+    "outreach_feedback_engine": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"output\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/execution-queue.json\",\n  \"count\": 427,\n  \"suppressed\": 0\n}",
+      "stderr": "",
+      "payload": {
+        "output": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/execution-queue.json",
+        "count": 427,
+        "suppressed": 0
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/outreach-feedback-engine/scripts/build_execution_queue.py"
+    },
+    "first_output_packet": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"status\": \"ok\",\n  \"ready_for_operator_use\": true,\n  \"output_json\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/first-output-packet.json\",\n  \"output_md\": \"/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/first-output-packet.md\"\n}",
+      "stderr": "",
+      "payload": {
+        "status": "ok",
+        "ready_for_operator_use": true,
+        "output_json": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/first-output-packet.json",
+        "output_md": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/first-output-packet.md"
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/marketing-automation-suite/scripts/build_first_output_packet.py"
+    }
+  },
+  "artifacts": {
+    "discovery_recipe_library_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/discovery-recipe-library.json",
+    "generated_queries_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/discovery-queries.generated.json",
+    "merged_seed_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/merged-prospect-seeds.json",
+    "strategy_ready_seed_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/strategy-ready-seeds.json",
+    "review_queue_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/review-queue.json",
+    "prospect_records_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/prospect-records.json",
+    "provider_health_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/prospect-data-engine/provider-health.json",
+    "source_health_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/prospect-data-engine/source-health.json",
+    "retry_targets_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/prospect-data-engine/retry-targets.generated.json",
+    "discovery_query_weights_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/prospect-data-engine/query-weights.json",
+    "strategy_weights_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/marketing-strategy-engine/strategy-weights.json",
+    "strategy_brief_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/strategy-brief.json",
+    "strategy_tasks_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/strategy-tasks.json",
+    "strategy_cards_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/strategy-cards.json",
+    "feedback_output_dir": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/feedback",
+    "suppression_registry_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/feedback/suppression-registry.json",
+    "feedback_patches_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/feedback/feedback-patches.json",
+    "approval_queue_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/feedback/approval-queue.json",
+    "execution_queue_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/execution-queue.json",
+    "first_output_packet_json": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/first-output-packet.json",
+    "first_output_packet_md": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260406T234548Z/first-output-packet.md"
+  },
+  "quality_gate": {
+    "status": "pass",
+    "allowed_for_strategy": true,
+    "review_queue_count": 30
+  },
+  "status": "ok"
+}

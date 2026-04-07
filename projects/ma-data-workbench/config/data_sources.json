@@ -2,6 +2,14 @@
   "sources": [
     "/Users/mac_claw/Downloads/MA_Business_Email_Data/MA_B2B_23_1.csv",
     "/Users/mac_claw/Downloads/MA_Business_Email_Data/MA_B2B_23_2.csv",
+    "/Users/mac_claw/Downloads/US_Business_Email_Data_07/NC_B2B_23_2.csv",
+    "/Users/mac_claw/Downloads/US_Business_Email_Data_07/ND_B2B_23.csv",
+    "/Users/mac_claw/Downloads/US_Business_Email_Data_07/NE_B2B_23.csv",
+    "/Users/mac_claw/Downloads/US_Business_Email_Data_07/NH_B2B_23.csv",
+    "/Users/mac_claw/Downloads/US_Business_Email_Data_07/NJ_B2B_23_1.csv",
+    "/Users/mac_claw/Downloads/US_Business_Email_Data_07/NJ_B2B_23_2.csv",
+    "/Users/mac_claw/Downloads/US_Business_Email_Data_07/NM_B2B_23.csv",
+    "/Users/mac_claw/Downloads/US_Business_Email_Data_07/NV_B2B_23.csv",
     "/Users/mac_claw/Downloads/US_Business_Email_Data_07/NY_B2B_23_1.csv"
   ],
   "database_path": "/Users/mac_claw/.openclaw/workspace/projects/ma-data-workbench/data/db/ma_data.duckdb",

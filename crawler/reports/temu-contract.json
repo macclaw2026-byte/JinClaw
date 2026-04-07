@@ -1,0 +1,174 @@
+{
+  "site": "temu",
+  "query": "wireless mouse",
+  "mode": "use-best-tool",
+  "first_run_rule": "run-all-known-tools-then-compare-normalize-and-record-order",
+  "repeat_run_rule": "start-with-primary-then-fallback-in-recorded-order-and-re-evaluate-on-degradation",
+  "auth_policy": {
+    "anonymous_mode": "allowed",
+    "authenticated_mode": "separate-profile-required",
+    "credential_use": "browser-login-only-with-explicit-user-authorization",
+    "captcha_policy": "do-not-bypass; require human intervention if challenged"
+  },
+  "tested_tools": [
+    "crawl4ai-cli",
+    "direct-http-html",
+    "curl-cffi",
+    "playwright",
+    "playwright-stealth",
+    "scrapy-cffi",
+    "local-agent-browser-cli"
+  ],
+  "preferred_tool_order": [
+    "local-agent-browser-cli",
+    "crawl4ai-cli",
+    "curl-cffi",
+    "direct-http-html",
+    "playwright",
+    "playwright-stealth",
+    "scrapy-cffi"
+  ],
+  "blocked_tools": [
+    "curl-cffi",
+    "direct-http-html",
+    "playwright",
+    "playwright-stealth",
+    "scrapy-cffi"
+  ],
+  "comparison_summary": {
+    "best_tool": "local-agent-browser-cli",
+    "best_status": "usable",
+    "best_score": 75,
+    "usable_tools": [
+      {
+        "tool": "local-agent-browser-cli",
+        "status": "usable",
+        "score": 75,
+        "product_signal_count": 13,
+        "block_signal_count": 0,
+        "stdout_chars": 11340,
+        "field_completeness": 0.67,
+        "false_positive_reasons": [
+          "none"
+        ],
+        "notes": "local agent-browser CLI connected to Chrome CDP"
+      },
+      {
+        "tool": "crawl4ai-cli",
+        "status": "partial",
+        "score": 20,
+        "product_signal_count": 0,
+        "block_signal_count": 0,
+        "stdout_chars": 302,
+        "field_completeness": 0.0,
+        "false_positive_reasons": [
+          "none"
+        ],
+        "notes": "crawl4ai CLI markdown extraction"
+      }
+    ],
+    "all_tools": [
+      {
+        "tool": "local-agent-browser-cli",
+        "status": "usable",
+        "score": 75,
+        "product_signal_count": 13,
+        "block_signal_count": 0,
+        "stdout_chars": 11340,
+        "field_completeness": 0.67,
+        "false_positive_reasons": [
+          "none"
+        ],
+        "notes": "local agent-browser CLI connected to Chrome CDP"
+      },
+      {
+        "tool": "crawl4ai-cli",
+        "status": "partial",
+        "score": 20,
+        "product_signal_count": 0,
+        "block_signal_count": 0,
+        "stdout_chars": 302,
+        "field_completeness": 0.0,
+        "false_positive_reasons": [
+          "none"
+        ],
+        "notes": "crawl4ai CLI markdown extraction"
+      },
+      {
+        "tool": "curl-cffi",
+        "status": "blocked",
+        "score": 35,
+        "product_signal_count": 3,
+        "block_signal_count": 0,
+        "stdout_chars": 300001,
+        "field_completeness": 0.0,
+        "false_positive_reasons": [],
+        "notes": "curl_cffi browser-impersonated HTTP fetch"
+      },
+      {
+        "tool": "direct-http-html",
+        "status": "blocked",
+        "score": 35,
+        "product_signal_count": 3,
+        "block_signal_count": 0,
+        "stdout_chars": 300001,
+        "field_completeness": 0.0,
+        "false_positive_reasons": [],
+        "notes": "raw urllib HTTP fetch"
+      },
+      {
+        "tool": "playwright",
+        "status": "blocked",
+        "score": 5,
+        "product_signal_count": 3,
+        "block_signal_count": 1,
+        "stdout_chars": 300001,
+        "field_completeness": 0.17,
+        "false_positive_reasons": [],
+        "notes": "plain Playwright Chromium render"
+      },
+      {
+        "tool": "playwright-stealth",
+        "status": "blocked",
+        "score": 5,
+        "product_signal_count": 3,
+        "block_signal_count": 1,
+        "stdout_chars": 300001,
+        "field_completeness": 0.17,
+        "false_positive_reasons": [],
+        "notes": "Playwright + playwright_stealth render"
+      },
+      {
+        "tool": "scrapy-cffi",
+        "status": "blocked",
+        "score": 0,
+        "product_signal_count": 12,
+        "block_signal_count": 4,
+        "stdout_chars": 201412,
+        "field_completeness": 0.17,
+        "false_positive_reasons": [],
+        "notes": "Scrapy-style extraction stack using curl_cffi + parsel"
+      }
+    ]
+  },
+  "task_ready_fields": {
+    "title": "opened_url=https://www.temu.com/search_result.html?search_key=wireless+mouse",
+    "price": "- link \"CA$5 off On orders over CA$100\" [ref=e19]",
+    "rating": "",
+    "reviews": "",
+    "link": "opened_url=https://www.temu.com/search_result.html?search_key=wireless+mouse",
+    "promo": "- button \"Free shipping Special for you\" [ref=e18]",
+    "evidence_excerpt": [
+      "opened_url=https://www.temu.com/search_result.html?search_key=wireless+mouse",
+      "Temu | Search wireless mouse",
+      "- generic",
+      "- generic",
+      "- generic"
+    ]
+  },
+  "generated_at": "2026-03-30T09:52:20.247025-07:00",
+  "evidence_sources": [
+    "/Users/mac_claw/.openclaw/workspace/crawler/reports/temu-latest-run.json",
+    "/Users/mac_claw/.openclaw/workspace/crawler/site-profiles/temu.md"
+  ]
+}

@@ -1,0 +1,1053 @@
+{
+  "project_id": "neosgo-marketing-suite",
+  "cycle_id": "20260407T002023Z",
+  "status": "ok",
+  "ready_for_operator_use": true,
+  "readiness_checks": {
+    "quality_gate_passed": true,
+    "prospect_volume_ready": true,
+    "strategy_volume_ready": true,
+    "queue_volume_ready": true,
+    "channel_available": true,
+    "review_queue_manageable": true,
+    "search_layer_active": true,
+    "discovery_layer_active": true
+  },
+  "discovery": {
+    "enabled_query_count": 22,
+    "generated_target_count": 11,
+    "enabled_target_count": 14,
+    "discovered_count": 11,
+    "failure_count": 3
+  },
+  "data_quality": {
+    "source_count": 10,
+    "raw_record_count": 427,
+    "deduped_record_count": 380,
+    "review_queue_count": 25,
+    "quality_gate_status": "pass",
+    "review_sources": [
+      "discovered-google-business-profiles.json",
+      "discovered-linkedin-company-pages.json",
+      "discovered-public-accounts.json"
+    ]
+  },
+  "strategy": {
+    "task_count": 380,
+    "channels": {
+      "form": 375,
+      "linkedin": 5
+    },
+    "account_types": {
+      "designer": 95,
+      "contractor": 86,
+      "electrician": 102,
+      "distributor": 3,
+      "lighting": 88,
+      "showroom": 4,
+      "dealer": 1,
+      "builder": 1
+    },
+    "path_types": {
+      "quote_path": 281,
+      "partner_path": 9,
+      "education_to_conversion_path": 3,
+      "direct_response_path": 87
+    },
+    "score_tiers": {
+      "B": 15,
+      "A": 365
+    }
+  },
+  "execution": {
+    "total": 380,
+    "queued": 380,
+    "suppressed": 0
+  },
+  "operator_focus": {
+    "top_review_items": [
+      {
+        "review_id": "review-source-source-discovered-google-business-profiles",
+        "review_type": "source_quality_review",
+        "severity": "medium",
+        "status": "open",
+        "source_id": "source-discovered-google-business-profiles",
+        "source_label": "discovered-google-business-profiles.json",
+        "reason": "quality_rating=review",
+        "evidence": {
+          "duplicate_rate": 0.0,
+          "average_source_confidence": 0.66
+        }
+      },
+      {
+        "review_id": "review-source-source-discovered-linkedin-company-pages",
+        "review_type": "source_quality_review",
+        "severity": "medium",
+        "status": "open",
+        "source_id": "source-discovered-linkedin-company-pages",
+        "source_label": "discovered-linkedin-company-pages.json",
+        "reason": "quality_rating=review",
+        "evidence": {
+          "duplicate_rate": 0.0,
+          "average_source_confidence": 0.66
+        }
+      },
+      {
+        "review_id": "review-source-source-discovered-public-accounts",
+        "review_type": "source_quality_review",
+        "severity": "medium",
+        "status": "open",
+        "source_id": "source-discovered-public-accounts",
+        "source_label": "discovered-public-accounts.json",
+        "reason": "quality_rating=review",
+        "evidence": {
+          "duplicate_rate": 0.5455,
+          "average_source_confidence": 0.7273
+        }
+      },
+      {
+        "review_id": "review-duplicate-1",
+        "review_type": "duplicate_conflict_review",
+        "severity": "medium",
+        "status": "open",
+        "dedupe_key": "domain:etisales.com",
+        "reason": "duplicate_domain_or_company",
+        "evidence": {
+          "dedupe_key": "domain:etisales.com",
+          "kept_company_name": "Ny",
+          "dropped_company_name": "Ny",
+          "kept_source_url": "https://www.etisales.com",
+          "dropped_source_url": "www.etisales.com",
+          "conflict_type": "duplicate_domain_or_company"
+        }
+      },
+      {
+        "review_id": "review-duplicate-2",
+        "review_type": "duplicate_conflict_review",
+        "severity": "medium",
+        "status": "open",
+        "dedupe_key": "domain:highend.com",
+        "reason": "duplicate_domain_or_company",
+        "evidence": {
+          "dedupe_key": "domain:highend.com",
+          "kept_company_name": "High End Systems, Cklight",
+          "dropped_company_name": "High End Systems",
+          "kept_source_url": "https://highend.com",
+          "dropped_source_url": "highend.com",
+          "conflict_type": "duplicate_domain_or_company"
+        }
+      },
+      {
+        "review_id": "review-duplicate-3",
+        "review_type": "duplicate_conflict_review",
+        "severity": "medium",
+        "status": "open",
+        "dedupe_key": "domain:rainbowlightinginc.com",
+        "reason": "duplicate_domain_or_company",
+        "evidence": {
+          "dedupe_key": "domain:rainbowlightinginc.com",
+          "kept_company_name": "Quality Discount Lighting",
+          "dropped_company_name": "Quality Discount Lighting",
+          "kept_source_url": "https://www.rainbowlightinginc.com",
+          "dropped_source_url": "rainbowlightinginc.com",
+          "conflict_type": "duplicate_domain_or_company"
+        }
+      },
+      {
+        "review_id": "review-duplicate-4",
+        "review_type": "duplicate_conflict_review",
+        "severity": "medium",
+        "status": "open",
+        "dedupe_key": "domain:colorkinetics.com",
+        "reason": "duplicate_domain_or_company",
+        "evidence": {
+          "dedupe_key": "domain:colorkinetics.com",
+          "kept_company_name": "Color Kinetics",
+          "dropped_company_name": "Philips Color Kinetics Inc",
+          "kept_source_url": "colorkinetics.com",
+          "dropped_source_url": "colorkinetics.com",
+          "conflict_type": "duplicate_domain_or_company"
+        }
+      },
+      {
+        "review_id": "review-duplicate-5",
+        "review_type": "duplicate_conflict_review",
+        "severity": "medium",
+        "status": "open",
+        "dedupe_key": "domain:csmlink.com",
+        "reason": "duplicate_domain_or_company",
+        "evidence": {
+          "dedupe_key": "domain:csmlink.com",
+          "kept_company_name": "Western States Engrng Constr",
+          "dropped_company_name": "Western States Engrng  Constr",
+          "kept_source_url": "https://csmlink.com",
+          "dropped_source_url": "csmlink.com",
+          "conflict_type": "duplicate_domain_or_company"
+        }
+      },
+      {
+        "review_id": "review-duplicate-6",
+        "review_type": "duplicate_conflict_review",
+        "severity": "medium",
+        "status": "open",
+        "dedupe_key": "domain:mbe.com",
+        "reason": "duplicate_domain_or_company",
+        "evidence": {
+          "dedupe_key": "domain:mbe.com",
+          "kept_company_name": "Ac Plumbing",
+          "dropped_company_name": "Christina E",
+          "kept_source_url": "mbe.com",
+          "dropped_source_url": "mbe.com",
+          "conflict_type": "duplicate_domain_or_company"
+        }
+      },
+      {
+        "review_id": "review-duplicate-7",
+        "review_type": "duplicate_conflict_review",
+        "severity": "medium",
+        "status": "open",
+        "dedupe_key": "company:porter-s-construction",
+        "reason": "duplicate_domain_or_company",
+        "evidence": {
+          "dedupe_key": "company:porter-s-construction",
+          "kept_company_name": "Porter's Construction",
+          "dropped_company_name": "Porter's Construction",
+          "kept_source_url": "comcast.net",
+          "dropped_source_url": "gmail.com",
+          "conflict_type": "duplicate_domain_or_company"
+        }
+      }
+    ],
+    "top_strategy_tasks": [
+      {
+        "outreach_task_id": "neosgo-marketing-suite-account-etisales-com-form",
+        "strategy_id": "neosgo-marketing-suite-strategy-account-etisales-com",
+        "target_scope": "segment_personalized",
+        "account_id": "account-etisales-com",
+        "contact_id": "contact-ny",
+        "account_type": "designer",
+        "persona_type": "founder",
+        "buying_context": "active_project",
+        "channel_readiness": "manual_only",
+        "path_type": "quote_path",
+        "channel": "form",
+        "primary_angle_family": "design_fit",
+        "primary_angle": "design-led fit and curated product selection",
+        "support_angle": "fast scoping, practical support, and lower execution friction",
+        "anti_angle": "generic discount-led mass pitch",
+        "value_map": [
+          "curated product fit",
+          "project presentation support",
+          "trade-friendly buying path"
+        ],
+        "proof_map": [
+          "project-context alignment",
+          "design/trade relevance"
+        ],
+        "CTA": "quote_request",
+        "fallback_CTA": "project_discussion",
+        "followup_plan": [
+          {
+            "step": 1,
+            "goal": "initial_contact",
+            "cadence_days": 0,
+            "message_focus": "design-led fit and curated product selection"
+          },
+          {
+            "step": 2,
+            "goal": "follow_up",
+            "cadence_days": 14,
+            "message_focus": "fast scoping, practical support, and lower execution friction",
+            "fallback_CTA": "project_discussion",
+            "path_type": "quote_path"
+          }
+        ],
+        "risk_level": "medium",
+        "approval_required": false,
+        "stop_conditions": [
+          "unsubscribe",
+          "do_not_contact",
+          "hard_bounce",
+          "complaint_risk",
+          "invalid_contact"
+        ],
+        "score_tier": "B",
+        "brief_reference": "neosgo-marketing-suite",
+        "strategy_hypothesis": {
+          "why_now": [
+            "prior_scored_lead",
+            "design_led_projects",
+            "trade_program_fit",
+            "website_present"
+          ],
+          "why_this_channel": "unknown"
+        },
+        "strategy_weight_context": {
+          "channel_scores": {
+            "form": 5.0,
+            "linkedin": 4.0
+          },
+          "path_scores": {
+            "partner_path": 0.0,
+            "quote_path": 2.5,
+            "education_to_conversion_path": 1.0,
+            "direct_response_path": 0.0
+          },
+          "angle_family_scores": {
+            "design_fit": 1.0,
+            "trade_support": 1.0,
+            "education_fit": 1.0
+          }
+        }
+      },
+      {
+        "outreach_task_id": "neosgo-marketing-suite-account-csmlink-com-form",
+        "strategy_id": "neosgo-marketing-suite-strategy-account-csmlink-com",
+        "target_scope": "segment_personalized",
+        "account_id": "account-csmlink-com",
+        "contact_id": "contact-western-states-engrng-constr",
+        "account_type": "contractor",
+        "persona_type": "founder",
+        "buying_context": "active_project",
+        "channel_readiness": "manual_only",
+        "path_type": "quote_path",
+        "channel": "form",
+        "primary_angle_family": "execution_fit",
+        "primary_angle": "project support, repeat ordering, and quoting efficiency",
+        "support_angle": "fast scoping, practical support, and lower execution friction",
+        "anti_angle": "generic discount-led mass pitch",
+        "value_map": [
+          "quote support",
+          "repeat ordering efficiency",
+          "project delivery fit"
+        ],
+        "proof_map": [
+          "project-context alignment"
+        ],
+        "CTA": "quote_request",
+        "fallback_CTA": "project_discussion",
+        "followup_plan": [
+          {
+            "step": 1,
+            "goal": "initial_contact",
+            "cadence_days": 0,
+            "message_focus": "project support, repeat ordering, and quoting efficiency"
+          },
+          {
+            "step": 2,
+            "goal": "follow_up",
+            "cadence_days": 14,
+            "message_focus": "fast scoping, practical support, and lower execution friction",
+            "fallback_CTA": "project_discussion",
+            "path_type": "quote_path"
+          }
+        ],
+        "risk_level": "medium",
+        "approval_required": false,
+        "stop_conditions": [
+          "unsubscribe",
+          "do_not_contact",
+          "hard_bounce",
+          "complaint_risk",
+          "invalid_contact"
+        ],
+        "score_tier": "B",
+        "brief_reference": "neosgo-marketing-suite",
+        "strategy_hypothesis": {
+          "why_now": [
+            "prior_scored_lead",
+            "quote_request_path",
+            "active_project_pipeline",
+            "website_present"
+          ],
+          "why_this_channel": "unknown"
+        },
+        "strategy_weight_context": {
+          "channel_scores": {
+            "form": 5.0,
+            "linkedin": 4.0
+          },
+          "path_scores": {
+            "partner_path": 0.0,
+            "quote_path": 3.5,
+            "education_to_conversion_path": 0.0,
+            "direct_response_path": 0.0
+          },
+          "angle_family_scores": {
+            "execution_fit": 1.0,
+            "speed_fit": 1.0,
+            "reliability_fit": 1.0
+          }
+        }
+      },
+      {
+        "outreach_task_id": "neosgo-marketing-suite-account-cgsupply-com-form",
+        "strategy_id": "neosgo-marketing-suite-strategy-account-cgsupply-com",
+        "target_scope": "segment_personalized",
+        "account_id": "account-cgsupply-com",
+        "contact_id": "contact-cohn---gregory-inc",
+        "account_type": "electrician",
+        "persona_type": "operations_manager",
+        "buying_context": "active_project",
+        "channel_readiness": "manual_only",
+        "path_type": "quote_path",
+        "channel": "form",
+        "primary_angle_family": "execution_fit",
+        "primary_angle": "project support, repeat ordering, and quoting efficiency",
+        "support_angle": "fast scoping, practical support, and lower execution friction",
+        "anti_angle": "vague outreach without business context",
+        "value_map": [
+          "quote support",
+          "repeat ordering efficiency",
+          "project delivery fit"
+        ],
+        "proof_map": [
+          "design/trade relevance"
+        ],
+        "CTA": "quote_request",
+        "fallback_CTA": "project_discussion",
+        "followup_plan": [
+          {
+            "step": 1,
+            "goal": "initial_contact",
+            "cadence_days": 0,
+            "message_focus": "project support, repeat ordering, and quoting efficiency"
+          },
+          {
+            "step": 2,
+            "goal": "follow_up",
+            "cadence_days": 14,
+            "message_focus": "fast scoping, practical support, and lower execution friction",
+            "fallback_CTA": "project_discussion",
+            "path_type": "quote_path"
+          }
+        ],
+        "risk_level": "medium",
+        "approval_required": false,
+        "stop_conditions": [
+          "unsubscribe",
+          "do_not_contact",
+          "hard_bounce",
+          "complaint_risk",
+          "invalid_contact"
+        ],
+        "score_tier": "B",
+        "brief_reference": "neosgo-marketing-suite",
+        "strategy_hypothesis": {
+          "why_now": [
+            "prior_scored_lead",
+            "installation_trade_fit",
+            "website_present",
+            "contactable_email_present"
+          ],
+          "why_this_channel": "unknown"
+        },
+        "strategy_weight_context": {
+          "channel_scores": {
+            "form": 5.0,
+            "linkedin": 4.0
+          },
+          "path_scores": {
+            "partner_path": 0.0,
+            "quote_path": 2.5,
+            "education_to_conversion_path": 0.0,
+            "direct_response_path": 0.0
+          },
+          "angle_family_scores": {
+            "execution_fit": 1.0,
+            "speed_fit": 1.0,
+            "reliability_fit": 1.0
+          }
+        }
+      },
+      {
+        "outreach_task_id": "neosgo-marketing-suite-account-rainbowlightinginc-com-form",
+        "strategy_id": "neosgo-marketing-suite-strategy-account-rainbowlightinginc-com",
+        "target_scope": "segment_personalized",
+        "account_id": "account-rainbowlightinginc-com",
+        "contact_id": "contact-quality-discount-lighting",
+        "account_type": "distributor",
+        "persona_type": "founder",
+        "buying_context": "partnership_fit",
+        "channel_readiness": "manual_only",
+        "path_type": "partner_path",
+        "channel": "form",
+        "primary_angle_family": "partner_growth",
+        "primary_angle": "partner fit, assortment expansion, and channel upside",
+        "support_angle": "business legitimacy, regional fit, and partner readiness",
+        "anti_angle": "vague outreach without business context",
+        "value_map": [
+          "partner economics",
+          "assortment expansion",
+          "regional channel fit"
+        ],
+        "proof_map": [
+          "partner-fit evidence"
+        ],
+        "CTA": "partner_application",
+        "fallback_CTA": "intro_call",
+        "followup_plan": [
+          {
+            "step": 1,
+            "goal": "initial_contact",
+            "cadence_days": 0,
+            "message_focus": "partner fit, assortment expansion, and channel upside"
+          },
+          {
+            "step": 2,
+            "goal": "follow_up",
+            "cadence_days": 14,
+            "message_focus": "business legitimacy, regional fit, and partner readiness",
+            "fallback_CTA": "intro_call",
+            "path_type": "partner_path"
+          }
+        ],
+        "risk_level": "medium",
+        "approval_required": false,
+        "stop_conditions": [
+          "unsubscribe",
+          "do_not_contact",
+          "hard_bounce",
+          "complaint_risk",
+          "invalid_contact"
+        ],
+        "score_tier": "B",
+        "brief_reference": "neosgo-marketing-suite",
+        "strategy_hypothesis": {
+          "why_now": [
+            "prior_scored_lead",
+            "channel_supply_signal",
+            "dealer_program_fit",
+            "website_present"
+          ],
+          "why_this_channel": "unknown"
+        },
+        "strategy_weight_context": {
+          "channel_scores": {
+            "form": 5.0,
+            "linkedin": 4.0
+          },
+          "path_scores": {
+            "partner_path": 3.5,
+            "quote_path": 0.0,
+            "education_to_conversion_path": 0.0,
+            "direct_response_path": 0.0
+          },
+          "angle_family_scores": {
+            "partner_growth": 1.0,
+            "channel_growth": 1.0,
+            "assortment_fit": 1.0
+          }
+        }
+      },
+      {
+        "outreach_task_id": "neosgo-marketing-suite-account-highend-com-form",
+        "strategy_id": "neosgo-marketing-suite-strategy-account-highend-com",
+        "target_scope": "segment_personalized",
+        "account_id": "account-highend-com",
+        "contact_id": "contact-high-end-systems--cklight",
+        "account_type": "lighting",
+        "persona_type": "founder",
+        "buying_context": "partnership_fit",
+        "channel_readiness": "manual_only",
+        "path_type": "partner_path",
+        "channel": "form",
+        "primary_angle_family": "general_fit",
+        "primary_angle": "relevance-based business fit",
+        "support_angle": "business legitimacy, regional fit, and partner readiness",
+        "anti_angle": "vague outreach without business context",
+        "value_map": [
+          "relevant business fit",
+          "clear commercial next step"
+        ],
+        "proof_map": [
+          "partner-fit evidence"
+        ],
+        "CTA": "partner_application",
+        "fallback_CTA": "intro_call",
+        "followup_plan": [
+          {
+            "step": 1,
+            "goal": "initial_contact",
+            "cadence_days": 0,
+            "message_focus": "relevance-based business fit"
+          },
+          {
+            "step": 2,
+            "goal": "follow_up",
+            "cadence_days": 14,
+            "message_focus": "business legitimacy, regional fit, and partner readiness",
+            "fallback_CTA": "intro_call",
+            "path_type": "partner_path"
+          }
+        ],
+        "risk_level": "medium",
+        "approval_required": false,
+        "stop_conditions": [
+          "unsubscribe",
+          "do_not_contact",
+          "hard_bounce",
+          "complaint_risk",
+          "invalid_contact"
+        ],
+        "score_tier": "B",
+        "brief_reference": "neosgo-marketing-suite",
+        "strategy_hypothesis": {
+          "why_now": [
+            "prior_scored_lead",
+            "lighting_industry_match",
+            "partner_growth",
+            "website_present"
+          ],
+          "why_this_channel": "unknown"
+        },
+        "strategy_weight_context": {
+          "channel_scores": {
+            "form": 5.0,
+            "linkedin": 4.0
+          },
+          "path_scores": {
+            "partner_path": 2.5,
+            "quote_path": 0.0,
+            "education_to_conversion_path": 0.0,
+            "direct_response_path": 0.0
+          },
+          "angle_family_scores": {
+            "general_fit": 1.0
+          }
+        }
+      },
+      {
+        "outreach_task_id": "neosgo-marketing-suite-account-benjaminmoore-com-form",
+        "strategy_id": "neosgo-marketing-suite-strategy-account-benjaminmoore-com",
+        "target_scope": "account_1_to_1",
+        "account_id": "account-benjaminmoore-com",
+        "contact_id": "contact-babel-s-paint---decorating",
+        "account_type": "designer",
+        "persona_type": "founder",
+        "buying_context": "active_project",
+        "channel_readiness": "email_ready",
+        "path_type": "quote_path",
+        "channel": "form",
+        "primary_angle_family": "design_fit",
+        "primary_angle": "design-led fit and curated product selection",
+        "support_angle": "fast scoping, practical support, and lower execution friction",
+        "anti_angle": "generic discount-led mass pitch",
+        "value_map": [
+          "curated product fit",
+          "project presentation support",
+          "trade-friendly buying path"
+        ],
+        "proof_map": [
+          "project-context alignment",
+          "design/trade relevance"
+        ],
+        "CTA": "quote_request",
+        "fallback_CTA": "project_discussion",
+        "followup_plan": [
+          {
+            "step": 1,
+            "goal": "initial_contact",
+            "cadence_days": 0,
+            "message_focus": "design-led fit and curated product selection"
+          },
+          {
+            "step": 2,
+            "goal": "follow_up",
+            "cadence_days": 14,
+            "message_focus": "fast scoping, practical support, and lower execution friction",
+            "fallback_CTA": "project_discussion",
+            "path_type": "quote_path"
+          }
+        ],
+        "risk_level": "high",
+        "approval_required": true,
+        "stop_conditions": [
+          "unsubscribe",
+          "do_not_contact",
+          "hard_bounce",
+          "complaint_risk",
+          "invalid_contact"
+        ],
+        "score_tier": "A",
+        "brief_reference": "neosgo-marketing-suite",
+        "strategy_hypothesis": {
+          "why_now": [
+            "fit_tier_s",
+            "prior_scored_lead",
+            "design_led_projects",
+            "website_present",
+            "contactable_email_present"
+          ],
+          "why_this_channel": "email_ready"
+        },
+        "strategy_weight_context": {
+          "channel_scores": {
+            "form": 5.0,
+            "linkedin": 4.0
+          },
+          "path_scores": {
+            "partner_path": 0.0,
+            "quote_path": 2.5,
+            "education_to_conversion_path": 1.0,
+            "direct_response_path": 0.0
+          },
+          "angle_family_scores": {
+            "design_fit": 1.0,
+            "trade_support": 1.0,
+            "education_fit": 1.0
+          }
+        }
+      },
+      {
+        "outreach_task_id": "neosgo-marketing-suite-account-sasaki-com-form",
+        "strategy_id": "neosgo-marketing-suite-strategy-account-sasaki-com",
+        "target_scope": "account_1_to_1",
+        "account_id": "account-sasaki-com",
+        "contact_id": "contact-sasaki-associates-inc",
+        "account_type": "designer",
+        "persona_type": "founder",
+        "buying_context": "active_project",
+        "channel_readiness": "email_ready",
+        "path_type": "quote_path",
+        "channel": "form",
+        "primary_angle_family": "design_fit",
+        "primary_angle": "design-led fit and curated product selection",
+        "support_angle": "fast scoping, practical support, and lower execution friction",
+        "anti_angle": "generic discount-led mass pitch",
+        "value_map": [
+          "curated product fit",
+          "project presentation support",
+          "trade-friendly buying path"
+        ],
+        "proof_map": [
+          "project-context alignment",
+          "design/trade relevance"
+        ],
+        "CTA": "quote_request",
+        "fallback_CTA": "project_discussion",
+        "followup_plan": [
+          {
+            "step": 1,
+            "goal": "initial_contact",
+            "cadence_days": 0,
+            "message_focus": "design-led fit and curated product selection"
+          },
+          {
+            "step": 2,
+            "goal": "follow_up",
+            "cadence_days": 14,
+            "message_focus": "fast scoping, practical support, and lower execution friction",
+            "fallback_CTA": "project_discussion",
+            "path_type": "quote_path"
+          }
+        ],
+        "risk_level": "high",
+        "approval_required": true,
+        "stop_conditions": [
+          "unsubscribe",
+          "do_not_contact",
+          "hard_bounce",
+          "complaint_risk",
+          "invalid_contact"
+        ],
+        "score_tier": "A",
+        "brief_reference": "neosgo-marketing-suite",
+        "strategy_hypothesis": {
+          "why_now": [
+            "fit_tier_s",
+            "prior_scored_lead",
+            "design_led_projects",
+            "website_present",
+            "contactable_email_present"
+          ],
+          "why_this_channel": "email_ready"
+        },
+        "strategy_weight_context": {
+          "channel_scores": {
+            "form": 5.0,
+            "linkedin": 4.0
+          },
+          "path_scores": {
+            "partner_path": 0.0,
+            "quote_path": 2.5,
+            "education_to_conversion_path": 1.0,
+            "direct_response_path": 0.0
+          },
+          "angle_family_scores": {
+            "design_fit": 1.0,
+            "trade_support": 1.0,
+            "education_fit": 1.0
+          }
+        }
+      },
+      {
+        "outreach_task_id": "neosgo-marketing-suite-account-luminastation-com-form",
+        "strategy_id": "neosgo-marketing-suite-strategy-account-luminastation-com",
+        "target_scope": "account_1_to_1",
+        "account_id": "account-luminastation-com",
+        "contact_id": "contact-paysage-at-lumina-station",
+        "account_type": "designer",
+        "persona_type": "founder",
+        "buying_context": "active_project",
+        "channel_readiness": "email_ready",
+        "path_type": "quote_path",
+        "channel": "form",
+        "primary_angle_family": "design_fit",
+        "primary_angle": "design-led fit and curated product selection",
+        "support_angle": "fast scoping, practical support, and lower execution friction",
+        "anti_angle": "generic discount-led mass pitch",
+        "value_map": [
+          "curated product fit",
+          "project presentation support",
+          "trade-friendly buying path"
+        ],
+        "proof_map": [
+          "project-context alignment",
+          "design/trade relevance"
+        ],
+        "CTA": "quote_request",
+        "fallback_CTA": "project_discussion",
+        "followup_plan": [
+          {
+            "step": 1,
+            "goal": "initial_contact",
+            "cadence_days": 0,
+            "message_focus": "design-led fit and curated product selection"
+          },
+          {
+            "step": 2,
+            "goal": "follow_up",
+            "cadence_days": 14,
+            "message_focus": "fast scoping, practical support, and lower execution friction",
+            "fallback_CTA": "project_discussion",
+            "path_type": "quote_path"
+          }
+        ],
+        "risk_level": "high",
+        "approval_required": true,
+        "stop_conditions": [
+          "unsubscribe",
+          "do_not_contact",
+          "hard_bounce",
+          "complaint_risk",
+          "invalid_contact"
+        ],
+        "score_tier": "A",
+        "brief_reference": "neosgo-marketing-suite",
+        "strategy_hypothesis": {
+          "why_now": [
+            "fit_tier_s",
+            "prior_scored_lead",
+            "design_led_projects",
+            "website_present",
+            "contactable_email_present"
+          ],
+          "why_this_channel": "email_ready"
+        },
+        "strategy_weight_context": {
+          "channel_scores": {
+            "form": 5.0,
+            "linkedin": 4.0
+          },
+          "path_scores": {
+            "partner_path": 0.0,
+            "quote_path": 2.5,
+            "education_to_conversion_path": 1.0,
+            "direct_response_path": 0.0
+          },
+          "angle_family_scores": {
+            "design_fit": 1.0,
+            "trade_support": 1.0,
+            "education_fit": 1.0
+          }
+        }
+      },
+      {
+        "outreach_task_id": "neosgo-marketing-suite-account-contractdecor-com-form",
+        "strategy_id": "neosgo-marketing-suite-strategy-account-contractdecor-com",
+        "target_scope": "account_1_to_1",
+        "account_id": "account-contractdecor-com",
+        "contact_id": "contact-contract-decor-intl",
+        "account_type": "designer",
+        "persona_type": "founder",
+        "buying_context": "active_project",
+        "channel_readiness": "email_ready",
+        "path_type": "quote_path",
+        "channel": "form",
+        "primary_angle_family": "design_fit",
+        "primary_angle": "design-led fit and curated product selection",
+        "support_angle": "fast scoping, practical support, and lower execution friction",
+        "anti_angle": "generic discount-led mass pitch",
+        "value_map": [
+          "curated product fit",
+          "project presentation support",
+          "trade-friendly buying path"
+        ],
+        "proof_map": [
+          "project-context alignment",
+          "design/trade relevance"
+        ],
+        "CTA": "quote_request",
+        "fallback_CTA": "project_discussion",
+        "followup_plan": [
+          {
+            "step": 1,
+            "goal": "initial_contact",
+            "cadence_days": 0,
+            "message_focus": "design-led fit and curated product selection"
+          },
+          {
+            "step": 2,
+            "goal": "follow_up",
+            "cadence_days": 14,
+            "message_focus": "fast scoping, practical support, and lower execution friction",
+            "fallback_CTA": "project_discussion",
+            "path_type": "quote_path"
+          }
+        ],
+        "risk_level": "high",
+        "approval_required": true,
+        "stop_conditions": [
+          "unsubscribe",
+          "do_not_contact",
+          "hard_bounce",
+          "complaint_risk",
+          "invalid_contact"
+        ],
+        "score_tier": "A",
+        "brief_reference": "neosgo-marketing-suite",
+        "strategy_hypothesis": {
+          "why_now": [
+            "fit_tier_s",
+            "prior_scored_lead",
+            "design_led_projects",
+            "website_present",
+            "contactable_email_present"
+          ],
+          "why_this_channel": "email_ready"
+        },
+        "strategy_weight_context": {
+          "channel_scores": {
+            "form": 5.0,
+            "linkedin": 4.0
+          },
+          "path_scores": {
+            "partner_path": 0.0,
+            "quote_path": 2.5,
+            "education_to_conversion_path": 1.0,
+            "direct_response_path": 0.0
+          },
+          "angle_family_scores": {
+            "design_fit": 1.0,
+            "trade_support": 1.0,
+            "education_fit": 1.0
+          }
+        }
+      },
+      {
+        "outreach_task_id": "neosgo-marketing-suite-account-tillotsondesign-com-form",
+        "strategy_id": "neosgo-marketing-suite-strategy-account-tillotsondesign-com",
+        "target_scope": "account_1_to_1",
+        "account_id": "account-tillotsondesign-com",
+        "contact_id": "contact-tillotson-design-assoc",
+        "account_type": "designer",
+        "persona_type": null,
+        "buying_context": "active_project",
+        "channel_readiness": "email_ready",
+        "path_type": "quote_path",
+        "channel": "form",
+        "primary_angle_family": "design_fit",
+        "primary_angle": "design-led fit and curated product selection",
+        "support_angle": "fast scoping, practical support, and lower execution friction",
+        "anti_angle": "generic discount-led mass pitch",
+        "value_map": [
+          "curated product fit",
+          "project presentation support",
+          "trade-friendly buying path"
+        ],
+        "proof_map": [
+          "project-context alignment",
+          "design/trade relevance"
+        ],
+        "CTA": "quote_request",
+        "fallback_CTA": "project_discussion",
+        "followup_plan": [
+          {
+            "step": 1,
+            "goal": "initial_contact",
+            "cadence_days": 0,
+            "message_focus": "design-led fit and curated product selection"
+          },
+          {
+            "step": 2,
+            "goal": "follow_up",
+            "cadence_days": 14,
+            "message_focus": "fast scoping, practical support, and lower execution friction",
+            "fallback_CTA": "project_discussion",
+            "path_type": "quote_path"
+          }
+        ],
+        "risk_level": "high",
+        "approval_required": true,
+        "stop_conditions": [
+          "unsubscribe",
+          "do_not_contact",
+          "hard_bounce",
+          "complaint_risk",
+          "invalid_contact"
+        ],
+        "score_tier": "A",
+        "brief_reference": "neosgo-marketing-suite",
+        "strategy_hypothesis": {
+          "why_now": [
+            "fit_tier_s",
+            "prior_scored_lead",
+            "design_led_projects",
+            "website_present",
+            "contactable_email_present"
+          ],
+          "why_this_channel": "email_ready"
+        },
+        "strategy_weight_context": {
+          "channel_scores": {
+            "form": 5.0,
+            "linkedin": 4.0
+          },
+          "path_scores": {
+            "partner_path": 0.0,
+            "quote_path": 2.5,
+            "education_to_conversion_path": 1.0,
+            "direct_response_path": 0.0
+          },
+          "angle_family_scores": {
+            "design_fit": 1.0,
+            "trade_support": 1.0,
+            "education_fit": 1.0
+          }
+        }
+      }
+    ]
+  },
+  "artifacts": {
+    "discovery_recipe_library_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/discovery-recipe-library.json",
+    "generated_queries_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/discovery-queries.generated.json",
+    "merged_seed_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/merged-prospect-seeds.json",
+    "strategy_ready_seed_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/strategy-ready-seeds.json",
+    "review_queue_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/review-queue.json",
+    "prospect_records_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/prospect-data-engine/prospect-records.json",
+    "provider_health_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/prospect-data-engine/provider-health.json",
+    "source_health_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/prospect-data-engine/source-health.json",
+    "retry_targets_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/prospect-data-engine/retry-targets.generated.json",
+    "discovery_query_weights_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/prospect-data-engine/query-weights.json",
+    "strategy_weights_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/runtime/marketing-strategy-engine/strategy-weights.json",
+    "strategy_brief_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260407T002023Z/strategy-brief.json",
+    "strategy_tasks_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260407T002023Z/strategy-tasks.json",
+    "strategy_cards_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260407T002023Z/strategy-cards.json",
+    "feedback_output_dir": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260407T002023Z/feedback",
+    "suppression_registry_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260407T002023Z/feedback/suppression-registry.json",
+    "feedback_patches_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260407T002023Z/feedback/feedback-patches.json",
+    "approval_queue_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260407T002023Z/feedback/approval-queue.json",
+    "execution_queue_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/20260407T002023Z/execution-queue.json"
+  }
+}

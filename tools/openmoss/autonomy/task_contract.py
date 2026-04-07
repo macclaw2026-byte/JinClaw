@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/autonomy/task_contract.py`
+- 文件作用：负责任务合同与阶段合同的数据结构定义。
+- 顶层函数：_merge_unique、infer_stage_execution_policy、merge_execution_policy。
+- 顶层类：StageContract、TaskContract。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
@@ -47,6 +55,12 @@ DEFAULT_STAGE_EXECUTION_POLICIES = {
 
 
 def _merge_unique(values: List[str], extras: List[str]) -> List[str]:
+    """
+    中文注解：
+    - 功能：实现 `_merge_unique` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     seen = set()
     merged: List[str] = []
     for value in [*values, *extras]:
@@ -59,6 +73,12 @@ def _merge_unique(values: List[str], extras: List[str]) -> List[str]:
 
 
 def infer_stage_execution_policy(goal: str, stage_name: str, allowed_tools: List[str] | None = None) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：实现 `infer_stage_execution_policy` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     normalized_goal = goal.lower()
     allowed = {str(item).strip().lower() for item in (allowed_tools or []) if str(item).strip()}
     base = dict(DEFAULT_STAGE_EXECUTION_POLICIES.get(stage_name, {"auto_complete_on_wait_ok": False}))
@@ -102,6 +122,12 @@ def infer_stage_execution_policy(goal: str, stage_name: str, allowed_tools: List
 
 
 def merge_execution_policy(goal: str, stage_name: str, existing: Dict[str, Any] | None = None, allowed_tools: List[str] | None = None) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：实现 `merge_execution_policy` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     inferred = infer_stage_execution_policy(goal, stage_name, allowed_tools=allowed_tools)
     current = dict(existing or {})
     merged = {**inferred, **current}
@@ -113,6 +139,12 @@ def merge_execution_policy(goal: str, stage_name: str, existing: Dict[str, Any] 
 
 @dataclass
 class StageContract:
+    """
+    中文注解：
+    - 功能：封装 `StageContract` 对应的数据结构或行为对象。
+    - 角色：属于本模块中的对外可见逻辑，通常由上游流程实例化后参与状态流转或能力执行。
+    - 调用关系：请结合模块级说明与类方法一起阅读，理解它在主链中的位置。
+    """
     name: str
     goal: str
     expected_output: str = ""
@@ -128,6 +160,12 @@ class StageContract:
 
 @dataclass
 class TaskContract:
+    """
+    中文注解：
+    - 功能：封装 `TaskContract` 对应的数据结构或行为对象。
+    - 角色：属于本模块中的对外可见逻辑，通常由上游流程实例化后参与状态流转或能力执行。
+    - 调用关系：请结合模块级说明与类方法一起阅读，理解它在主链中的位置。
+    """
     task_id: str
     user_goal: str
     done_definition: str
@@ -143,10 +181,22 @@ class TaskContract:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
+        """
+        中文注解：
+        - 功能：实现 `to_dict` 对应的处理逻辑。
+        - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+        - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+        """
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TaskContract":
+        """
+        中文注解：
+        - 功能：实现 `from_dict` 对应的处理逻辑。
+        - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+        - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+        """
         user_goal = str(data.get("user_goal", ""))
         allowed_tools = [str(item) for item in data.get("allowed_tools", [])]
         stages = []

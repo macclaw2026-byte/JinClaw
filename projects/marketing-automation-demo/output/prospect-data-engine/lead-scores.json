@@ -1,0 +1,54 @@
+{
+  "items": [
+    {
+      "account_id": "account-exampledesignstudio-com",
+      "contact_id": "contact-example-design-studio",
+      "fit_score": 40.0,
+      "intent_score": 24.0,
+      "reachability_score": 6.0,
+      "data_quality_score": 8.5,
+      "total_score": 78.5,
+      "score_tier": "B"
+    },
+    {
+      "account_id": "account-samplebuildco-com",
+      "contact_id": "contact-sample-build-co",
+      "fit_score": 40.0,
+      "intent_score": 24.0,
+      "reachability_score": 6.0,
+      "data_quality_score": 8.5,
+      "total_score": 78.5,
+      "score_tier": "B"
+    },
+    {
+      "account_id": "account-regionaldistributor-example",
+      "contact_id": "contact-regional-distributor-group",
+      "fit_score": 40.0,
+      "intent_score": 24.0,
+      "reachability_score": 6.0,
+      "data_quality_score": 8.5,
+      "total_score": 78.5,
+      "score_tier": "B"
+    },
+    {
+      "account_id": "account-exampledealer-com",
+      "contact_id": "contact-example-dealer",
+      "fit_score": 40.0,
+      "intent_score": 24.0,
+      "reachability_score": 18.0,
+      "data_quality_score": 10.0,
+      "total_score": 92.0,
+      "score_tier": "A"
+    },
+    {
+      "account_id": "account-demo-contractor-com",
+      "contact_id": "contact-demo-contractor",
+      "fit_score": 40.0,
+      "intent_score": 22.0,
+      "reachability_score": 15.0,
+      "data_quality_score": 10.0,
+      "total_score": 87.0,
+      "score_tier": "A"
+    }
+  ]
+}

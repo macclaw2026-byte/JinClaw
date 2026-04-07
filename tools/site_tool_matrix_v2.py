@@ -34,12 +34,12 @@ RULES = {
         'block': [r'robot or human', r'confirm that you.?re human', r'activate and hold the button'],
     },
     'temu': {
-        'success': [r'/goods\.html', r'\$\d+(?:\.\d{2})?', r'No results for', r'Submit search'],
-        'block': [r'captcha', r'puzzle', r'verify', r'access denied', r'login', r'sign in'],
+        'success': [r'/goods\.html', r'\$\d+(?:\.\d{2})?', r'No results for', r'Submit search', r'Free shipping'],
+        'block': [r'captcha', r'puzzle', r'access denied', r'unusual traffic', r'429', r'too many requests'],
     },
     '1688': {
         'success': [r'offer', r'¥\d+(?:\.\d+)?', r'成交'],
-        'block': [r'登录', r'login', r'请按住滑块', r'短信登录', r'密码登录', r'captcha', r'punish', r'x5secdata'],
+        'block': [r'登录', r'请按住滑块', r'短信登录', r'密码登录', r'captcha', r'punish', r'x5secdata', r'nocaptcha', r'unusual traffic'],
     },
 }
 
@@ -68,25 +68,52 @@ def analyze(site: str, tool: str, url: str, stdout: str, stderr: str, returncode
     stdout = (stdout or '').replace('\x00', '')
     stderr = (stderr or '').replace('\x00', '')
     rules = RULES[site]
+    current_url_match = re.search(r'^opened_url=(.+)$', stdout, flags=re.M)
+    current_url = current_url_match.group(1).strip() if current_url_match else ''
+    redirected_cross_site = False
+    if current_url:
+        expected_host = url.split('/')[2]
+        redirected_cross_site = expected_host not in current_url
     product_signal_count = sum(len(re.findall(p, stdout, flags=re.I)) for p in rules['success'])
     block_signal_count = sum(len(re.findall(p, stdout, flags=re.I)) for p in rules['block'])
+    if redirected_cross_site:
+        block_signal_count += 3
+        notes = f"{notes}; cross-site-redirect={current_url}"
+    chars = len(stdout.strip())
+
+    shell_indicators = [
+        'window.__npm_package_config__', 'window.__cdn_img__', 'sessionstorage.x5referer',
+        'window.location.replace(', 'cf.aliyun.com/nocaptcha', 'robot or human?',
+        'activate and hold the button', 'captcha interception',
+        'window.__initiallanguage__', 'window.__initiali18nstore__',
+        'window.__pxappid', 'press & hold human challenge',
+        'please slide to verify', 'sorry, we have detected unusual traffic from your network',
+        'password login', '短信登录', '密码登录'
+    ]
+    shell_signal_count = sum(1 for sig in shell_indicators if sig in stdout.lower())
 
     score = 0
     if returncode == 0:
         score += 20
-    if len(stdout.strip()) > 300:
-        score += 15
+    if chars > 300:
+        score += 10
+    if chars > 3000:
+        score += 5
     if product_signal_count > 0:
-        score += min(45, 10 + product_signal_count * 5)
+        score += min(40, 8 + product_signal_count * 4)
+    if shell_signal_count > 0:
+        score -= min(35, shell_signal_count * 10)
     if block_signal_count > 0:
-        score -= min(50, 15 + block_signal_count * 10)
+        score -= min(55, 20 + block_signal_count * 10)
     score = max(0, min(100, score))
 
-    if block_signal_count > 0:
+    if block_signal_count > 0 or shell_signal_count >= 2:
         status = 'blocked'
-    elif product_signal_count > 0 and len(stdout.strip()) > 500:
+    elif product_signal_count >= 2 and chars > 1200 and shell_signal_count == 0:
         status = 'usable'
-    elif len(stdout.strip()) > 100:
+    elif product_signal_count >= 1 and chars > 300 and shell_signal_count <= 1:
+        status = 'partial'
+    elif chars > 100 and shell_signal_count == 0:
         status = 'partial'
     else:
         status = 'failed'
@@ -182,12 +209,20 @@ print(texts[:300000])
 def agent_browser_tool(site, url):
     _ = run([str(AGENT_BROWSER), 'connect', 'http://127.0.0.1:18800'])
     p1 = run([str(AGENT_BROWSER), 'open', url])
-    p2 = run([str(AGENT_BROWSER), 'get', 'title'])
-    p3 = run([str(AGENT_BROWSER), 'snapshot'])
-    stdout = '\n'.join([p2.stdout or '', p3.stdout or ''])
-    stderr = '\n'.join(x for x in [p1.stderr, p2.stderr, p3.stderr] if x)
-    rc = max(p1.returncode, p2.returncode, p3.returncode)
-    return analyze(site, 'local-agent-browser-cli', url, stdout, stderr, rc, 'local agent-browser CLI connected to Chrome CDP')
+    p2 = run([str(AGENT_BROWSER), 'get', 'url'])
+    p3 = run([str(AGENT_BROWSER), 'get', 'title'])
+    p4 = run([str(AGENT_BROWSER), 'snapshot'])
+    current_url = (p2.stdout or '').strip()
+    title = (p3.stdout or '').strip()
+    redirected = bool(current_url) and current_url.rstrip('/') != url.rstrip('/')
+    redirect_note = f'opened_url={current_url}\n' if current_url else ''
+    stdout = redirect_note + '\n'.join([title, p4.stdout or ''])
+    stderr = '\n'.join(x for x in [p1.stderr, p2.stderr, p3.stderr, p4.stderr] if x)
+    rc = max(p1.returncode, p2.returncode, p3.returncode, p4.returncode)
+    notes = 'local agent-browser CLI connected to Chrome CDP'
+    if redirected:
+        notes += f'; redirected-to={current_url}'
+    return analyze(site, 'local-agent-browser-cli', url, stdout, stderr, rc, notes)
 
 
 def main():

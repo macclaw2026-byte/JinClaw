@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/browser_task_signals.py`
+- 文件作用：负责控制中心中与 `browser_task_signals` 相关的编排、分析或决策逻辑。
+- 顶层函数：_is_listings_overview_url、_write_json、_load_link、_load_contract_payload、_load_state_payload、_load_business_verification_requirements、_load_sessions_registry、_is_browser_gallery_task、_candidate_session_files_from_key、_candidate_session_files、_extract_int、_analyze_lines、_relay_unattached、_extract_latest_target_context、_collect_live_browser_probe、_augment_batch_probe_from_state、_evaluate_business_requirements、collect_browser_task_signals、main。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import json
@@ -25,16 +33,34 @@ FILE_COUNT_PATTERNS = [
 
 
 def _is_listings_overview_url(url: str) -> bool:
+    """
+    中文注解：
+    - 功能：实现 `_is_listings_overview_url` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     normalized = str(url or "").strip()
     return normalized.startswith("https://seller.neosgo.com/seller/products") and "/seller/products/" not in normalized
 
 
 def _write_json(path: Path, payload: Dict[str, object]) -> None:
+    """
+    中文注解：
+    - 功能：实现 `_write_json` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _load_link(task_id: str) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_load_link` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     links_root = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/autonomy/links")
     for link_path in links_root.glob("*.json"):
         try:
@@ -48,6 +74,12 @@ def _load_link(task_id: str) -> Dict[str, object]:
 
 
 def _load_contract_payload(task_id: str) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_load_contract_payload` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     contract_path = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/autonomy/tasks") / task_id / "contract.json"
     try:
         return json.loads(contract_path.read_text(encoding="utf-8"))
@@ -56,6 +88,12 @@ def _load_contract_payload(task_id: str) -> Dict[str, object]:
 
 
 def _load_state_payload(task_id: str) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_load_state_payload` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     state_path = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/autonomy/tasks") / task_id / "state.json"
     try:
         return json.loads(state_path.read_text(encoding="utf-8"))
@@ -64,6 +102,12 @@ def _load_state_payload(task_id: str) -> Dict[str, object]:
 
 
 def _load_business_verification_requirements(task_id: str) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_load_business_verification_requirements` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     contract = _load_contract_payload(task_id)
     metadata = contract.get("metadata", {}) or {}
     control_center = metadata.get("control_center", {}) or {}
@@ -86,6 +130,12 @@ def _load_business_verification_requirements(task_id: str) -> Dict[str, object]:
 
 
 def _load_sessions_registry() -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_load_sessions_registry` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     registry_path = OPENCLAW_SESSIONS_ROOT / "sessions.json"
     try:
         return json.loads(registry_path.read_text(encoding="utf-8"))
@@ -94,6 +144,12 @@ def _load_sessions_registry() -> Dict[str, object]:
 
 
 def _is_browser_gallery_task(task_id: str) -> bool:
+    """
+    中文注解：
+    - 功能：实现 `_is_browser_gallery_task` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     contract_path = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/autonomy/tasks") / task_id / "contract.json"
     try:
         payload = json.loads(contract_path.read_text(encoding="utf-8"))
@@ -114,6 +170,12 @@ def _is_browser_gallery_task(task_id: str) -> bool:
 
 
 def _candidate_session_files_from_key(session_key: str) -> List[Path]:
+    """
+    中文注解：
+    - 功能：实现 `_candidate_session_files_from_key` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if not session_key:
         return []
     registry = _load_sessions_registry()
@@ -138,6 +200,12 @@ def _candidate_session_files_from_key(session_key: str) -> List[Path]:
 
 
 def _candidate_session_files(last_message_id: str) -> List[Path]:
+    """
+    中文注解：
+    - 功能：实现 `_candidate_session_files` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if not last_message_id or not OPENCLAW_SESSIONS_ROOT.exists():
         return []
     matches: List[Path] = []
@@ -152,6 +220,12 @@ def _candidate_session_files(last_message_id: str) -> List[Path]:
 
 
 def _extract_int(patterns: Iterable[re.Pattern[str]], text: str) -> int | None:
+    """
+    中文注解：
+    - 功能：实现 `_extract_int` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     for pattern in patterns:
         match = pattern.search(text)
         if match:
@@ -160,6 +234,12 @@ def _extract_int(patterns: Iterable[re.Pattern[str]], text: str) -> int | None:
 
 
 def _analyze_lines(lines: List[str]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_analyze_lines` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     evidence: List[str] = []
     product_image_count = None
     file_input_count = None
@@ -218,6 +298,12 @@ def _analyze_lines(lines: List[str]) -> Dict[str, object]:
 
 
 def _relay_unattached(channel_recovery: Dict[str, object]) -> bool:
+    """
+    中文注解：
+    - 功能：实现 `_relay_unattached` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if not isinstance(channel_recovery, dict):
         return False
     if int(channel_recovery.get("tabs_count", 0) or 0) > 0:
@@ -229,6 +315,12 @@ def _relay_unattached(channel_recovery: Dict[str, object]) -> bool:
 
 
 def _extract_latest_target_context(lines: List[str]) -> Dict[str, str]:
+    """
+    中文注解：
+    - 功能：实现 `_extract_latest_target_context` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     target_id = ""
     page_url = ""
     for line in lines:
@@ -241,6 +333,12 @@ def _extract_latest_target_context(lines: List[str]) -> Dict[str, str]:
     return {"target_id": target_id, "page_url": page_url}
 
 def _collect_live_browser_probe(task_id: str, lines: List[str], preferred_url: str = "") -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_collect_live_browser_probe` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     token = load_gateway_token()
     context = _extract_latest_target_context(lines)
     target_id = context.get("target_id", "")
@@ -261,9 +359,21 @@ def _collect_live_browser_probe(task_id: str, lines: List[str], preferred_url: s
         return payload
 
     def _requests_path(current_target_id: str) -> str:
+        """
+        中文注解：
+        - 功能：实现 `_requests_path` 对应的处理逻辑。
+        - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+        - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+        """
         return f"/requests?{urllib.parse.urlencode({'profile': 'chrome-relay', 'targetId': current_target_id})}"
 
     def _evaluate_body(current_target_id: str) -> Dict[str, object]:
+        """
+        中文注解：
+        - 功能：实现 `_evaluate_body` 对应的处理逻辑。
+        - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+        - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+        """
         return {
             "profile": "chrome-relay",
             "targetId": current_target_id,
@@ -306,6 +416,12 @@ def _collect_live_browser_probe(task_id: str, lines: List[str], preferred_url: s
         }
 
     def _product_fetch_body(current_target_id: str) -> Dict[str, object]:
+        """
+        中文注解：
+        - 功能：实现 `_product_fetch_body` 对应的处理逻辑。
+        - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+        - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+        """
         return {
             "profile": "chrome-relay",
             "targetId": current_target_id,
@@ -336,6 +452,12 @@ def _collect_live_browser_probe(task_id: str, lines: List[str], preferred_url: s
         }
 
     def _listings_probe_body(current_target_id: str) -> Dict[str, object]:
+        """
+        中文注解：
+        - 功能：实现 `_listings_probe_body` 对应的处理逻辑。
+        - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+        - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+        """
         return {
             "profile": "chrome-relay",
             "targetId": current_target_id,
@@ -381,6 +503,12 @@ def _collect_live_browser_probe(task_id: str, lines: List[str], preferred_url: s
     preferred_url = str(preferred_url or "").strip()
 
     def _run_probe(current_target_id: str) -> Dict[str, object] | None:
+        """
+        中文注解：
+        - 功能：实现 `_run_probe` 对应的处理逻辑。
+        - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+        - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+        """
         try:
             requests = browser_control_get(token, _requests_path(current_target_id))
             state = browser_control_post(token, "/act", _evaluate_body(current_target_id))
@@ -488,6 +616,12 @@ def _collect_live_browser_probe(task_id: str, lines: List[str], preferred_url: s
 
 
 def _augment_batch_probe_from_state(task_id: str, state_payload: Dict[str, object], payload: Dict[str, object]) -> None:
+    """
+    中文注解：
+    - 功能：实现 `_augment_batch_probe_from_state` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     requirements = payload.get("business_verification_requirements", {})
     if not isinstance(requirements, dict) or requirements.get("batch_listings_mode") is not True:
         return
@@ -529,6 +663,12 @@ def _augment_batch_probe_from_state(task_id: str, state_payload: Dict[str, objec
 
 
 def _evaluate_business_requirements(requirements: Dict[str, object], payload: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_evaluate_business_requirements` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if not requirements:
         return {"ok": True, "status": "no_explicit_requirements", "failures": []}
 
@@ -632,6 +772,12 @@ def _evaluate_business_requirements(requirements: Dict[str, object], payload: Di
 
 
 def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `collect_browser_task_signals` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if not _is_browser_gallery_task(task_id):
         payload = {
             "task_id": task_id,
@@ -900,6 +1046,12 @@ def collect_browser_task_signals(task_id: str) -> Dict[str, object]:
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     import argparse
 
     parser = argparse.ArgumentParser(description="Collect browser-observed task signals from the linked OpenClaw session")

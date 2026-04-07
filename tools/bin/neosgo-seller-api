@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+
+SECRET_PATH = Path.home() / '.openclaw' / 'secrets' / 'neosgo-seller.env'
+
+
+def load_env(path: Path):
+    env = {}
+    for line in path.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        k, v = line.split('=', 1)
+        env[k.strip()] = v.strip()
+    return env
+
+
+def main():
+    if len(sys.argv) < 2:
+        print('usage: neosgo-seller-api METHOD PATH [JSON_BODY]', file=sys.stderr)
+        sys.exit(2)
+    method = sys.argv[1].upper()
+    path = sys.argv[2]
+    body = None
+    if len(sys.argv) >= 4:
+        body = sys.argv[3].encode('utf-8')
+
+    if not SECRET_PATH.exists():
+        print(json.dumps({'error': 'missing_secret_file', 'path': str(SECRET_PATH)}))
+        sys.exit(1)
+
+    env = load_env(SECRET_PATH)
+    base = env.get('NEOSGO_SELLER_API_BASE_URL')
+    token = env.get('NEOSGO_SELLER_AUTOMATION_KEY')
+    if not base or not token:
+        print(json.dumps({'error': 'missing_env_values'}))
+        sys.exit(1)
+
+    url = base.rstrip('/') + path
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'User-Agent': 'OpenClaw-Neosgo-Seller-API/1.0',
+    }
+    req = Request(url, data=body, headers=headers, method=method)
+    try:
+        with urlopen(req, timeout=60) as resp:
+            raw = resp.read().decode('utf-8', 'replace')
+            print(raw)
+            return
+    except HTTPError as e:
+        raw = e.read().decode('utf-8', 'replace')
+        print(json.dumps({'http_status': e.code, 'body': raw}))
+        sys.exit(1)
+    except URLError as e:
+        print(json.dumps({'error': 'network_error', 'detail': str(e)}))
+        sys.exit(1)
+
+
+if __name__ == '__main__':
+    main()

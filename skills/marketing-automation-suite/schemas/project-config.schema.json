@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Marketing Automation Project Config",
+  "type": "object",
+  "required": [
+    "project",
+    "icp",
+    "channels",
+    "prospect_data_engine",
+    "marketing_strategy_engine",
+    "outreach_feedback_engine"
+  ],
+  "properties": {
+    "project": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "business_goal",
+        "product_type",
+        "conversion_target"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "business_goal": {"type": "string", "minLength": 1},
+        "product_type": {"type": "string", "minLength": 1},
+        "conversion_target": {"type": "string", "minLength": 1},
+        "priority_regions": {"type": "array", "items": {"type": "string"}},
+        "risk_profile": {"type": "string"}
+      }
+    },
+    "icp": {
+      "type": "object",
+      "required": ["account_types", "personas"],
+      "properties": {
+        "account_types": {"type": "array", "items": {"type": "string"}},
+        "personas": {"type": "array", "items": {"type": "string"}},
+        "exclusions": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "channels": {
+      "type": "object",
+      "required": ["priority"],
+      "properties": {
+        "priority": {"type": "array", "items": {"type": "string"}},
+        "disallowed": {"type": "array", "items": {"type": "string"}},
+        "approval_required_for": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "prospect_data_engine": {
+      "type": "object",
+      "required": ["source_families", "score_weights", "min_score_for_strategy"],
+      "properties": {
+        "source_families": {"type": "array", "items": {"type": "string"}},
+        "score_weights": {
+          "type": "object",
+          "required": ["fit", "intent", "reachability", "data_quality"],
+          "properties": {
+            "fit": {"type": "number"},
+            "intent": {"type": "number"},
+            "reachability": {"type": "number"},
+            "data_quality": {"type": "number"}
+          }
+        },
+        "min_score_for_strategy": {"type": "number"}
+      }
+    },
+    "marketing_strategy_engine": {
+      "type": "object",
+      "required": ["segmentation_axes", "default_path_type"],
+      "properties": {
+        "segmentation_axes": {"type": "array", "items": {"type": "string"}},
+        "default_path_type": {"type": "string"},
+        "require_human_review_for": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "outreach_feedback_engine": {
+      "type": "object",
+      "required": ["automation_mode", "stop_conditions", "reporting"],
+      "properties": {
+        "automation_mode": {"type": "string"},
+        "cooldown_rules": {"type": "object"},
+        "stop_conditions": {"type": "array", "items": {"type": "string"}},
+        "reporting": {"type": "object"}
+      }
+    }
+  }
+}
+

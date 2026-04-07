@@ -45,3 +45,8 @@ Add whatever helps you do your job. This is your cheat sheet.
 - Crawl4AI local wrapper: `~/\.openclaw/workspace/tools/bin/crawl4ai`
 - Crawl4AI venv: `~/\.openclaw/workspace/tools/crawl4ai-venv`
 - Setup completed with browser downloads and doctor health check passing on 2026-03-20.
+
+### Process Monitoring
+
+- Current process snapshot: `~/.openclaw/workspace/tools/bin/procs-now`
+- Live focused process watch: `~/.openclaw/workspace/tools/bin/procs-watch` (default refresh every 3s; pass seconds as arg)

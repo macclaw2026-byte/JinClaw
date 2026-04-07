@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/browser_channel_recovery.py`
+- 文件作用：负责控制中心中与 `browser_channel_recovery` 相关的编排、分析或决策逻辑。
+- 顶层函数：_write_json、_resolve_openclaw_bin、_openclaw_browser_json、_open_relay_tab、list_relay_tabs、prune_relay_tabs、_url_matches_target、_select_best_matching_tab、load_gateway_token、browser_control_get、browser_control_post、_normalize_expected_domains、get_current_relay_context、recover_browser_channel、navigate_relay_to_url。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import json
@@ -16,15 +24,33 @@ from paths import BROWSER_CHANNELS_ROOT, OPENCLAW_ROOT
 
 
 def _write_json(path: Path, payload: Dict[str, object]) -> None:
+    """
+    中文注解：
+    - 功能：实现 `_write_json` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _resolve_openclaw_bin() -> str:
+    """
+    中文注解：
+    - 功能：实现 `_resolve_openclaw_bin` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return shutil.which("openclaw") or "/opt/homebrew/bin/openclaw"
 
 
 def _openclaw_browser_json(*args: str, timeout: int = 20) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_openclaw_browser_json` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     proc = subprocess.run(
         [_resolve_openclaw_bin(), "browser", *args, "--json"],
         capture_output=True,
@@ -38,10 +64,22 @@ def _openclaw_browser_json(*args: str, timeout: int = 20) -> Dict[str, object]:
 
 
 def _open_relay_tab(url: str, timeout: int = 20) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_open_relay_tab` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return _openclaw_browser_json("open", "--browser-profile", "chrome-relay", url, timeout=timeout)
 
 
 def list_relay_tabs(profile: str = "chrome-relay", timeout: int = 15) -> List[Dict[str, object]]:
+    """
+    中文注解：
+    - 功能：实现 `list_relay_tabs` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     payload = _openclaw_browser_json("tabs", "--browser-profile", profile, timeout=timeout)
     tabs = payload.get("tabs", [])
     if not isinstance(tabs, list):
@@ -58,6 +96,12 @@ def prune_relay_tabs(
     expected_domains: Iterable[str] | None = None,
     max_tabs: int = 1,
 ) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `prune_relay_tabs` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     expected = _normalize_expected_domains(expected_domains, last_known_url or preferred_url)
     tabs = list_relay_tabs("chrome-relay", timeout=15)
     relevant_tabs: List[Dict[str, object]] = []
@@ -124,6 +168,12 @@ def prune_relay_tabs(
 
 
 def _url_matches_target(current_url: str, target_url: str) -> bool:
+    """
+    中文注解：
+    - 功能：实现 `_url_matches_target` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     current = urllib.parse.urlparse((current_url or "").strip())
     target = urllib.parse.urlparse((target_url or "").strip())
     if not current.scheme or not current.netloc or not target.scheme or not target.netloc:
@@ -144,6 +194,12 @@ def _select_best_matching_tab(
     last_known_url: str = "",
     expected_domains: Iterable[str] | None = None,
 ) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_select_best_matching_tab` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     expected = _normalize_expected_domains(expected_domains, last_known_url)
     normalized_preferred = str(preferred_url or "").strip()
     normalized_last_known = str(last_known_url or "").strip()
@@ -165,6 +221,12 @@ def _select_best_matching_tab(
 
 
 def load_gateway_token() -> str:
+    """
+    中文注解：
+    - 功能：实现 `load_gateway_token` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     config_path = OPENCLAW_ROOT / "openclaw.json"
     try:
         payload = json.loads(config_path.read_text(encoding="utf-8"))
@@ -174,6 +236,12 @@ def load_gateway_token() -> str:
 
 
 def browser_control_get(token: str, path: str, timeout: int = 10) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `browser_control_get` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     req = urllib.request.Request(
         f"http://127.0.0.1:18791{path}",
         headers={"Authorization": f"Bearer {token}"},
@@ -183,6 +251,12 @@ def browser_control_get(token: str, path: str, timeout: int = 10) -> Dict[str, o
 
 
 def browser_control_post(token: str, path: str, body: Dict[str, object], timeout: int = 20) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `browser_control_post` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     req = urllib.request.Request(
         f"http://127.0.0.1:18791{path}",
         data=json.dumps(body).encode(),
@@ -194,6 +268,12 @@ def browser_control_post(token: str, path: str, body: Dict[str, object], timeout
 
 
 def _normalize_expected_domains(expected_domains: Iterable[str] | None, last_known_url: str) -> List[str]:
+    """
+    中文注解：
+    - 功能：实现 `_normalize_expected_domains` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     domains = [str(item).strip().lower() for item in (expected_domains or []) if str(item).strip()]
     if last_known_url:
         parsed = urllib.parse.urlparse(last_known_url)
@@ -211,6 +291,12 @@ def _normalize_expected_domains(expected_domains: Iterable[str] | None, last_kno
 
 
 def get_current_relay_context(expected_domains: Iterable[str] | None = None, last_known_url: str = "", preferred_url: str = "") -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `get_current_relay_context` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     token = load_gateway_token()
     expected = _normalize_expected_domains(expected_domains, last_known_url)
     if not token:
@@ -337,6 +423,12 @@ def get_current_relay_context(expected_domains: Iterable[str] | None = None, las
 
 
 def recover_browser_channel(task_id: str, expected_domains: Iterable[str] | None = None, last_known_url: str = "", preferred_url: str = "") -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `recover_browser_channel` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     context = get_current_relay_context(expected_domains=expected_domains, last_known_url=last_known_url, preferred_url=preferred_url)
     retry_count = 0
     while (
@@ -389,6 +481,12 @@ def recover_browser_channel(task_id: str, expected_domains: Iterable[str] | None
 
 
 def navigate_relay_to_url(task_id: str, url: str, expected_domains: Iterable[str] | None = None) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `navigate_relay_to_url` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     token = load_gateway_token()
     expected = _normalize_expected_domains(expected_domains, url)
     if not token:

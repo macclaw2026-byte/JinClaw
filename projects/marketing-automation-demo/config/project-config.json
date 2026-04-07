@@ -1,0 +1,91 @@
+{
+  "project": {
+    "id": "marketing-automation-demo",
+    "name": "Marketing Automation Demo",
+    "business_goal": "increase qualified pipeline and conversions",
+    "product_type": "b2b_service",
+    "conversion_target": "quote_request",
+    "priority_regions": [
+      "US"
+    ],
+    "risk_profile": "medium"
+  },
+  "icp": {
+    "account_types": [
+      "distributor",
+      "contractor",
+      "designer"
+    ],
+    "personas": [
+      "buyer",
+      "founder",
+      "operations_manager"
+    ],
+    "exclusions": [
+      "student",
+      "personal_blog"
+    ]
+  },
+  "channels": {
+    "priority": [
+      "form",
+      "linkedin",
+      "email"
+    ],
+    "disallowed": [
+      "sms"
+    ],
+    "approval_required_for": [
+      "pricing_discussion",
+      "partner_offer",
+      "high_value_accounts"
+    ]
+  },
+  "prospect_data_engine": {
+    "source_families": [
+      "official_websites",
+      "google_business_profile",
+      "linkedin_company_pages",
+      "trade_directories"
+    ],
+    "score_weights": {
+      "fit": 40,
+      "intent": 30,
+      "reachability": 20,
+      "data_quality": 10
+    },
+    "min_score_for_strategy": 55
+  },
+  "marketing_strategy_engine": {
+    "segmentation_axes": [
+      "account_tier",
+      "persona_type",
+      "buying_context",
+      "channel_readiness"
+    ],
+    "default_path_type": "direct_response",
+    "require_human_review_for": [
+      "tier_a_accounts",
+      "legal_or_pricing_sensitive_motions"
+    ]
+  },
+  "outreach_feedback_engine": {
+    "automation_mode": "controlled",
+    "cooldown_rules": {
+      "email_days": 4,
+      "form_days": 10,
+      "social_days": 3
+    },
+    "stop_conditions": [
+      "unsubscribe",
+      "do_not_contact",
+      "hard_bounce",
+      "complaint_risk"
+    ],
+    "reporting": {
+      "daily": true,
+      "weekly": true,
+      "anomaly": true
+    }
+  }
+}

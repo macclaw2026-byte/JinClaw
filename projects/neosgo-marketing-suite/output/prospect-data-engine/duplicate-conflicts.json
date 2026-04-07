@@ -1,0 +1,476 @@
+{
+  "items": [
+    {
+      "dedupe_key": "domain:etisales.com",
+      "kept_company_name": "Ny",
+      "dropped_company_name": "Ny",
+      "kept_source_url": "https://www.etisales.com",
+      "dropped_source_url": "www.etisales.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:sasaki.com",
+      "kept_company_name": "Sasaki Associates Inc",
+      "dropped_company_name": "Sasaki Associates Inc",
+      "kept_source_url": "sasaki.com",
+      "dropped_source_url": "sasaki.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:sasaki.com",
+      "kept_company_name": "Sasaki Associates Inc",
+      "dropped_company_name": "Sasaki Associates Inc",
+      "kept_source_url": "sasaki.com",
+      "dropped_source_url": "sasaki.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:sasaki.com",
+      "kept_company_name": "Sasaki Associates Inc",
+      "dropped_company_name": "Sasaki Associates Inc",
+      "kept_source_url": "sasaki.com",
+      "dropped_source_url": "sasaki.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:sasaki.com",
+      "kept_company_name": "Sasaki Associates Inc",
+      "dropped_company_name": "Sasaki Associates Inc",
+      "kept_source_url": "sasaki.com",
+      "dropped_source_url": "sasaki.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:laneradecorating.com",
+      "kept_company_name": "Lanera Decorating",
+      "dropped_company_name": "Lanera Decorating",
+      "kept_source_url": "laneradecorating.com",
+      "dropped_source_url": "laneradecorating.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:contemporaryfurniture.com",
+      "kept_company_name": "Advance Furniture Inc",
+      "dropped_company_name": "Advance Furniture Inc",
+      "kept_source_url": "contemporaryfurniture.com",
+      "dropped_source_url": "contemporaryfurniture.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:sasaki.com",
+      "kept_company_name": "Sasaki Associates Inc",
+      "dropped_company_name": "Sasaki Associates Inc",
+      "kept_source_url": "sasaki.com",
+      "dropped_source_url": "sasaki.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:highend.com",
+      "kept_company_name": "High End Systems, Cklight",
+      "dropped_company_name": "High End Systems",
+      "kept_source_url": "https://highend.com",
+      "dropped_source_url": "highend.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:rainbowlightinginc.com",
+      "kept_company_name": "Quality Discount Lighting",
+      "dropped_company_name": "Quality Discount Lighting",
+      "kept_source_url": "https://www.rainbowlightinginc.com",
+      "dropped_source_url": "rainbowlightinginc.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:beacondirect.com",
+      "kept_company_name": "Maxal Group Inc",
+      "dropped_company_name": "Maxal Group Inc",
+      "kept_source_url": "beacondirect.com",
+      "dropped_source_url": "beacondirect.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:colorkinetics.com",
+      "kept_company_name": "Color Kinetics",
+      "dropped_company_name": "Philips Color Kinetics Inc",
+      "kept_source_url": "colorkinetics.com",
+      "dropped_source_url": "colorkinetics.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:eternalighting.com",
+      "kept_company_name": "Eterna Lighting",
+      "dropped_company_name": "Eterna Lighting",
+      "kept_source_url": "eternalighting.com",
+      "dropped_source_url": "eternalighting.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:colorkinetics.com",
+      "kept_company_name": "Color Kinetics",
+      "dropped_company_name": "Philips Color Kinetics Inc",
+      "kept_source_url": "colorkinetics.com",
+      "dropped_source_url": "colorkinetics.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:colorkinetics.com",
+      "kept_company_name": "Color Kinetics",
+      "dropped_company_name": "Color Kinetics",
+      "kept_source_url": "colorkinetics.com",
+      "dropped_source_url": "colorkinetics.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:colorkinetics.com",
+      "kept_company_name": "Color Kinetics",
+      "dropped_company_name": "Philips Color Kinetics Inc",
+      "kept_source_url": "colorkinetics.com",
+      "dropped_source_url": "colorkinetics.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:colorkinetics.com",
+      "kept_company_name": "Color Kinetics",
+      "dropped_company_name": "Philips Color Kinetics Inc",
+      "kept_source_url": "colorkinetics.com",
+      "dropped_source_url": "colorkinetics.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:colorkinetics.com",
+      "kept_company_name": "Color Kinetics",
+      "dropped_company_name": "Philips Color Kinetics Inc",
+      "kept_source_url": "colorkinetics.com",
+      "dropped_source_url": "colorkinetics.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:standardelectric.com",
+      "kept_company_name": "Standard Electric",
+      "dropped_company_name": "Standard Electric",
+      "kept_source_url": "standardelectric.com",
+      "dropped_source_url": "standardelectric.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:adamslightingcompany.com",
+      "kept_company_name": "Adams Lighting Co",
+      "dropped_company_name": "Adams Lighting Co",
+      "kept_source_url": "adamslightingcompany.com",
+      "dropped_source_url": "adamslightingcompany.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:colorkinetics.com",
+      "kept_company_name": "Color Kinetics",
+      "dropped_company_name": "Philips Color Kinetics Inc",
+      "kept_source_url": "colorkinetics.com",
+      "dropped_source_url": "colorkinetics.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:bartcolighting.com",
+      "kept_company_name": "Bartco Lighting Inc",
+      "dropped_company_name": "Bartco Lighting Inc",
+      "kept_source_url": "bartcolighting.com",
+      "dropped_source_url": "bartcolighting.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:acealuminumlamps.com",
+      "kept_company_name": "Ace International",
+      "dropped_company_name": "Ace International",
+      "kept_source_url": "acealuminumlamps.com",
+      "dropped_source_url": "acealuminumlamps.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:csmlink.com",
+      "kept_company_name": "Western States Engrng Constr",
+      "dropped_company_name": "Western States Engrng  Constr",
+      "kept_source_url": "https://csmlink.com",
+      "dropped_source_url": "csmlink.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:mbe.com",
+      "kept_company_name": "Ac Plumbing",
+      "dropped_company_name": "Christina E",
+      "kept_source_url": "mbe.com",
+      "dropped_source_url": "mbe.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:dbkenyon.com",
+      "kept_company_name": "Dana B Kenyon Real Estate Svc",
+      "dropped_company_name": "Dana B Kenyon Real Estate Svc",
+      "kept_source_url": "dbkenyon.com",
+      "dropped_source_url": "dbkenyon.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "company:porter-s-construction",
+      "kept_company_name": "Porter's Construction",
+      "dropped_company_name": "Porter's Construction",
+      "kept_source_url": "comcast.net",
+      "dropped_source_url": "gmail.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:cgsupply.com",
+      "kept_company_name": "Cohn & Gregory Inc",
+      "dropped_company_name": "Cohn & Gregory Inc",
+      "kept_source_url": "https://www.cgsupply.com",
+      "dropped_source_url": "cgsupply.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:exeloncorp.com",
+      "kept_company_name": "Exelon",
+      "dropped_company_name": "Exelon Corp",
+      "kept_source_url": "exeloncorp.com",
+      "dropped_source_url": "exeloncorp.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:exeloncorp.com",
+      "kept_company_name": "Exelon",
+      "dropped_company_name": "Exelon",
+      "kept_source_url": "exeloncorp.com",
+      "dropped_source_url": "exeloncorp.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:nationalgridus.com",
+      "kept_company_name": "National Grid",
+      "dropped_company_name": "National Grid",
+      "kept_source_url": "nationalgridus.com",
+      "dropped_source_url": "nationalgridus.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:rexelusa.com",
+      "kept_company_name": "Rexel",
+      "dropped_company_name": "Rexel",
+      "kept_source_url": "rexelusa.com",
+      "dropped_source_url": "rexelusa.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:aggreko.com",
+      "kept_company_name": "Aggreko Rental",
+      "dropped_company_name": "Aggreko Rental",
+      "kept_source_url": "aggreko.com",
+      "dropped_source_url": "aggreko.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:fpl.com",
+      "kept_company_name": "Florida Power  Light Co",
+      "dropped_company_name": "Florida Power  Light Co",
+      "kept_source_url": "fpl.com",
+      "dropped_source_url": "fpl.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:exeloncorp.com",
+      "kept_company_name": "Exelon",
+      "dropped_company_name": "Exelon",
+      "kept_source_url": "exeloncorp.com",
+      "dropped_source_url": "exeloncorp.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:aggreko.com",
+      "kept_company_name": "Aggreko Rental",
+      "dropped_company_name": "Aggreko Rental",
+      "kept_source_url": "aggreko.com",
+      "dropped_source_url": "aggreko.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:nationalgridus.com",
+      "kept_company_name": "National Grid",
+      "dropped_company_name": "National Grid",
+      "kept_source_url": "nationalgridus.com",
+      "dropped_source_url": "nationalgridus.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:duke-energy.com",
+      "kept_company_name": "Duke Energy",
+      "dropped_company_name": "Duke Energy",
+      "kept_source_url": "duke-energy.com",
+      "dropped_source_url": "duke-energy.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:squared.com",
+      "kept_company_name": "Schneider Electric",
+      "dropped_company_name": "Square D Co",
+      "kept_source_url": "squared.com",
+      "dropped_source_url": "squared.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "company:lighting-distributor",
+      "kept_company_name": "Lighting Distributor",
+      "dropped_company_name": "Lighting Distributor",
+      "kept_source_url": "https://www.google.com/search?q=%22lighting+distributor%22+directory+RI",
+      "dropped_source_url": "https://www.linkedin.com/search/results/companies/?keywords=site%3Alinkedin.com%2Fcompany+%22lighting+distributor%22+RI",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "company:general-contractor",
+      "kept_company_name": "General Contractor",
+      "dropped_company_name": "General Contractor",
+      "kept_source_url": "https://www.google.com/search?q=%22general+contractor%22+directory+RI",
+      "dropped_source_url": "https://www.linkedin.com/search/results/companies/?keywords=site%3Alinkedin.com%2Fcompany+%22general+contractor%22+RI",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:nastevens.com",
+      "kept_company_name": "Nicholas A Stevens Co",
+      "dropped_company_name": "nastevens.com",
+      "kept_source_url": "nastevens.com",
+      "dropped_source_url": "https://www.nastevens.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:rainbowlightinginc.com",
+      "kept_company_name": "Quality Discount Lighting",
+      "dropped_company_name": "Builders Lighting",
+      "kept_source_url": "https://www.rainbowlightinginc.com",
+      "dropped_source_url": "https://www.rainbowlightinginc.com",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:interiordesign.net",
+      "kept_company_name": "Interior Design Magazine",
+      "dropped_company_name": "Projects",
+      "kept_source_url": "https://interiordesign.net/",
+      "dropped_source_url": "https://interiordesign.net/projects/",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:interiordesign.net",
+      "kept_company_name": "Interior Design Magazine",
+      "dropped_company_name": "A Look At Interior Design's 2026 Top 100 Giants",
+      "kept_source_url": "https://interiordesign.net/",
+      "dropped_source_url": "https://interiordesign.net/research/a-look-at-interior-designs-2026-top-100-giants/",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:interiordesign.net",
+      "kept_company_name": "Interior Design Magazine",
+      "dropped_company_name": "HOMES",
+      "kept_source_url": "https://interiordesign.net/",
+      "dropped_source_url": "https://interiordesign.net/homes/",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:lampsplus.com",
+      "kept_company_name": "Site Maintenance",
+      "dropped_company_name": "Site Maintenance",
+      "kept_source_url": "https://www.lampsplus.com/",
+      "dropped_source_url": "https://www.lampsplus.com/",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:westelm.com",
+      "kept_company_name": "Shop Lighting & Light Fixtures",
+      "dropped_company_name": "Shop Lighting & Light Fixtures",
+      "kept_source_url": "https://www.westelm.com/shop/lighting/",
+      "dropped_source_url": "https://www.westelm.com/shop/lighting/",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:lampsplus.com",
+      "kept_company_name": "Site Maintenance",
+      "dropped_company_name": "Site Maintenance",
+      "kept_source_url": "https://www.lampsplus.com/",
+      "dropped_source_url": "https://www.lampsplus.com/",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:westelm.com",
+      "kept_company_name": "Shop Lighting & Light Fixtures",
+      "dropped_company_name": "Shop Lighting & Light Fixtures",
+      "kept_source_url": "https://www.westelm.com/shop/lighting/",
+      "dropped_source_url": "https://www.westelm.com/shop/lighting/",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:lampsplus.com",
+      "kept_company_name": "Site Maintenance",
+      "dropped_company_name": "Site Maintenance",
+      "kept_source_url": "https://www.lampsplus.com/",
+      "dropped_source_url": "https://www.lampsplus.com/",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:westelm.com",
+      "kept_company_name": "Shop Lighting & Light Fixtures",
+      "dropped_company_name": "Shop Lighting & Light Fixtures",
+      "kept_source_url": "https://www.westelm.com/shop/lighting/",
+      "dropped_source_url": "https://www.westelm.com/shop/lighting/",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:google.com",
+      "kept_company_name": "Google Maps",
+      "dropped_company_name": "Google Maps",
+      "kept_source_url": "https://www.google.com/maps/search/site%3Agoogle.com%2Fmaps+%22lighting+showroom%22+RI",
+      "dropped_source_url": "https://www.google.com/maps/search/site%3Agoogle.com%2Fmaps+%22lighting+store%22+RI",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:google.com",
+      "kept_company_name": "Google Maps",
+      "dropped_company_name": "Google Maps",
+      "kept_source_url": "https://www.google.com/maps/search/site%3Agoogle.com%2Fmaps+%22lighting+showroom%22+RI",
+      "dropped_source_url": "https://www.google.com/maps/search/site%3Agoogle.com%2Fmaps+%22lighting+showroom%22+MA",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:google.com",
+      "kept_company_name": "Google Maps",
+      "dropped_company_name": "Google Maps",
+      "kept_source_url": "https://www.google.com/maps/search/site%3Agoogle.com%2Fmaps+%22lighting+showroom%22+RI",
+      "dropped_source_url": "https://www.google.com/maps/search/site%3Agoogle.com%2Fmaps+%22lighting+store%22+MA",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:lampsplus.com",
+      "kept_company_name": "Site Maintenance",
+      "dropped_company_name": "Site Maintenance",
+      "kept_source_url": "https://www.lampsplus.com/",
+      "dropped_source_url": "https://www.lampsplus.com/",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:westelm.com",
+      "kept_company_name": "Shop Lighting & Light Fixtures",
+      "dropped_company_name": "Shop Lighting & Light Fixtures",
+      "kept_source_url": "https://www.westelm.com/shop/lighting/",
+      "dropped_source_url": "https://www.westelm.com/shop/lighting/",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:lampsplus.com",
+      "kept_company_name": "Site Maintenance",
+      "dropped_company_name": "Site Maintenance",
+      "kept_source_url": "https://www.lampsplus.com/",
+      "dropped_source_url": "https://www.lampsplus.com/",
+      "conflict_type": "duplicate_domain_or_company"
+    },
+    {
+      "dedupe_key": "domain:westelm.com",
+      "kept_company_name": "Shop Lighting & Light Fixtures",
+      "dropped_company_name": "Shop Lighting & Light Fixtures",
+      "kept_source_url": "https://www.westelm.com/shop/lighting/",
+      "dropped_source_url": "https://www.westelm.com/shop/lighting/",
+      "conflict_type": "duplicate_domain_or_company"
+    }
+  ]
+}

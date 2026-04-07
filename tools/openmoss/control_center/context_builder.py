@@ -155,6 +155,7 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
             "pending_approvals": summary.get("pending_approvals", live_approval.get("pending", mission.get("approval", {}).get("pending", []))),
         },
         "allowed_tools": merged_allowed_tools,
+        "coding_methodology": mission.get("coding_methodology", {}) or contract.get("metadata", {}).get("control_center", {}).get("coding_methodology", {}),
         "signature": signature,
         "cache_hit": False,
     }

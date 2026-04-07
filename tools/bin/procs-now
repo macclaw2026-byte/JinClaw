@@ -1,0 +1,15 @@
+#!/bin/zsh
+set -euo pipefail
+
+echo "=== OpenClaw status ==="
+openclaw status 2>/dev/null | sed -n '1,40p' || echo "openclaw status unavailable"
+
+echo
+printf '=== Process snapshot (%s) ===\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')"
+ps -Ao pid,ppid,stat,%cpu,%mem,start,time,command | sed -n '1,25p'
+
+echo
+printf '=== Focused processes ===\n'
+ps -Ao pid,ppid,stat,%cpu,%mem,start,time,command \
+  | egrep 'openclaw|gateway|python|node|brisk|agent|codex|claude|gemini|amazon_premium|openmoss' \
+  | egrep -v 'egrep|procs-now|procs-watch' || true

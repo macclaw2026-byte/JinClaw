@@ -1,0 +1,13 @@
+{
+  "source_count": 3,
+  "sources": [
+    "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/data/prospect-seeds.json",
+    "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/data/raw-imports/discovered-public-accounts.json",
+    "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/data/raw-imports/sample-public-leads.csv"
+  ],
+  "raw_record_count": 5,
+  "deduped_record_count": 5,
+  "duplicate_count": 0,
+  "quality_gate_status": "pass",
+  "review_queue_count": 0
+}

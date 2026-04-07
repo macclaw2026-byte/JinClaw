@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path('/Users/mac_claw/.openclaw/workspace')
+CONTROL_CENTER = ROOT / 'tools/openmoss/control_center'
+if str(CONTROL_CENTER) not in sys.path:
+    sys.path.insert(0, str(CONTROL_CENTER))
+
+from system_doctor import run_system_doctor  # type: ignore
+
+
+def main():
+    result = run_system_doctor()
+    integration = result.get('integration_health', {}) or {}
+    if integration.get('ok'):
+        print('jinclaw-gstack-integration-doctor COMPAT_SHIM_OK')
+        print('Delegated to canonical system doctor.')
+        print(json.dumps(integration, ensure_ascii=False, indent=2))
+        return 0
+    print('jinclaw-gstack-integration-doctor COMPAT_SHIM_FAILED')
+    print('Delegated to canonical system doctor.')
+    print(json.dumps(integration, ensure_ascii=False, indent=2))
+    return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

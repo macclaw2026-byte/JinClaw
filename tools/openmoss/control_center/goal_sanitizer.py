@@ -1,11 +1,25 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/goal_sanitizer.py`
+- 文件作用：负责控制中心中与 `goal_sanitizer` 相关的编排、分析或决策逻辑。
+- 顶层函数：sanitize_goal_text。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import re
 
 
 def sanitize_goal_text(text: str) -> str:
+    """
+    中文注解：
+    - 功能：实现 `sanitize_goal_text` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     cleaned = str(text or "")
     patterns = [
         r"Conversation info \(untrusted metadata\):\s*```json.*?```\s*",
@@ -14,5 +28,12 @@ def sanitize_goal_text(text: str) -> str:
     ]
     for pattern in patterns:
         cleaned = re.sub(pattern, "", cleaned, flags=re.DOTALL)
+    runtime_match = re.search(
+        r"\[Autonomy runtime execution request\][\s\S]*?user_goal:\s*(.+?)\n(?:done_definition:|stage_goal:|selected_plan:)",
+        cleaned,
+        flags=re.DOTALL,
+    )
+    if runtime_match:
+        cleaned = runtime_match.group(1).strip()
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     return cleaned or str(text or "").strip()

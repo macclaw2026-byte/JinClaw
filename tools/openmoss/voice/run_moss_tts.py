@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/voice/run_moss_tts.py`
+- 文件作用：负责`run_moss_tts` 相关的一方系统逻辑。
+- 顶层函数：_load_torch、resolve_attn_implementation、main。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import argparse
@@ -9,6 +17,12 @@ from pathlib import Path
 
 
 def _load_torch():
+    """
+    中文注解：
+    - 功能：实现 `_load_torch` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     import torch
 
     torch.backends.cuda.enable_cudnn_sdp(False)
@@ -19,6 +33,12 @@ def _load_torch():
 
 
 def resolve_attn_implementation(torch, device: str, dtype) -> str:
+    """
+    中文注解：
+    - 功能：实现 `resolve_attn_implementation` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if (
         device == "cuda"
         and importlib.util.find_spec("flash_attn") is not None
@@ -33,6 +53,12 @@ def resolve_attn_implementation(torch, device: str, dtype) -> str:
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     parser = argparse.ArgumentParser(description="Run a single MOSS-TTS synthesis job")
     parser.add_argument("--text", required=True)
     parser.add_argument("--output", required=True)

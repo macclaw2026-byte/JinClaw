@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>ai.jinclaw.cross-market-arbitrage</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>/bin/zsh</string>
+      <string>/Users/mac_claw/.openclaw/workspace/tools/openmoss/ops/start_cross_market_arbitrage.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/mac_claw/.openclaw/workspace/output/cross-market-arbitrage-engine/cross-market-arbitrage.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/mac_claw/.openclaw/workspace/output/cross-market-arbitrage-engine/cross-market-arbitrage.stderr.log</string>
+  </dict>
+</plist>

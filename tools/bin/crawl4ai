@@ -1,4 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 VENV="/Users/mac_claw/.openclaw/workspace/tools/crawl4ai-venv"
+export PYTHONWARNINGS="ignore::requests.exceptions.RequestsDependencyWarning"
 exec "$VENV/bin/python" -m crawl4ai.cli "$@"

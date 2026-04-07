@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/acp_dispatch_builder.py`
+- 文件作用：基于 coding session adapter 的输出，生成一份可供真实 ACP spawn 层直接消费的标准化 dispatch request。
+- 设计边界：这是 JinClaw-owned dispatch contract builder，不声称已经替换或接入 OpenClaw 内部 sessions_spawn 实现。
+"""
+from __future__ import annotations
+
+from typing import Dict, Any
+
+from coding_session_adapter import build_coding_session_payload
+
+
+def build_acp_dispatch_request(contract: Dict[str, Any], stage_context: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    coding_payload = build_coding_session_payload(contract, stage_context)
+    methodology = coding_payload.get('methodology', {}) or {}
+    metadata = contract.get('metadata', {}) or {}
+    control_center = metadata.get('control_center', {}) or {}
+    return {
+        'runtime': 'acp',
+        'mode': coding_payload.get('recommended_mode', 'session'),
+        'thread': True,
+        'session_kind': coding_payload.get('session_kind', 'coding'),
+        'prompt': coding_payload.get('final_prompt', ''),
+        'prompt_components': {
+            'methodology_prompt_included': bool(coding_payload.get('requires_prompt_injection')),
+            'base_prompt': coding_payload.get('base_prompt', ''),
+            'methodology': methodology,
+        },
+        'env': {
+            'OPENCLAW_SESSION': '1',
+            'JINCLAW_CODING_METHODOLOGY': str(methodology.get('methodology', 'jinclaw-native')),
+        },
+        'metadata': {
+            'task_goal': contract.get('user_goal', ''),
+            'done_definition': contract.get('done_definition', ''),
+            'control_center_selected_plan': (control_center.get('selected_plan', {}) or {}).get('plan_id', ''),
+            'coding_methodology_enabled': bool(methodology.get('enabled')),
+            'coding_lifecycle': methodology.get('lifecycle', []),
+        },
+    }

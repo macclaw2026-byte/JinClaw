@@ -1,0 +1,14 @@
+{
+  "status": "pass",
+  "allowed_for_strategy": true,
+  "average_duplicate_rate": 0.0,
+  "missing_domain_count": 0,
+  "missing_source_url_count": 0,
+  "review_sources": [],
+  "low_quality_sources": [],
+  "empty_sources": [
+    "discovered-public-accounts.json"
+  ],
+  "blockers": [],
+  "warnings": []
+}

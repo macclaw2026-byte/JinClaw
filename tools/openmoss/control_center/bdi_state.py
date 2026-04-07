@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/bdi_state.py`
+- 文件作用：负责控制中心中与 `bdi_state` 相关的编排、分析或决策逻辑。
+- 顶层函数：build_bdi_state、main。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import json
@@ -14,6 +22,12 @@ def build_bdi_state(
     htn_focus: Dict[str, object],
     arbitration: Dict[str, object] | None = None,
 ) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `build_bdi_state` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     pending_approvals = approval.get("pending", [])
     arbitration = arbitration or {}
     necessity_proof = arbitration.get("necessity_proof", {})
@@ -64,6 +78,12 @@ def build_bdi_state(
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     import argparse
 
     parser = argparse.ArgumentParser(description="Build a lightweight BDI state for the current mission cycle")

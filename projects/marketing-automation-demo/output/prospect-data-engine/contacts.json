@@ -1,0 +1,39 @@
+{
+  "items": [
+    {
+      "contact_id": "contact-example-design-studio",
+      "account_id": "account-exampledesignstudio-com",
+      "full_name": "",
+      "email": "",
+      "reachability_status": "unknown"
+    },
+    {
+      "contact_id": "contact-sample-build-co",
+      "account_id": "account-samplebuildco-com",
+      "full_name": "",
+      "email": "",
+      "reachability_status": "unknown"
+    },
+    {
+      "contact_id": "contact-regional-distributor-group",
+      "account_id": "account-regionaldistributor-example",
+      "full_name": "",
+      "email": "",
+      "reachability_status": "unknown"
+    },
+    {
+      "contact_id": "contact-example-dealer",
+      "account_id": "account-exampledealer-com",
+      "full_name": "Taylor Brooks",
+      "email": "trade@exampledealer.com",
+      "reachability_status": "email_ready"
+    },
+    {
+      "contact_id": "contact-demo-contractor",
+      "account_id": "account-demo-contractor-com",
+      "full_name": "Jamie Stone",
+      "email": "",
+      "reachability_status": "form_ready"
+    }
+  ]
+}

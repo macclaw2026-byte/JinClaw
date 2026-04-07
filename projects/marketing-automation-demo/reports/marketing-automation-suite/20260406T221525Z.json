@@ -1,0 +1,142 @@
+{
+  "cycle_id": "20260406T221525Z",
+  "project_id": "marketing-automation-demo",
+  "ran_at": "2026-04-06T22:15:26.115370+00:00",
+  "inputs": {
+    "project_root": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo",
+    "config_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/config/project-config.json"
+  },
+  "steps": {
+    "prospect_discovery": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"status\": \"ok\",\n  \"enabled_target_count\": 0,\n  \"discovered_count\": 0,\n  \"failure_count\": 0,\n  \"raw_import_path\": \"/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/data/raw-imports/discovered-public-accounts.json\"\n}",
+      "stderr": "",
+      "payload": {
+        "status": "ok",
+        "enabled_target_count": 0,
+        "discovered_count": 0,
+        "failure_count": 0,
+        "raw_import_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/data/raw-imports/discovered-public-accounts.json"
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/prospect-data-engine/scripts/discover_public_accounts.py"
+    },
+    "prospect_import": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"status\": \"ok\",\n  \"source_count\": 3,\n  \"raw_record_count\": 5,\n  \"deduped_record_count\": 5,\n  \"merged_seed_path\": \"/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/prospect-data-engine/merged-prospect-seeds.json\",\n  \"quality_gate_status\": \"review_required\",\n  \"allowed_for_strategy\": false,\n  \"source_registry_path\": \"/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/prospect-data-engine/source-registry.json\",\n  \"duplicate_conflicts_path\": \"/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/prospect-data-engine/duplicate-conflicts.json\",\n  \"review_queue_path\": \"/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/prospect-data-engine/review-queue.json\",\n  \"review_queue_count\": 1\n}",
+      "stderr": "",
+      "payload": {
+        "status": "ok",
+        "source_count": 3,
+        "raw_record_count": 5,
+        "deduped_record_count": 5,
+        "merged_seed_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/prospect-data-engine/merged-prospect-seeds.json",
+        "quality_gate_status": "review_required",
+        "allowed_for_strategy": false,
+        "source_registry_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/prospect-data-engine/source-registry.json",
+        "duplicate_conflicts_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/prospect-data-engine/duplicate-conflicts.json",
+        "review_queue_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/prospect-data-engine/review-queue.json",
+        "review_queue_count": 1
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/prospect-data-engine/scripts/import_public_prospect_data.py"
+    },
+    "prospect_data_engine": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"project_root\": \"/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo\",\n  \"status\": \"seeded\",\n  \"prospect_count\": 5,\n  \"prospect_records_path\": \"/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/prospect-data-engine/prospect-records.json\"\n}",
+      "stderr": "",
+      "payload": {
+        "project_root": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo",
+        "status": "seeded",
+        "prospect_count": 5,
+        "prospect_records_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/prospect-data-engine/prospect-records.json"
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/prospect-data-engine/scripts/bootstrap_prospect_workspace.py"
+    },
+    "marketing_strategy_engine": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"output\": \"/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/strategy-brief.json\",\n  \"status\": \"written\"\n}",
+      "stderr": "",
+      "payload": {
+        "output": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/strategy-brief.json",
+        "status": "written"
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/marketing-strategy-engine/scripts/build_strategy_brief.py"
+    },
+    "strategy_task_compilation": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"output\": \"/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/strategy-tasks.json\",\n  \"count\": 5\n}",
+      "stderr": "",
+      "payload": {
+        "output": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/strategy-tasks.json",
+        "count": 5
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/marketing-strategy-engine/scripts/build_strategy_tasks.py"
+    },
+    "strategy_card_generation": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"output\": \"/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/strategy-cards.json\",\n  \"count\": 5\n}",
+      "stderr": "",
+      "payload": {
+        "output": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/strategy-cards.json",
+        "count": 5
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/marketing-strategy-engine/scripts/build_strategy_cards.py"
+    },
+    "feedback_processing": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"status\": \"ok\",\n  \"event_count\": 0,\n  \"suppression_count\": 0,\n  \"human_review_count\": 0,\n  \"classified_feedback_path\": \"/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/feedback/classified-feedback.json\",\n  \"suppression_registry_path\": \"/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/feedback/suppression-registry.json\",\n  \"feedback_patches_path\": \"/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/feedback/feedback-patches.json\",\n  \"daily_report_path\": \"/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/feedback/daily-report.json\",\n  \"weekly_report_path\": \"/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/feedback/weekly-report.json\",\n  \"anomaly_report_path\": \"/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/feedback/anomaly-report.json\",\n  \"approval_queue_path\": \"/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/feedback/approval-queue.json\"\n}",
+      "stderr": "",
+      "payload": {
+        "status": "ok",
+        "event_count": 0,
+        "suppression_count": 0,
+        "human_review_count": 0,
+        "classified_feedback_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/feedback/classified-feedback.json",
+        "suppression_registry_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/feedback/suppression-registry.json",
+        "feedback_patches_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/feedback/feedback-patches.json",
+        "daily_report_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/feedback/daily-report.json",
+        "weekly_report_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/feedback/weekly-report.json",
+        "anomaly_report_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/feedback/anomaly-report.json",
+        "approval_queue_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/feedback/approval-queue.json"
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/outreach-feedback-engine/scripts/process_feedback_events.py"
+    },
+    "outreach_feedback_engine": {
+      "ok": true,
+      "returncode": 0,
+      "stdout": "{\n  \"output\": \"/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/execution-queue.json\",\n  \"count\": 5,\n  \"suppressed\": 0\n}",
+      "stderr": "",
+      "payload": {
+        "output": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/execution-queue.json",
+        "count": 5,
+        "suppressed": 0
+      },
+      "script": "/Users/mac_claw/.openclaw/workspace/skills/outreach-feedback-engine/scripts/build_execution_queue.py"
+    }
+  },
+  "artifacts": {
+    "merged_seed_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/prospect-data-engine/merged-prospect-seeds.json",
+    "review_queue_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/prospect-data-engine/review-queue.json",
+    "prospect_records_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/prospect-data-engine/prospect-records.json",
+    "strategy_brief_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/strategy-brief.json",
+    "strategy_tasks_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/strategy-tasks.json",
+    "strategy_cards_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/strategy-cards.json",
+    "feedback_output_dir": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/feedback",
+    "suppression_registry_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/feedback/suppression-registry.json",
+    "feedback_patches_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/feedback/feedback-patches.json",
+    "approval_queue_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/feedback/approval-queue.json",
+    "execution_queue_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/output/marketing-automation-suite/20260406T221525Z/execution-queue.json"
+  },
+  "quality_gate": {
+    "status": "review_required",
+    "allowed_for_strategy": false,
+    "review_queue_count": 1
+  },
+  "status": "ok"
+}

@@ -1,0 +1,50 @@
+{
+  "site": "temu",
+  "last_evaluated": "2026-04-05",
+  "mode": "anonymous_public_crawl",
+  "confidence": "low",
+  "tested_tools": [
+    "curl-cffi",
+    "playwright",
+    "scrapy-cffi"
+  ],
+  "preferred_tool_order": [
+    "curl-cffi",
+    "playwright",
+    "scrapy-cffi"
+  ],
+  "blocked_tools": [
+    "curl-cffi",
+    "playwright",
+    "scrapy-cffi"
+  ],
+  "usable_tools": [],
+  "first_choice_extraction_mode": "blocked_or_insufficient_evidence",
+  "selected_tool": "",
+  "task_output_fields": {},
+  "fallback_policy": "Start with the first preferred tool; if blocked/weak, step through the remaining preferred tools in order. Trigger full all-tools re-evaluation when the top path degrades materially.",
+  "known_failure_modes": [
+    {
+      "tool": "curl-cffi",
+      "status": "blocked",
+      "reasons": [
+        "login"
+      ]
+    },
+    {
+      "tool": "playwright",
+      "status": "blocked",
+      "reasons": [
+        "login"
+      ]
+    },
+    {
+      "tool": "scrapy-cffi",
+      "status": "blocked",
+      "reasons": []
+    }
+  ],
+  "authenticated_mode": {
+    "supported": false
+  }
+}

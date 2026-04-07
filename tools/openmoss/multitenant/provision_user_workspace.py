@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/multitenant/provision_user_workspace.py`
+- 文件作用：负责`provision_user_workspace` 相关的一方系统逻辑。
+- 顶层函数：_replace_tokens、_copy_template、_runtime_openclaw_json、provision、main。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import argparse
@@ -14,10 +22,22 @@ RUNTIME_ROOT = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/
 
 
 def _replace_tokens(text: str, user_id: str, user_name: str) -> str:
+    """
+    中文注解：
+    - 功能：实现 `_replace_tokens` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return text.replace("{{USER_ID}}", user_id).replace("{{USER_NAME}}", user_name)
 
 
 def _copy_template(dst: Path, user_id: str, user_name: str) -> None:
+    """
+    中文注解：
+    - 功能：实现 `_copy_template` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     dst.mkdir(parents=True, exist_ok=True)
     for src in TEMPLATE_ROOT.rglob("*"):
         rel = src.relative_to(TEMPLATE_ROOT)
@@ -31,6 +51,12 @@ def _copy_template(dst: Path, user_id: str, user_name: str) -> None:
 
 
 def _runtime_openclaw_json(dst: Path, user_id: str, user_name: str) -> Path:
+    """
+    中文注解：
+    - 功能：实现 `_runtime_openclaw_json` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     shared = json.loads((TEMPLATE_ROOT / "openclaw.json").read_text(encoding="utf-8"))
     shared.setdefault("openmoss", {})
     shared["openmoss"]["user"] = {
@@ -46,6 +72,12 @@ def _runtime_openclaw_json(dst: Path, user_id: str, user_name: str) -> Path:
 
 
 def provision(user_id: str, user_name: str, force: bool) -> dict:
+    """
+    中文注解：
+    - 功能：实现 `provision` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     dst = RUNTIME_ROOT / user_id
     if dst.exists() and force:
         shutil.rmtree(dst)
@@ -62,6 +94,12 @@ def provision(user_id: str, user_name: str, force: bool) -> dict:
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     parser = argparse.ArgumentParser(description="Provision an isolated OpenMOSS/OpenClaw user workspace")
     parser.add_argument("--user-id", required=True)
     parser.add_argument("--user-name", required=True)

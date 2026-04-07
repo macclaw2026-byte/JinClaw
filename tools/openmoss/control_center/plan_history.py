@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/plan_history.py`
+- 文件作用：负责控制中心中与 `plan_history` 相关的编排、分析或决策逻辑。
+- 顶层函数：_utc_now_iso、_bucket_key、_history_default、_iter_bucket_dimensions、load_plan_history、record_plan_outcome、load_history_profile、success_rate、main。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import json
@@ -10,16 +18,34 @@ from cache_store import cache_get, cache_put
 
 
 def _utc_now_iso() -> str:
+    """
+    中文注解：
+    - 功能：实现 `_utc_now_iso` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return datetime.now(timezone.utc).isoformat()
 
 
 def _bucket_key(plan_id: str, task_types: List[str] | None = None, risk_level: str = "") -> str:
+    """
+    中文注解：
+    - 功能：实现 `_bucket_key` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     types = ",".join(sorted([str(item).strip() for item in (task_types or []) if str(item).strip()])) or "general"
     risk = risk_level or "unknown"
     return f"plan::{plan_id or 'unknown'}::types={types}::risk={risk}"
 
 
 def _history_default(plan_id: str, task_types: List[str] | None = None, risk_level: str = "") -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `_history_default` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return {
         "plan_id": plan_id,
         "task_types": task_types or [],
@@ -33,6 +59,12 @@ def _history_default(plan_id: str, task_types: List[str] | None = None, risk_lev
 
 
 def _iter_bucket_dimensions(task_types: List[str] | None = None, risk_level: str = "") -> Iterable[Tuple[List[str], str, str]]:
+    """
+    中文注解：
+    - 功能：实现 `_iter_bucket_dimensions` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     normalized_types = [str(item).strip() for item in (task_types or []) if str(item).strip()]
     normalized_risk = risk_level or ""
     yield (normalized_types, normalized_risk, "exact")
@@ -44,6 +76,12 @@ def _iter_bucket_dimensions(task_types: List[str] | None = None, risk_level: str
 
 
 def load_plan_history(plan_id: str, task_types: List[str] | None = None, risk_level: str = "") -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `load_plan_history` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return cache_get(
         "plan_history",
         _bucket_key(plan_id, task_types=task_types, risk_level=risk_level),
@@ -52,6 +90,12 @@ def load_plan_history(plan_id: str, task_types: List[str] | None = None, risk_le
 
 
 def record_plan_outcome(plan_id: str, outcome: str, *, task_types: List[str] | None = None, risk_level: str = "") -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `record_plan_outcome` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     updated: Dict[str, object] = {}
     seen = set()
     for scoped_types, scoped_risk, bucket_name in _iter_bucket_dimensions(task_types=task_types, risk_level=risk_level):
@@ -76,6 +120,12 @@ def record_plan_outcome(plan_id: str, outcome: str, *, task_types: List[str] | N
 
 
 def load_history_profile(plan_id: str, task_types: List[str] | None = None, risk_level: str = "") -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `load_history_profile` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     exact = load_plan_history(plan_id, task_types=task_types, risk_level=risk_level)
     task_type = load_plan_history(plan_id, task_types=task_types, risk_level="")
     risk = load_plan_history(plan_id, task_types=[], risk_level=risk_level)
@@ -121,6 +171,12 @@ def load_history_profile(plan_id: str, task_types: List[str] | None = None, risk
 
 
 def success_rate(plan_id: str, task_types: List[str] | None = None, risk_level: str = "") -> float:
+    """
+    中文注解：
+    - 功能：实现 `success_rate` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     history = load_plan_history(plan_id, task_types=task_types, risk_level=risk_level)
     successes = int(history.get("successes", 0))
     failures = int(history.get("failures", 0))
@@ -131,6 +187,12 @@ def success_rate(plan_id: str, task_types: List[str] | None = None, risk_level: 
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     import argparse
 
     parser = argparse.ArgumentParser(description="Read or update plan execution history")

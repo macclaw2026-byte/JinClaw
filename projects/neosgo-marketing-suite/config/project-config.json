@@ -1,0 +1,113 @@
+{
+  "project": {
+    "id": "neosgo-marketing-suite",
+    "name": "NEOSGO Marketing Suite",
+    "business_goal": "grow qualified trade pipeline and website conversions for neosgo.com",
+    "product_type": "b2b_lighting_ecommerce",
+    "conversion_target": "trade_program_application",
+    "priority_regions": [
+      "RI",
+      "MA",
+      "CT",
+      "NH",
+      "ME",
+      "VT",
+      "NY",
+      "CA",
+      "TX",
+      "FL"
+    ],
+    "risk_profile": "high"
+  },
+  "icp": {
+    "account_types": [
+      "showroom",
+      "dealer",
+      "distributor",
+      "contractor",
+      "builder",
+      "electrician",
+      "designer",
+      "lighting"
+    ],
+    "personas": [
+      "buyer",
+      "founder",
+      "operations_manager"
+    ],
+    "exclusions": [
+      "student",
+      "personal_blog"
+    ]
+  },
+  "channels": {
+    "priority": [
+      "form",
+      "linkedin",
+      "email"
+    ],
+    "disallowed": [
+      "sms",
+      "email"
+    ],
+    "approval_required_for": [
+      "pricing_discussion",
+      "partner_offer",
+      "high_value_accounts",
+      "channel_partnerships",
+      "trade_program_offer"
+    ]
+  },
+  "prospect_data_engine": {
+    "source_families": [
+      "official_websites",
+      "google_business_profile",
+      "linkedin_company_pages",
+      "trade_directories",
+      "association_lists",
+      "exhibitor_lists"
+    ],
+    "score_weights": {
+      "fit": 40,
+      "intent": 30,
+      "reachability": 20,
+      "data_quality": 10
+    },
+    "min_score_for_strategy": 72
+  },
+  "marketing_strategy_engine": {
+    "segmentation_axes": [
+      "account_tier",
+      "persona_type",
+      "buying_context",
+      "channel_readiness"
+    ],
+    "default_path_type": "direct_response",
+    "require_human_review_for": [
+      "tier_a_accounts",
+      "legal_or_pricing_sensitive_motions",
+      "trade_program_offer",
+      "channel_partner_motion"
+    ]
+  },
+  "outreach_feedback_engine": {
+    "automation_mode": "controlled",
+    "cooldown_rules": {
+      "email_days": 7,
+      "form_days": 14,
+      "social_days": 4
+    },
+    "stop_conditions": [
+      "unsubscribe",
+      "do_not_contact",
+      "hard_bounce",
+      "complaint_risk",
+      "invalid_contact"
+    ],
+    "reporting": {
+      "daily": true,
+      "weekly": true,
+      "anomaly": true
+    }
+  }
+}

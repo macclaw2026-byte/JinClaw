@@ -1,0 +1,69 @@
+{
+  "target_count": 3,
+  "enabled_target_count": 42,
+  "discovered_count": 27,
+  "failure_count": 15,
+  "failures": [
+    {
+      "target_url": "https://etisales.com",
+      "error": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: Hostname mismatch, certificate is not valid for 'etisales.com'. (_ssl.c:1129)>"
+    },
+    {
+      "target_url": "https://www.cityelectricsupply.com/c/conduit-ducts-strut",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "target_url": "https://www.cityelectricsupply.com/",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "target_url": "https://www.wayfair.com/lighting/cat/lighting-c215735.html",
+      "error": "HTTP Error 429: Too Many Requests (CDN PX)"
+    },
+    {
+      "target_url": "https://www.homedepot.com/b/Lighting/N-5yc1vZbvn5",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "target_url": "https://www.wayfair.com/lighting/cat/lighting-c215735.html",
+      "error": "HTTP Error 429: Too Many Requests (CDN PX)"
+    },
+    {
+      "target_url": "https://www.homedepot.com/b/Lighting/N-5yc1vZbvn5",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "target_url": "https://www.wayfair.com/lighting/cat/lighting-c215735.html",
+      "error": "HTTP Error 429: Too Many Requests (CDN PX)"
+    },
+    {
+      "target_url": "https://www.homedepot.com/b/Lighting/N-5yc1vZbvn5",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "target_url": "https://www.wayfair.com/lighting/cat/lighting-c215735.html",
+      "error": "HTTP Error 429: Too Many Requests (CDN PX)"
+    },
+    {
+      "target_url": "https://www.homedepot.com/b/Lighting/N-5yc1vZbvn5",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "target_url": "https://www.wayfair.com/lighting/cat/lighting-c215735.html",
+      "error": "HTTP Error 429: Too Many Requests (CDN PX)"
+    },
+    {
+      "target_url": "https://www.homedepot.com/b/Lighting/N-5yc1vZbvn5",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "target_url": "https://www.wayfair.com/lighting/cat/lighting-c215735.html",
+      "error": "HTTP Error 429: Too Many Requests (CDN PX)"
+    },
+    {
+      "target_url": "https://www.homedepot.com/b/Lighting/N-5yc1vZbvn5",
+      "error": "HTTP Error 403: Forbidden"
+    }
+  ],
+  "raw_import_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/raw-imports/discovered-public-accounts.json"
+}

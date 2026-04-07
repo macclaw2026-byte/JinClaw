@@ -1,0 +1,8 @@
+{
+  "query_count": 1,
+  "enabled_query_count": 0,
+  "generated_target_count": 0,
+  "failure_count": 0,
+  "failures": [],
+  "generated_targets_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/data/discovery-targets.generated.json"
+}

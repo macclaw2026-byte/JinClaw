@@ -1,0 +1,14 @@
+#!/bin/zsh
+set -euo pipefail
+interval="${1:-3}"
+while true; do
+  clear
+  printf '=== Process watch (%s, every %ss) ===\n\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$interval"
+  ps -Ao pid,ppid,stat,%cpu,%mem,start,time,command \
+    | egrep 'PID|openclaw|gateway|python|node|brisk|agent|codex|claude|gemini|amazon_premium|openmoss' \
+    | egrep -v 'egrep|procs-now|procs-watch' \
+    | sed -n '1,80p' || true
+  echo
+  echo 'Ctrl-C to exit'
+  sleep "$interval"
+done

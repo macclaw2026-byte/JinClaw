@@ -1,0 +1,163 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+from datetime import datetime
+from pathlib import Path
+from urllib.parse import quote_plus
+
+from crawler.logic.crawler_contract import save_contract, summarize_site_from_matrix
+
+ROOT = Path('/Users/mac_claw/.openclaw/workspace')
+SITE_PROFILES = ROOT / 'crawler' / 'logic' / 'site_profiles.json'
+SITE_PROFILE_DIR = ROOT / 'crawler' / 'site-profiles'
+REPORT_DIR = ROOT / 'crawler' / 'reports'
+STATE_DIR = ROOT / 'crawler' / 'state'
+STATE_DIR.mkdir(parents=True, exist_ok=True)
+FIRST_RUN_STATE = STATE_DIR / 'first_run_state.json'
+REPORT_DIR.mkdir(parents=True, exist_ok=True)
+MATRIX_SCRIPT = ROOT / 'tools' / 'site_tool_matrix_v2.py'
+MATRIX_JSON = ROOT / 'reports' / 'site-tool-matrix' / 'tool-matrix-v2.json'
+
+SITE_URLS = {
+    'amazon': lambda q: f'https://www.amazon.com/s?k={quote_plus(q)}',
+    'walmart': lambda q: f'https://www.walmart.com/search?q={quote_plus(q)}',
+    'temu': lambda q: f'https://www.temu.com/search_result.html?search_key={quote_plus(q)}',
+    '1688': lambda q: f'https://s.1688.com/selloffer/offer_search.htm?keywords={quote_plus(q)}',
+}
+
+
+def load_profiles() -> dict:
+    if not SITE_PROFILES.exists():
+        return {}
+    return json.loads(SITE_PROFILES.read_text())
+
+
+def save_profiles(profiles: dict) -> None:
+    SITE_PROFILES.write_text(json.dumps(profiles, ensure_ascii=False, indent=2) + '\n')
+
+
+def load_matrix() -> dict:
+    return json.loads(MATRIX_JSON.read_text())
+
+
+def load_first_run_state() -> dict:
+    if not FIRST_RUN_STATE.exists():
+        return {}
+    return json.loads(FIRST_RUN_STATE.read_text())
+
+
+def save_first_run_state(state: dict) -> None:
+    FIRST_RUN_STATE.write_text(json.dumps(state, ensure_ascii=False, indent=2) + '\n')
+
+
+def site_has_completed_first_run(site: str) -> bool:
+    state = load_first_run_state()
+    return bool(state.get(site, {}).get('completed'))
+
+
+def mark_site_first_run_completed(site: str, query: str) -> None:
+    state = load_first_run_state()
+    state[site] = {
+        'completed': True,
+        'completedAt': datetime.now().astimezone().isoformat(),
+        'query': query,
+        'matrix': str(MATRIX_JSON),
+    }
+    save_first_run_state(state)
+
+
+def run_full_matrix() -> None:
+    subprocess.run(['python3', str(MATRIX_SCRIPT)], cwd=str(ROOT), check=True)
+
+
+def choose_best(tool_results: list[dict], site: str | None = None) -> dict | None:
+    forced_blocked = {
+        '1688': {'local-agent-browser-cli'},
+    }
+    blocked_for_site = forced_blocked.get(site or '', set())
+    survivors = [
+        r for r in tool_results
+        if r['status'] in ('usable', 'partial')
+        and r['block_signal_count'] == 0
+        and r['tool'] not in blocked_for_site
+    ]
+    if survivors:
+        survivors.sort(key=lambda r: (-r['score'], -r.get('field_completeness', 0), -r['product_signal_count'], -r['stdout_chars']))
+        return survivors[0]
+    return None
+
+
+def refresh_site_profile_from_matrix(site: str) -> dict:
+    matrix = load_matrix()
+    summary = summarize_site_from_matrix(site, matrix)
+    profiles = load_profiles()
+    profiles[site] = summary['json_profile']
+    save_profiles(profiles)
+    (SITE_PROFILE_DIR / f'{site}.md').write_text(summary['markdown'])
+    return summary['json_profile']
+
+
+def run_site(site: str, query: str, first_run: bool = False, refresh_profile: bool = False) -> dict:
+    profiles = load_profiles()
+    profile = profiles.get(site)
+    first_run_missing = not site_has_completed_first_run(site)
+    should_full_eval = first_run or refresh_profile or not profile or first_run_missing
+    if should_full_eval:
+        run_full_matrix()
+        profile = refresh_site_profile_from_matrix(site)
+        mark_site_first_run_completed(site, query)
+    matrix = load_matrix()
+    site_row = next((s for s in matrix['sites'] if s['site'] == site), None)
+    if not site_row:
+        raise SystemExit(f'No matrix data for site: {site}')
+
+    preferred = profile['preferredTools'] if profile else [r['tool'] for r in site_row['tool_results']]
+    ordered = sorted(site_row['tool_results'], key=lambda r: preferred.index(r['tool']) if r['tool'] in preferred else 999)
+    best = choose_best(ordered, site=site)
+
+    result = {
+        'site': site,
+        'query': query,
+        'url': SITE_URLS[site](query),
+        'usedProfile': bool(profile),
+        'firstRunMode': should_full_eval,
+        'preferredOrder': preferred,
+        'bestTool': best['tool'] if best else None,
+        'bestStatus': best['status'] if best else 'blocked',
+        'bestScore': best['score'] if best else 0,
+        'taskReadySummary': {
+            'recommendedAction': 'use-best-tool' if best else 'insufficient-evidence-or-blocked',
+            'confidence': 'high' if best and best['score'] >= 80 else 'medium' if best else 'low',
+            'notes': profile['notes'] if profile else [],
+        },
+        'toolResults': ordered,
+        'generatedAt': datetime.now().astimezone().isoformat(),
+    }
+
+    out = REPORT_DIR / f'{site}-latest-run.json'
+    out.write_text(json.dumps(result, ensure_ascii=False, indent=2))
+    save_contract(site)
+    return result
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument('site', choices=SITE_URLS.keys())
+    ap.add_argument('--query', default='wireless mouse')
+    ap.add_argument('--first-run', action='store_true')
+    ap.add_argument('--refresh-profile', action='store_true')
+    args = ap.parse_args()
+    result = run_site(args.site, args.query, first_run=args.first_run, refresh_profile=args.refresh_profile)
+    print(json.dumps({
+        'site': result['site'],
+        'bestTool': result['bestTool'],
+        'bestStatus': result['bestStatus'],
+        'report': str(REPORT_DIR / f'{args.site}-latest-run.json')
+    }, ensure_ascii=False))
+
+
+if __name__ == '__main__':
+    main()

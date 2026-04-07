@@ -22,6 +22,7 @@ from canonical_active_task import resolve_canonical_active_task
 from crawler_capability_profile import build_crawler_capability_profile
 from crawler_remediation_planner import build_crawler_remediation_plan
 from execution_governor import classify_blocked_runtime_state
+from governance_runtime import _build_doctor_coverage_bundle
 from memory_writeback_runtime import summarize_project_memory_writebacks
 from project_scheduler_policy import build_project_scheduler_policy
 from paths import (
@@ -748,6 +749,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
     }
     repair_value = _project_repair_value_summary(repair_value_inputs, project_result_feedback_history)
     project_repair_value_history = _update_project_repair_value_history(repair_value)
+    doctor_coverage = _build_doctor_coverage_bundle()
     snapshot = {
         "generated_at": _utc_now_iso(),
         "process_registry_path": process_registry.get("path"),
@@ -759,6 +761,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
         "waiting_registry_path": str(WAITING_REGISTRY_PATH),
         "doctor_queue_path": str(DOCTOR_QUEUE_PATH),
         "alerts_path": str(ALERTS_PATH),
+        "doctor_coverage": doctor_coverage,
         "summary": {
             "processes_running": sum(1 for item in process_registry.get("items", []) if item.get("state") == "running"),
             "processes_total": len(process_registry.get("items", [])),
@@ -786,6 +789,8 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
             "doctor_repair_mode": str(doctor_strategy.get("repair_mode", "")).strip() or "unknown",
             "doctor_processed_total": processed_total,
             "doctor_skipped_total": skipped_total,
+            "doctor_single_authority": bool(doctor_coverage.get("single_doctor_rule")),
+            "doctor_registered_integrations_total": len(doctor_coverage.get("registered_integrations", []) or []),
             "recovery_efficiency_ratio": recovery_efficiency_ratio,
             "project_repair_value_status": repair_value.get("status", "unknown"),
             "project_repair_value_trend": ((project_repair_value_history.get("trend", {}) or {}).get("direction", "unknown")),

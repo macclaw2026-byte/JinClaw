@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict
 
@@ -87,6 +88,166 @@ def _load_live_approval(task_id: str, mission: Dict[str, object]) -> Dict[str, o
     return live or mission.get("approval", {})
 
 
+def _doctor_heartbeat_guard(mission: Dict[str, object]) -> Dict[str, object]:
+    runtime_state = mission.get("runtime_state", {}) or {}
+    heartbeat = (runtime_state.get("doctor_heartbeat", {}) or {})
+    goal_alignment_status = str(heartbeat.get("goal_alignment_status", "")).strip()
+    stage_consistency_status = str(heartbeat.get("stage_consistency_status", "")).strip()
+    completion_gate_status = str(heartbeat.get("completion_gate_status", "")).strip()
+    drift_detected = bool(heartbeat.get("drift_detected"))
+    drift_score = float(heartbeat.get("drift_score", 0.0) or 0.0)
+    allowed = True
+    blockers = []
+    if not heartbeat:
+        return {
+            "heartbeat_present": False,
+            "allow_dynamic_reselection": True,
+            "reason": "no_heartbeat_available_yet",
+        }
+    if drift_detected or drift_score >= 0.95:
+        allowed = False
+        blockers.append("doctor heartbeat reports active or near-active drift")
+    if stage_consistency_status in {"inconsistent", "unknown_stage"}:
+        allowed = False
+        blockers.append("doctor heartbeat reports stage inconsistency")
+    if completion_gate_status in {"blocked_by_missing_postmortem", "blocked_by_required_milestones"}:
+        allowed = False
+        blockers.append("completion gate is not satisfied")
+    if goal_alignment_status == "mismatch":
+        allowed = False
+        blockers.append("goal alignment is mismatched")
+    return {
+        "heartbeat_present": True,
+        "allow_dynamic_reselection": allowed,
+        "goal_alignment_status": goal_alignment_status,
+        "stage_consistency_status": stage_consistency_status,
+        "completion_gate_status": completion_gate_status,
+        "drift_detected": drift_detected,
+        "drift_score": drift_score,
+        "blockers": blockers,
+        "reason": "guard_passed" if allowed else "guard_blocked",
+    }
+
+
+def _seconds_until(iso_text: str) -> float:
+    if not iso_text:
+        return 0.0
+    try:
+        dt = datetime.fromisoformat(str(iso_text).replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    return max(0.0, (dt - datetime.now(timezone.utc)).total_seconds())
+
+
+def _plan_transition_cooldown_guard(mission: Dict[str, object]) -> Dict[str, object]:
+    runtime_state = mission.get("runtime_state", {}) or {}
+    cooldown = (runtime_state.get("plan_transition_cooldown", {}) or {})
+    cooldown_until = str(cooldown.get("cooldown_until", "")).strip()
+    remaining_seconds = round(_seconds_until(cooldown_until), 3)
+    active = remaining_seconds > 0
+    return {
+        "cooldown_present": bool(cooldown),
+        "active": active,
+        "cooldown_until": cooldown_until,
+        "remaining_seconds": remaining_seconds,
+        "reason": "cooldown_active_after_rollback" if active else "cooldown_not_active",
+        "restored_plan_id": str(cooldown.get("restored_plan_id", "")).strip(),
+        "rollback_reasons": list(cooldown.get("rollback_reasons", []) or []),
+    }
+
+
+def _post_cooldown_stability_guard(heartbeat_guard: Dict[str, object], cooldown_guard: Dict[str, object]) -> Dict[str, object]:
+    if cooldown_guard.get("active"):
+        return {
+            "required": True,
+            "stable_enough": False,
+            "reason": "cooldown_still_active",
+        }
+    if not cooldown_guard.get("cooldown_present"):
+        return {
+            "required": False,
+            "stable_enough": True,
+            "reason": "no_recent_rollback",
+        }
+    drift_score = float(heartbeat_guard.get("drift_score", 0.0) or 0.0)
+    goal_alignment_status = str(heartbeat_guard.get("goal_alignment_status", "")).strip()
+    stage_consistency_status = str(heartbeat_guard.get("stage_consistency_status", "")).strip()
+    completion_gate_status = str(heartbeat_guard.get("completion_gate_status", "")).strip()
+    stable_enough = (
+        goal_alignment_status in {"aligned", "weak_alignment", "insufficient_signal"}
+        and stage_consistency_status not in {"inconsistent", "unknown_stage"}
+        and completion_gate_status not in {"blocked_by_missing_postmortem", "blocked_by_required_milestones"}
+        and drift_score < 0.55
+    )
+    return {
+        "required": True,
+        "stable_enough": stable_enough,
+        "drift_score_threshold": 0.55,
+        "goal_alignment_status": goal_alignment_status,
+        "stage_consistency_status": stage_consistency_status,
+        "completion_gate_status": completion_gate_status,
+        "drift_score": drift_score,
+        "reason": "post_cooldown_stability_passed" if stable_enough else "post_cooldown_stability_not_ready",
+    }
+
+
+def _maybe_rollback_plan_transition(mission: Dict[str, object], candidate_plans: list[Dict[str, object]], selected_plan: Dict[str, object]) -> tuple[Dict[str, object], Dict[str, object]]:
+    runtime_state = mission.get("runtime_state", {}) or {}
+    snapshot = (runtime_state.get("last_plan_transition_snapshot", {}) or {})
+    heartbeat = (runtime_state.get("doctor_heartbeat", {}) or {})
+    previous_plan_id = str(snapshot.get("previous_plan_id", "")).strip()
+    current_plan_id = str((selected_plan or {}).get("plan_id", "")).strip()
+    heartbeat_status = {
+        "goal_alignment_status": str(heartbeat.get("goal_alignment_status", "")).strip(),
+        "stage_consistency_status": str(heartbeat.get("stage_consistency_status", "")).strip(),
+        "completion_gate_status": str(heartbeat.get("completion_gate_status", "")).strip(),
+        "drift_detected": bool(heartbeat.get("drift_detected")),
+        "drift_score": float(heartbeat.get("drift_score", 0.0) or 0.0),
+        "progress_state": str(heartbeat.get("progress_state", "")).strip(),
+        "needs_intervention": bool(heartbeat.get("needs_intervention")),
+    }
+    should_rollback = False
+    rollback_reasons = []
+    if snapshot and previous_plan_id and current_plan_id and previous_plan_id != current_plan_id:
+        if heartbeat_status["goal_alignment_status"] == "mismatch":
+            should_rollback = True
+            rollback_reasons.append("goal_alignment_degraded_after_plan_transition")
+        if heartbeat_status["stage_consistency_status"] in {"inconsistent", "unknown_stage"}:
+            should_rollback = True
+            rollback_reasons.append("stage_consistency_degraded_after_plan_transition")
+        if heartbeat_status["drift_detected"] or heartbeat_status["drift_score"] >= 0.95:
+            should_rollback = True
+            rollback_reasons.append("drift_detected_after_plan_transition")
+    if not should_rollback:
+        return selected_plan, {
+            "performed": False,
+            "reason": "no_safe_rollback_needed",
+            "heartbeat_status": heartbeat_status,
+            "previous_plan_id": previous_plan_id,
+            "current_plan_id": current_plan_id,
+        }
+    by_plan = {str(plan.get("plan_id", "")).strip(): plan for plan in candidate_plans or [] if str(plan.get("plan_id", "")).strip()}
+    rollback_plan = deepcopy(by_plan.get(previous_plan_id, {})) if previous_plan_id in by_plan else {}
+    if not rollback_plan:
+        return selected_plan, {
+            "performed": False,
+            "reason": "rollback_candidate_not_found",
+            "heartbeat_status": heartbeat_status,
+            "previous_plan_id": previous_plan_id,
+            "current_plan_id": current_plan_id,
+            "rollback_reasons": rollback_reasons,
+        }
+    return rollback_plan, {
+        "performed": True,
+        "reason": "rolled_back_to_previous_plan_after_degradation",
+        "heartbeat_status": heartbeat_status,
+        "previous_plan_id": previous_plan_id,
+        "current_plan_id": current_plan_id,
+        "rollback_reasons": rollback_reasons,
+        "restored_plan_id": previous_plan_id,
+    }
+
+
 def _ensure_cognitive_maps(mission: Dict[str, object]) -> Dict[str, object]:
     """
     中文注解：
@@ -102,11 +263,25 @@ def _ensure_cognitive_maps(mission: Dict[str, object]) -> Dict[str, object]:
     selected_plan = mission.get("selected_plan", {})
     candidate_plans = mission.get("candidate_plans", [])
     capabilities = mission.get("capabilities", {})
+    live_status = str((mission.get("runtime_state", {}) or {}).get("status", "")).strip().lower()
+    dynamic_reselection_statuses = {"planning", "running", "recovering", "blocked", "verifying"}
+    refresh_dynamic_reselection = live_status in dynamic_reselection_statuses
+    heartbeat_guard = _doctor_heartbeat_guard(mission)
+    cooldown_guard = _plan_transition_cooldown_guard(mission)
+    post_cooldown_stability = _post_cooldown_stability_guard(heartbeat_guard, cooldown_guard)
+    previous_selected_plan_id = str((selected_plan or {}).get("plan_id", "")).strip()
     # 如果 mission 是从旧快照恢复出来的，这些图谱可能并不完整；
     # 这里的职责就是把“可推导但尚未落盘”的认知结构补全。
-    if candidate_plans and not mission.get("tool_scores"):
+    if candidate_plans and (refresh_dynamic_reselection or not mission.get("tool_scores")):
         mission["tool_scores"] = score_external_options(str(mission.get("task_id", "mission")), intent, candidate_plans, capabilities)
-    if candidate_plans and not mission.get("reselection") and mission.get("proposal_judgment"):
+    if (
+        candidate_plans
+        and mission.get("proposal_judgment")
+        and (refresh_dynamic_reselection or not mission.get("reselection"))
+        and heartbeat_guard.get("allow_dynamic_reselection", True)
+        and not cooldown_guard.get("active")
+        and post_cooldown_stability.get("stable_enough", True)
+    ):
         mission["reselection"] = reselect_plan(
             str(mission.get("task_id", "mission")),
             intent,
@@ -114,6 +289,33 @@ def _ensure_cognitive_maps(mission: Dict[str, object]) -> Dict[str, object]:
             mission.get("proposal_judgment", {}),
             mission.get("tool_scores", {"scores": []}),
         )
+        mission["dynamic_reselection"] = {
+            "refreshed": True,
+            "refreshed_at": str((mission.get("runtime_state", {}) or {}).get("updated_at", "")).strip()
+            or mission.get("generated_at", "")
+            or mission.get("updated_at", ""),
+            "runtime_status": live_status,
+            "heartbeat_guard": heartbeat_guard,
+            "cooldown_guard": cooldown_guard,
+            "post_cooldown_stability": post_cooldown_stability,
+        }
+    elif refresh_dynamic_reselection:
+        blocked_reason = str(heartbeat_guard.get("reason", "")).strip() or "dynamic_reselection_blocked"
+        if cooldown_guard.get("active"):
+            blocked_reason = str(cooldown_guard.get("reason", "")).strip() or "dynamic_reselection_cooldown_active"
+        elif post_cooldown_stability.get("required") and not post_cooldown_stability.get("stable_enough", True):
+            blocked_reason = str(post_cooldown_stability.get("reason", "")).strip() or "post_cooldown_stability_not_ready"
+        mission["dynamic_reselection"] = {
+            "refreshed": False,
+            "refreshed_at": str((mission.get("runtime_state", {}) or {}).get("updated_at", "")).strip()
+            or mission.get("generated_at", "")
+            or mission.get("updated_at", ""),
+            "runtime_status": live_status,
+            "heartbeat_guard": heartbeat_guard,
+            "cooldown_guard": cooldown_guard,
+            "post_cooldown_stability": post_cooldown_stability,
+            "blocked_reason": blocked_reason,
+        }
     reselection = mission.get("reselection", {})
     final_selected_plan = reselection.get("final_selected_plan", {}) if reselection else {}
     selected_plan_changed = False
@@ -121,6 +323,29 @@ def _ensure_cognitive_maps(mission: Dict[str, object]) -> Dict[str, object]:
         mission["selected_plan"] = deepcopy(final_selected_plan)
         selected_plan = mission["selected_plan"]
         selected_plan_changed = True
+        mission["plan_transition_guard"] = {
+            "allowed": True,
+            "previous_plan_id": previous_selected_plan_id,
+            "new_plan_id": str((selected_plan or {}).get("plan_id", "")).strip(),
+            "heartbeat_guard": heartbeat_guard,
+            "transition_reason": str((reselection.get("switch_reason", "") if isinstance(reselection, dict) else "")).strip(),
+        }
+    elif refresh_dynamic_reselection:
+        mission["plan_transition_guard"] = {
+            "allowed": False,
+            "previous_plan_id": previous_selected_plan_id,
+            "new_plan_id": previous_selected_plan_id,
+            "heartbeat_guard": heartbeat_guard,
+            "cooldown_guard": cooldown_guard,
+            "post_cooldown_stability": post_cooldown_stability,
+            "transition_reason": "no_safe_plan_transition",
+        }
+    rollback_plan, rollback_status = _maybe_rollback_plan_transition(mission, candidate_plans, selected_plan)
+    if rollback_status.get("performed"):
+        mission["selected_plan"] = deepcopy(rollback_plan)
+        selected_plan = mission["selected_plan"]
+        selected_plan_changed = True
+    mission["plan_rollback_guard"] = rollback_status
     if selected_plan_changed or not mission.get("topology"):
         mission["topology"] = build_topology(intent, selected_plan)
     if selected_plan_changed or not mission.get("fractal_loops"):
@@ -212,6 +437,15 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
     mission = _load_json(MISSIONS_ROOT / f"{task_id}.json")
     if not mission:
         return {"task_id": task_id, "status": "no_mission_package"}
+    mission["runtime_state"] = {
+        "status": state.get("status", ""),
+        "current_stage": state.get("current_stage", ""),
+        "next_action": state.get("next_action", ""),
+        "updated_at": state.get("last_update_at", ""),
+        "doctor_heartbeat": ((state.get("metadata", {}) or {}).get("doctor_heartbeat", {}) or {}),
+        "plan_transition_cooldown": ((state.get("metadata", {}) or {}).get("plan_transition_cooldown", {}) or {}),
+        "last_plan_rollback_snapshot": ((state.get("metadata", {}) or {}).get("last_plan_rollback_snapshot", {}) or {}),
+    }
     mission["approval"] = _load_live_approval(task_id, mission)
     mission = _ensure_cognitive_maps(mission)
     mission = _force_browser_batch_plan(mission)
@@ -385,6 +619,9 @@ def run_mission_cycle(task_id: str, contract: Dict[str, object], state: Dict[str
         "necessity_proof": necessity_proof,
         "reselection": mission.get("reselection", {}),
         "tool_scores": mission.get("tool_scores", {}),
+        "dynamic_reselection": mission.get("dynamic_reselection", {}),
+        "plan_transition_guard": mission.get("plan_transition_guard", {}),
+        "plan_rollback_guard": mission.get("plan_rollback_guard", {}),
         "adoption_flow": mission.get("adoption_flow", {}),
         "capability_clone": mission.get("capability_clone", {}),
         "domain_profile": mission.get("domain_profile", {}),

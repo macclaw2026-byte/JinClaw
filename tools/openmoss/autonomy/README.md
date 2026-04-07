@@ -69,7 +69,13 @@ python3 task_ingress.py --goal "Continuously advance this task until verified co
 
 这套 runtime 先把“长期任务不应该靠单轮 prompt 硬撑”变成工程事实。
 
-后续 bridge、Telegram、voice、多用户隔离都应该挂到这层 runtime 上，而不是各自独立演化。
+后续 Telegram、voice、多用户隔离都应该挂到这层 runtime 上，而不是各自独立演化。
+
+当前已经收敛为：
+
+- Telegram 主接入：走 OpenClaw 原生 channel
+- autonomy runtime：负责长期任务绑定与推进
+- 已退役：旧的 IMClaw/OpenMOSS bridge 旁路接入
 
 ## Conflict policy
 

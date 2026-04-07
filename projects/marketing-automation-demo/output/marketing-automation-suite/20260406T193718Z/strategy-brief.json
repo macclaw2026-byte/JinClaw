@@ -1,0 +1,70 @@
+{
+  "project_id": "marketing-automation-demo",
+  "business_goal": "increase qualified pipeline and conversions",
+  "conversion_target": "quote_request",
+  "segmentation_axes": [
+    "account_tier",
+    "persona_type",
+    "buying_context",
+    "channel_readiness"
+  ],
+  "priority_channels": [
+    "form",
+    "linkedin",
+    "email"
+  ],
+  "human_review_required_for": [
+    "tier_a_accounts",
+    "legal_or_pricing_sensitive_motions"
+  ],
+  "prospect_summary": {
+    "total": 5,
+    "score_tiers": {
+      "B": 3,
+      "A": 2
+    },
+    "channel_readiness": {
+      "unknown": 3,
+      "email_ready": 1,
+      "form_ready": 1
+    }
+  },
+  "top_accounts": [
+    {
+      "account_id": "account-exampledealer-com",
+      "company_name": "Example Dealer",
+      "score_tier": "A",
+      "total_score": 92.0,
+      "recommended_channel_hint": "email_ready"
+    },
+    {
+      "account_id": "account-demo-contractor-com",
+      "company_name": "Demo Contractor",
+      "score_tier": "A",
+      "total_score": 87.0,
+      "recommended_channel_hint": "form_ready"
+    },
+    {
+      "account_id": "account-exampledesignstudio-com",
+      "company_name": "Example Design Studio",
+      "score_tier": "B",
+      "total_score": 78.5,
+      "recommended_channel_hint": "unknown"
+    },
+    {
+      "account_id": "account-samplebuildco-com",
+      "company_name": "Sample Build Co",
+      "score_tier": "B",
+      "total_score": 78.5,
+      "recommended_channel_hint": "unknown"
+    },
+    {
+      "account_id": "account-regionaldistributor-example",
+      "company_name": "Regional Distributor Group",
+      "score_tier": "B",
+      "total_score": 78.5,
+      "recommended_channel_hint": "unknown"
+    }
+  ],
+  "status": "draft"
+}

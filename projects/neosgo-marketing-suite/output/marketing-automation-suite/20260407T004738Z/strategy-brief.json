@@ -1,0 +1,111 @@
+{
+  "project_id": "neosgo-marketing-suite",
+  "business_goal": "grow qualified trade pipeline and website conversions for neosgo.com",
+  "conversion_target": "trade_program_application",
+  "segmentation_axes": [
+    "account_tier",
+    "persona_type",
+    "buying_context",
+    "channel_readiness"
+  ],
+  "priority_channels": [
+    "form",
+    "linkedin",
+    "email"
+  ],
+  "human_review_required_for": [
+    "tier_a_accounts",
+    "legal_or_pricing_sensitive_motions",
+    "trade_program_offer",
+    "channel_partner_motion"
+  ],
+  "prospect_summary": {
+    "total": 388,
+    "score_tiers": {
+      "B": 17,
+      "A": 371
+    },
+    "channel_readiness": {
+      "unknown": 14,
+      "email_ready": 362,
+      "social_ready": 3,
+      "form_ready": 5,
+      "email_review": 4
+    },
+    "account_types": {
+      "designer": 95,
+      "contractor": 86,
+      "electrician": 103,
+      "distributor": 7,
+      "lighting": 88,
+      "showroom": 6,
+      "builder": 2,
+      "dealer": 1
+    },
+    "buying_contexts": {
+      "active_project": 279,
+      "partnership_fit": 4,
+      "exploratory": 105
+    }
+  },
+  "segment_hypotheses": [
+    {
+      "segment_key": "design-led_accounts",
+      "when_to_use": "designer-heavy or specification-led accounts dominate",
+      "primary_value_frame": "curated selection, project support, easier specification flow"
+    },
+    {
+      "segment_key": "execution-led_accounts",
+      "when_to_use": "contractor / builder / ops accounts dominate",
+      "primary_value_frame": "quote efficiency, repeat ordering, install workflow support"
+    },
+    {
+      "segment_key": "channel_accounts",
+      "when_to_use": "distributor / dealer / showroom fit is strong",
+      "primary_value_frame": "partner upside, assortment fit, regional channel growth"
+    }
+  ],
+  "top_accounts": [
+    {
+      "account_id": "account-benjaminmoore-com",
+      "company_name": "Babel's Paint & Decorating",
+      "score_tier": "A",
+      "total_score": 96.0,
+      "recommended_channel_hint": "email_ready",
+      "buying_context_hint": "active_project"
+    },
+    {
+      "account_id": "account-sasaki-com",
+      "company_name": "Sasaki Associates Inc",
+      "score_tier": "A",
+      "total_score": 96.0,
+      "recommended_channel_hint": "email_ready",
+      "buying_context_hint": "active_project"
+    },
+    {
+      "account_id": "account-luminastation-com",
+      "company_name": "Paysage At Lumina Station",
+      "score_tier": "A",
+      "total_score": 96.0,
+      "recommended_channel_hint": "email_ready",
+      "buying_context_hint": "active_project"
+    },
+    {
+      "account_id": "account-contractdecor-com",
+      "company_name": "Contract Decor Intl",
+      "score_tier": "A",
+      "total_score": 96.0,
+      "recommended_channel_hint": "email_ready",
+      "buying_context_hint": "active_project"
+    },
+    {
+      "account_id": "account-pmarchitecture-com",
+      "company_name": "P M Architecture",
+      "score_tier": "A",
+      "total_score": 96.0,
+      "recommended_channel_hint": "email_ready",
+      "buying_context_hint": "active_project"
+    }
+  ],
+  "status": "draft"
+}

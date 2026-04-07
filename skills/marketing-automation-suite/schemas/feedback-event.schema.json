@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Feedback Event",
+  "type": "object",
+  "required": [
+    "feedback_id",
+    "task_id",
+    "account_id",
+    "outcome_type",
+    "channel",
+    "classification"
+  ],
+  "properties": {
+    "feedback_id": {"type": "string"},
+    "task_id": {"type": "string"},
+    "account_id": {"type": "string"},
+    "contact_id": {"type": ["string", "null"]},
+    "outcome_type": {"type": "string"},
+    "channel": {"type": "string"},
+    "classification": {"type": "string"},
+    "evidence": {"type": ["string", "object", "array", "null"]},
+    "suppression_action": {"type": ["string", "null"]},
+    "data_patch": {"type": ["object", "null"]},
+    "strategy_patch": {"type": ["object", "null"]}
+  }
+}
+

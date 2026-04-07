@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/solution_arbitrator.py`
+- 文件作用：负责控制中心中与 `solution_arbitrator` 相关的编排、分析或决策逻辑。
+- 顶层函数：arbitrate_solution_path、main。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import json
@@ -9,6 +17,12 @@ from necessity_prover import prove_plan_necessity
 
 
 def arbitrate_solution_path(intent: Dict[str, object], selected_plan: Dict[str, object], approval: Dict[str, object], capabilities: Dict[str, object] | None = None) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `arbitrate_solution_path` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     pending = approval.get("pending", [])
     necessity = prove_plan_necessity(intent, selected_plan, capabilities or {})
     plan_id = str(selected_plan.get("plan_id", ""))
@@ -41,6 +55,12 @@ def arbitrate_solution_path(intent: Dict[str, object], selected_plan: Dict[str, 
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     import argparse
 
     parser = argparse.ArgumentParser(description="Arbitrate next actions for the control-center mission")

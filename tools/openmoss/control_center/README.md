@@ -39,11 +39,33 @@ functional regions:
 - `mission_loop` also emits a structured `next_decision` so the runtime can move with less repeated reasoning
 - `orchestrator`: build the execution blueprint handed to autonomy/OpenClaw
 
+## Stability model
+
+JinClaw now uses a guarded adaptive-routing model for complex tasks.
+
+The short version:
+
+- every active task gets a doctor heartbeat
+- live plan reselection is only allowed when the heartbeat says the task is stable
+- every route change writes a transition snapshot before continuing
+- degraded route changes can be rolled back automatically
+- rollback opens a cooldown window
+- cooldown expiry alone is not enough; the task must also recover to a stable threshold before reselection is re-enabled
+
+Detailed reference:
+
+- `tools/openmoss/control_center/jinclaw_stability_model.md`
+
 The OpenClaw runtime remains the execution substrate:
 
 - ingress: Telegram / gateway / session transport
 - execution: tool and session invocation
 - egress: replies, reports, voice
+
+Current ingress policy:
+
+- primary: OpenClaw native Telegram channel
+- retired: legacy IMClaw/OpenMOSS bridge sidecar
 
 The autonomy modules become internal control-center regions:
 
@@ -54,3 +76,33 @@ The autonomy modules become internal control-center regions:
 - learning
 
 The design goal is one brain, many coordinated regions.
+
+## Single-doctor invariant
+
+JinClaw should have exactly one system doctor.
+
+That doctor must live at the control-center layer because this is the only layer with visibility across the full chain:
+
+- control-center planning and routing
+- autonomy runtime state and task progression
+- gateway / session ingress-egress health
+- message-pipeline quality
+- scheduler and follow-up integrity
+- result validation and delayed backstop signals
+
+Do not add separate subsystem-specific doctors as independent authorities.
+If a new file, feature, skill, module, scheduler, or bridge is introduced, extend the existing doctor’s coverage, evidence model, and validation checks instead of creating another doctor role.
+
+Preferred ownership:
+
+- canonical doctor logic: `tools/openmoss/control_center/system_doctor.py`
+- doctor-facing system health payload: `tools/openmoss/ops/jinclaw_ops.py`
+- governance statement for this invariant: `JINCLAW_CONSTITUTION.md`
+- future-coverage contract: `tools/openmoss/control_center/doctor_coverage_contract.md`
+
+Retrofit rule:
+
+- every new subsystem must either expose health/evidence into the existing doctor path or be explicitly declared out of scope with a compensating backstop
+- old subsystems should be retrofitted into the same doctor over time
+- "one brain, one doctor" is a runtime architecture rule, not just a naming preference
+- [jinclaw_complex_task_control_model.md](./jinclaw_complex_task_control_model.md): complex-task delivery guard, stage artifacts, verify gate, and postmortem closure model.

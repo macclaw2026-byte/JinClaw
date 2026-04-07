@@ -1,0 +1,11 @@
+{
+  "status": "ok",
+  "enabled_query_count": 22,
+  "generated_target_count": 39,
+  "failure_count": 22,
+  "provider_scores": {
+    "duckduckgo": 0.16,
+    "bing_rss": 0.86
+  },
+  "generated_targets_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/discovery-targets.generated.json"
+}

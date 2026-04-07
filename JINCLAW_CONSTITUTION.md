@@ -65,8 +65,42 @@ JinClaw is only considered healthy if all of the following remain true:
 - self-heal is active
 - upstream watch is active
 - critical task routing still reaches the control center
+- exactly one canonical system doctor exists and remains responsible for whole-system monitoring
 
 If these conditions are not met, the system is degraded and should say so explicitly.
+
+## Single-doctor architecture rule
+
+JinClaw must have one and only one doctor role.
+
+That doctor must be the canonical whole-system doctor, not a set of separate subsystem doctors.
+Its job is to monitor the full chain, including runtime health, routing, tasks, sessions, message quality, scheduler state, verification paths, and other critical system links.
+
+Rules:
+
+- do not introduce a second doctor as a peer authority for a new subsystem
+- do not solve coverage gaps by creating another doctor persona or parallel doctor workflow
+- if a new file, feature, skill, module, bridge, scheduler, or execution path is added, extend the existing doctor's coverage instead
+- if a subsystem cannot yet be directly checked by the doctor, it must expose signals, artifacts, or validation hooks that roll up into the canonical doctor path
+- architecture should prevent doctor-to-doctor coordination as a dependency, because that creates avoidable communication failure modes
+
+Preferred canonical ownership:
+
+- primary doctor logic lives in `tools/openmoss/control_center/system_doctor.py`
+- doctor-facing system health aggregation lives in `tools/openmoss/ops/jinclaw_ops.py`
+- control-center architecture documents should treat the doctor as a control-center-level authority with whole-system scope
+
+## Doctor coverage follow-up rule
+
+No meaningful new system capability should be treated as stably integrated until doctor coverage has been extended to include it.
+
+Minimum promotion requirements for new files, features, skills, modules, schedulers, bridges, or execution chains:
+
+1. the canonical doctor knows how to observe the new capability or its rolled-up health signals
+2. targeted tests exist for the new capability
+3. governance/runtime metadata reflects the new doctor coverage expectation
+
+If any of those are missing, the capability is not yet fully integrated and must be treated as partial.
 
 ## Capability Borrowing Rules
 

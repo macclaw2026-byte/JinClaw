@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Strategy Task",
+  "type": "object",
+  "required": [
+    "outreach_task_id",
+    "strategy_id",
+    "account_id",
+    "channel",
+    "primary_angle",
+    "CTA",
+    "risk_level"
+  ],
+  "properties": {
+    "outreach_task_id": {"type": "string"},
+    "strategy_id": {"type": "string"},
+    "target_scope": {"type": ["string", "null"]},
+    "account_id": {"type": "string"},
+    "contact_id": {"type": ["string", "null"]},
+    "channel": {"type": "string"},
+    "primary_angle": {"type": "string"},
+    "CTA": {"type": "string"},
+    "followup_plan": {"type": ["object", "array", "null"]},
+    "risk_level": {"type": "string"},
+    "approval_required": {"type": "boolean"},
+    "stop_conditions": {"type": "array", "items": {"type": "string"}}
+  }
+}
+

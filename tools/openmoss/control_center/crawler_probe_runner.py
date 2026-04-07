@@ -14,13 +14,14 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Tuple
 
 
 WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
 TASKS_ROOT = WORKSPACE_ROOT / "tools/openmoss/runtime/autonomy/tasks"
 LEARNING_ROOT = WORKSPACE_ROOT / "tools/openmoss/runtime/autonomy/learning"
 TOOLS_ROOT = WORKSPACE_ROOT / "tools"
+SITE_PROFILE_ROOT = WORKSPACE_ROOT / "crawler/site-profiles"
 if str(TOOLS_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLS_ROOT))
 
@@ -74,6 +75,93 @@ DEFAULT_TOOL_ORDER = [
     "agent_browser",
 ]
 
+SITE_TASK_FIELDS = {
+    "amazon": ["title", "price", "rating", "reviews", "link"],
+    "walmart": ["title", "price", "rating", "link"],
+    "temu": ["title", "price", "link", "promo"],
+    "1688": ["title", "price", "moq", "supplier", "link"],
+}
+
+FALSE_POSITIVE_PATTERNS = {
+    "all": [
+        r"access denied",
+        r"forbidden",
+        r"service unavailable",
+        r"temporarily unavailable",
+        r"please enable javascript",
+    ],
+    "amazon": [
+        r"automated access",
+        r"enter the characters you see below",
+        r"sorry, we just need to make sure",
+        r"captcha",
+    ],
+    "walmart": [
+        r"robot or human",
+        r"confirm that you.?re human",
+        r"activate and hold the button",
+    ],
+    "temu": [
+        r"verify",
+        r"captcha",
+        r"sign in",
+        r"login",
+        r"puzzle",
+    ],
+    "1688": [
+        r"登录",
+        r"密码登录",
+        r"短信登录",
+        r"请按住滑块",
+        r"captcha",
+        r"punish",
+        r"x5secdata",
+        r"nocaptcha",
+    ],
+}
+
+SITE_NORMALIZATION_RULES = {
+    "amazon": {
+        "title": [r"aria-label=\"([^\"]+)\"", r"alt=\"([^\"]+)\""],
+        "price": [r"\$(\d+(?:\.\d{2})?)"],
+        "rating": [r"(\d\.\d) out of 5"],
+        "reviews": [r"(\d[\d,]*) ratings"],
+        "link": [r"(/dp/[A-Z0-9]{10})"],
+    },
+    "walmart": {
+        "title": [r"aria-label=\"([^\"]+)\"", r"<title>([^<]+)</title>"],
+        "price": [r"\$(\d+(?:\.\d{2})?)"],
+        "rating": [r"(\d\.\d) out of 5 Stars"],
+        "link": [r"(/ip/[^\"'\s<>]+)"],
+    },
+    "temu": {
+        "title": [r"aria-label=\"([^\"]+)\"", r"<title>([^<]+)</title>"],
+        "price": [r"\$(\d+(?:\.\d{2})?)"],
+        "promo": [r"(free shipping|flash sale|limited time|discount)"],
+        "link": [r"(/goods\.html[^\"'\s<>]*)"],
+    },
+    "1688": {
+        "title": [r"title\s*[:=]\s*['\"]([^'\"]+)['\"]", r"<title>([^<]+)</title>"],
+        "price": [r"¥\s*(\d+(?:\.\d+)?)"],
+        "moq": [r"(\d+)\s*(?:件起批|pcs|min\. order)"],
+        "supplier": [r"(?:supplier|供应商|公司名称)[:：\s]*([^\n<]{2,80})"],
+        "link": [r"(https?://[^\s\"']+|/offer/[^\"'\s<>]+)"],
+    },
+}
+
+AUTHENTICATED_MODE_NOTES = {
+    "1688": {
+        "supported": True,
+        "mode": "browser_authorized_session",
+        "policy": [
+            "需要用户明确授权后才可进入登录态自动化。",
+            "优先使用浏览器型工具完成一次正常登录，而不是把凭证分发给所有抓取栈。",
+            "登录态 profile 与匿名 profile 必须分开记录。",
+            "若遇到 slider/captcha/device-risk，需要人工介入，不做绕过。",
+        ],
+    }
+}
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -115,7 +203,7 @@ def _detect_requested_tools(goal: str, crawler_plan: Dict[str, Any]) -> List[str
     for canonical, aliases in TOOL_ALIASES.items():
         if any(_normalized(alias) in goal_lower for alias in aliases):
             requested.append(canonical)
-    if not requested and ("7个工具" in goal or "7 tools" in goal_lower or "七个工具" in goal):
+    if not requested and any(token in goal_lower for token in ["7个工具", "7 tools", "七个工具", "all known tools", "all tools", "所有已知工具", "全部工具", "首次", "第一次"]):
         requested = list(DEFAULT_TOOL_ORDER)
     selected_stack = (crawler_plan.get("selected_stack", {}) or {}).get("tools", []) or []
     fallback_ids = {str(item) for item in crawler_plan.get("fallback_stacks", []) if str(item).strip()}
@@ -165,6 +253,160 @@ def _task_crawler_dir(task_id: str) -> Path:
     return TASKS_ROOT / task_id / "crawler_artifacts"
 
 
+def _normalize_tool_labels(values: Iterable[str]) -> List[str]:
+    return [str(item).strip() for item in values if str(item).strip()]
+
+
+def _tool_output_text(row: Dict[str, Any]) -> str:
+    return "\n".join([str(row.get("stdout_head", "") or ""), str(row.get("stderr_head", "") or "")]).strip()
+
+
+def _match_count(patterns: List[str], text: str) -> int:
+    total = 0
+    for pattern in patterns:
+        total += len(re.findall(pattern, text, flags=re.IGNORECASE))
+    return total
+
+
+def _detect_false_positive(site_id: str, row: Dict[str, Any]) -> Dict[str, Any]:
+    text = _tool_output_text(row)
+    low = _normalized(text)
+    site_patterns = FALSE_POSITIVE_PATTERNS.get(site_id, [])
+    general_patterns = FALSE_POSITIVE_PATTERNS.get("all", [])
+    hits: List[str] = []
+    for pattern in [*general_patterns, *site_patterns]:
+        if re.search(pattern, low, flags=re.IGNORECASE):
+            hits.append(pattern)
+    tiny_output = len(str(row.get("stdout_head", "") or "").strip()) < 20 and int(row.get("stdout_chars", 0) or 0) < 200
+    shell_like = site_id in {"temu", "1688"} and int(row.get("stdout_chars", 0) or 0) > 5000 and int(row.get("product_signal_count", 0) or 0) == 0
+    return {
+        "is_false_positive": bool(hits or tiny_output or shell_like),
+        "reasons": hits + (["tiny_output"] if tiny_output else []) + (["shell_without_task_fields"] if shell_like else []),
+    }
+
+
+def _extract_first(patterns: List[str], text: str) -> str:
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            value = next((g for g in match.groups() if g is not None), match.group(0))
+            value = re.sub(r"\s+", " ", str(value)).strip()
+            if value:
+                return value
+    return ""
+
+
+def _normalize_task_fields(site_id: str, row: Dict[str, Any]) -> Dict[str, Any]:
+    text = _tool_output_text(row)
+    rules = SITE_NORMALIZATION_RULES.get(site_id, {})
+    fields: Dict[str, str] = {}
+    for field, patterns in rules.items():
+        fields[field] = _extract_first(patterns, text)
+    populated = {k: v for k, v in fields.items() if v}
+    expected = SITE_TASK_FIELDS.get(site_id, [])
+    completeness = round(len(populated) / max(1, len(expected)), 3)
+    return {
+        "fields": fields,
+        "populated_fields": sorted(populated.keys()),
+        "field_completeness": completeness,
+        "expected_fields": expected,
+    }
+
+
+def _normalized_status(row: Dict[str, Any], false_positive: Dict[str, Any], field_payload: Dict[str, Any]) -> str:
+    base_status = str(row.get("status", "")).strip() or "failed"
+    if false_positive.get("is_false_positive"):
+        if any("tiny_output" == reason for reason in false_positive.get("reasons", [])):
+            return "failed"
+        return "blocked"
+    if field_payload.get("field_completeness", 0.0) >= 0.5 and base_status in {"usable", "partial"}:
+        return "usable"
+    if field_payload.get("field_completeness", 0.0) > 0.0 and base_status in {"usable", "partial", "failed"}:
+        return "partial"
+    return base_status
+
+
+def _rank_tool_result(row: Dict[str, Any], normalized_status: str, field_payload: Dict[str, Any], false_positive: Dict[str, Any]) -> int:
+    score = int(row.get("score", 0) or 0)
+    score += int(round(float(field_payload.get("field_completeness", 0.0)) * 40))
+    if normalized_status == "usable":
+        score += 15
+    elif normalized_status == "partial":
+        score += 5
+    elif normalized_status == "blocked":
+        score -= 25
+    elif normalized_status == "failed":
+        score -= 15
+    if false_positive.get("is_false_positive"):
+        score -= 20
+    return max(0, min(100, score))
+
+
+def _enrich_tool_result(site_id: str, row: Dict[str, Any]) -> Dict[str, Any]:
+    false_positive = _detect_false_positive(site_id, row)
+    field_payload = _normalize_task_fields(site_id, row)
+    normalized_status = _normalized_status(row, false_positive, field_payload)
+    arbitration_score = _rank_tool_result(row, normalized_status, field_payload, false_positive)
+    enriched = dict(row)
+    enriched.update(
+        {
+            "initial_status": str(row.get("status", "")).strip(),
+            "status": normalized_status,
+            "false_positive": false_positive,
+            "normalized_task_output": field_payload,
+            "arbitration_score": arbitration_score,
+            "usable_for_task": normalized_status == "usable",
+        }
+    )
+    return enriched
+
+
+def _site_mode(site_id: str) -> str:
+    if site_id == "1688":
+        return "anonymous_truth_check_only"
+    if site_id in {"amazon", "walmart", "temu"}:
+        return "anonymous_public_crawl"
+    return "unknown"
+
+
+def _preferred_tool_order(tool_results: List[Dict[str, Any]]) -> List[str]:
+    ordered = sorted(
+        tool_results,
+        key=lambda item: (
+            0 if item.get("status") == "usable" else 1 if item.get("status") == "partial" else 2 if item.get("status") == "blocked" else 3,
+            -int(item.get("arbitration_score", 0) or 0),
+            -float((item.get("normalized_task_output", {}) or {}).get("field_completeness", 0.0) or 0.0),
+            str(item.get("tool", "")),
+        ),
+    )
+    return [str(item.get("tool", "")).strip() for item in ordered if str(item.get("tool", "")).strip()]
+
+
+def _task_output_choice(site_id: str, tool_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+    surviving = [item for item in tool_results if item.get("status") in {"usable", "partial"}]
+    surviving.sort(
+        key=lambda item: (
+            0 if item.get("status") == "usable" else 1,
+            -int(item.get("arbitration_score", 0) or 0),
+            -float((item.get("normalized_task_output", {}) or {}).get("field_completeness", 0.0) or 0.0),
+        )
+    )
+    if not surviving:
+        return {
+            "decision": "blocked_or_insufficient_evidence",
+            "selected_tool": "",
+            "task_output": {},
+            "confidence": "low",
+        }
+    best = surviving[0]
+    return {
+        "decision": "best_single_tool_output",
+        "selected_tool": str(best.get("tool", "")).strip(),
+        "task_output": (best.get("normalized_task_output", {}) or {}).get("fields", {}),
+        "confidence": "high" if best.get("status") == "usable" else "medium",
+    }
+
+
 def _summarize_site(site_payload: Dict[str, Any]) -> Dict[str, Any]:
     tool_results = list(site_payload.get("tool_results", []) or [])
     usable = [item for item in tool_results if str(item.get("status", "")).strip() == "usable"]
@@ -172,14 +414,90 @@ def _summarize_site(site_payload: Dict[str, Any]) -> Dict[str, Any]:
     best = tool_results[0] if tool_results else {}
     return {
         "best_tool": str(best.get("tool", "")),
-        "best_score": int(best.get("score", 0) or 0),
+        "best_score": int(best.get("arbitration_score", best.get("score", 0)) or 0),
         "usable_tools": [str(item.get("tool", "")) for item in usable],
         "blocked_tools": [str(item.get("tool", "")) for item in blocked],
+        "preferred_tool_order": _preferred_tool_order(tool_results),
+        "task_output_choice": _task_output_choice(str(site_payload.get("site", "")), tool_results),
     }
 
 
-def _normalize_tool_labels(values: Iterable[str]) -> List[str]:
-    return [str(item).strip() for item in values if str(item).strip()]
+def _build_site_profile(site_id: str, site_payload: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
+    tool_results = list(site_payload.get("tool_results", []) or [])
+    preferred_tool_order = _preferred_tool_order(tool_results)
+    blocked_tools = [str(item.get("tool", "")) for item in tool_results if item.get("status") == "blocked"]
+    usable_tools = [str(item.get("tool", "")) for item in tool_results if item.get("status") == "usable"]
+    best_choice = _task_output_choice(site_id, tool_results)
+    confidence = "high" if usable_tools else "medium" if best_choice.get("decision") != "blocked_or_insufficient_evidence" else "low"
+    authenticated = AUTHENTICATED_MODE_NOTES.get(site_id)
+    payload = {
+        "site": site_id,
+        "last_evaluated": datetime.now().date().isoformat(),
+        "mode": _site_mode(site_id),
+        "confidence": confidence,
+        "tested_tools": [str(item.get("tool", "")) for item in tool_results],
+        "preferred_tool_order": preferred_tool_order,
+        "blocked_tools": blocked_tools,
+        "usable_tools": usable_tools,
+        "first_choice_extraction_mode": best_choice.get("decision", ""),
+        "selected_tool": best_choice.get("selected_tool", ""),
+        "task_output_fields": (best_choice.get("task_output", {}) or {}),
+        "fallback_policy": "Start with the first preferred tool; if blocked/weak, step through the remaining preferred tools in order. Trigger full all-tools re-evaluation when the top path degrades materially.",
+        "known_failure_modes": [
+            {
+                "tool": str(item.get("tool", "")),
+                "status": str(item.get("status", "")),
+                "reasons": list(((item.get("false_positive", {}) or {}).get("reasons", [])) or []),
+            }
+            for item in tool_results
+            if item.get("status") in {"blocked", "failed"}
+        ],
+        "authenticated_mode": authenticated or {"supported": False},
+    }
+
+    lines = [
+        f"# {site_id.capitalize() if site_id != '1688' else '1688'} Site Profile",
+        "",
+        f"- Last evaluated: {payload['last_evaluated']}",
+        f"- Confidence: {payload['confidence']}",
+        f"- Recommended mode: {payload['mode']}",
+        "",
+        "## Preferred tool order",
+    ]
+    for idx, tool in enumerate(preferred_tool_order, start=1):
+        lines.append(f"{idx}. {tool}")
+    lines.extend(
+        [
+            "",
+            "## Recommended default",
+            f"- Primary: {best_choice.get('selected_tool', '') or 'none'}",
+            f"- Extraction decision: {best_choice.get('decision', '')}",
+            "",
+            "## Task-ready fields from current best result",
+        ]
+    )
+    fields = best_choice.get("task_output", {}) or {}
+    if fields:
+        for key, value in fields.items():
+            lines.append(f"- {key}: {value or '(empty)'}")
+    else:
+        lines.append("- No task-ready fields survived arbitration in the current anonymous run")
+    lines.extend(["", "## Known behavior"])
+    for item in tool_results:
+        reasons = list(((item.get("false_positive", {}) or {}).get("reasons", [])) or [])
+        completeness = float(((item.get("normalized_task_output", {}) or {}).get("field_completeness", 0.0) or 0.0))
+        lines.append(
+            f"- {item.get('tool', '')}: status={item.get('status', '')}, arbitration_score={item.get('arbitration_score', 0)}, field_completeness={completeness}, false_positive_reasons={reasons or ['none']}"
+        )
+    lines.extend(["", "## Repeat-run policy"])
+    lines.append("- Start with the first preferred tool")
+    lines.append("- If blocked or weak, try the next fallback in order")
+    lines.append("- If the top path degrades materially, trigger a fresh all-tools first-run evaluation")
+    if authenticated:
+        lines.extend(["", "## Auth note"])
+        for note in authenticated.get("policy", []):
+            lines.append(f"- {note}")
+    return payload, "\n".join(lines)
 
 
 def run_crawler_probe(task_id: str, goal: str, crawler_plan: Dict[str, Any]) -> Dict[str, Any]:
@@ -195,6 +513,7 @@ def run_crawler_probe(task_id: str, goal: str, crawler_plan: Dict[str, Any]) -> 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     site_payloads: List[Dict[str, Any]] = []
+    site_profile_updates: Dict[str, Any] = {}
     for site_id in requested_sites:
         url = _site_url(site_id, query)
         tool_results = []
@@ -203,16 +522,55 @@ def run_crawler_probe(task_id: str, goal: str, crawler_plan: Dict[str, Any]) -> 
             if not runner_meta:
                 continue
             result = runner_meta["runner"](site_id, url)
-            tool_results.append(result.__dict__)
-        tool_results.sort(key=lambda item: (-int(item.get("score", 0) or 0), str(item.get("tool", ""))))
-        site_payloads.append(
-            {
-                "site": site_id,
-                "url": url,
-                "tool_results": tool_results,
-                "summary": _summarize_site({"tool_results": tool_results}),
-            }
+            enriched = _enrich_tool_result(site_id, result.__dict__)
+            if site_id == "walmart" and str(enriched.get("tool", "")).strip() == "direct-http-html":
+                task_fields = ((enriched.get("normalized_task_output", {}) or {}).get("fields", {}) or {})
+                title = str(task_fields.get("title", "") or "").strip().lower()
+                if title.endswith("- walmart.com"):
+                    task_fields["title"] = ""
+                    normalized = dict(enriched.get("normalized_task_output", {}) or {})
+                    normalized["fields"] = task_fields
+                    populated = sorted([k for k, v in task_fields.items() if str(v).strip()])
+                    normalized["populated_fields"] = populated
+                    expected = normalized.get("expected_fields", []) or []
+                    normalized["field_completeness"] = round(len(populated) / max(1, len(expected)), 3)
+                    enriched["normalized_task_output"] = normalized
+                    enriched["status"] = "blocked"
+                    enriched["usable_for_task"] = False
+                    fp = dict(enriched.get("false_positive", {}) or {})
+                    reasons = list(fp.get("reasons", []) or [])
+                    if "title_only_shell_page" not in reasons:
+                        reasons.append("title_only_shell_page")
+                    fp["is_false_positive"] = True
+                    fp["reasons"] = reasons
+                    enriched["false_positive"] = fp
+                    enriched["arbitration_score"] = 0
+            tool_results.append(enriched)
+        tool_results.sort(
+            key=lambda item: (
+                0 if item.get("status") == "usable" else 1 if item.get("status") == "partial" else 2 if item.get("status") == "blocked" else 3,
+                -int(item.get("arbitration_score", 0) or 0),
+                str(item.get("tool", "")),
+            )
         )
+        site_payload = {
+            "site": site_id,
+            "url": url,
+            "tool_results": tool_results,
+        }
+        site_payload["summary"] = _summarize_site(site_payload)
+        profile_payload, profile_markdown = _build_site_profile(site_id, site_payload)
+        site_profile_path = SITE_PROFILE_ROOT / f"{site_id}.md"
+        site_profile_json_path = SITE_PROFILE_ROOT / f"{site_id}.json"
+        _write_text(site_profile_path, profile_markdown)
+        _write_json(site_profile_json_path, profile_payload)
+        site_profile_updates[site_id] = {
+            "markdown_path": str(site_profile_path),
+            "json_path": str(site_profile_json_path),
+            "selected_tool": profile_payload.get("selected_tool", ""),
+            "preferred_tool_order": profile_payload.get("preferred_tool_order", []),
+        }
+        site_payloads.append(site_payload)
 
     report_payload = {
         "task_id": task_id,
@@ -224,6 +582,8 @@ def run_crawler_probe(task_id: str, goal: str, crawler_plan: Dict[str, Any]) -> 
         "selected_stack": (crawler_plan.get("selected_stack", {}) or {}).get("stack_id", ""),
         "fallback_stacks": list(crawler_plan.get("fallback_stacks", []) or []),
         "sites": site_payloads,
+        "site_profile_updates": site_profile_updates,
+        "authenticated_mode_policy": AUTHENTICATED_MODE_NOTES,
     }
     report_json_path = output_dir / "crawler-tool-matrix.json"
     _write_json(report_json_path, report_payload)
@@ -241,13 +601,19 @@ def run_crawler_probe(task_id: str, goal: str, crawler_plan: Dict[str, Any]) -> 
     for site in site_payloads:
         md_lines.append(f"## {site['site']}")
         md_lines.append("")
-        md_lines.append("| Tool | Score | Status | Product signals | Block signals |")
-        md_lines.append("|---|---:|---|---:|---:|")
+        md_lines.append("| Tool | Status | Arbitration score | Field completeness | False positive |")
+        md_lines.append("|---|---|---:|---:|---|")
         for row in site.get("tool_results", []):
             md_lines.append(
-                f"| {row.get('tool', '')} | {row.get('score', 0)} | {row.get('status', '')} | "
-                f"{row.get('product_signal_count', 0)} | {row.get('block_signal_count', 0)} |"
+                f"| {row.get('tool', '')} | {row.get('status', '')} | {row.get('arbitration_score', 0)} | "
+                f"{(row.get('normalized_task_output', {}) or {}).get('field_completeness', 0.0)} | "
+                f"{','.join(((row.get('false_positive', {}) or {}).get('reasons', []) or ['none']))} |"
             )
+        md_lines.append("")
+        choice = (site.get("summary", {}) or {}).get("task_output_choice", {}) or {}
+        md_lines.append(f"- Selected task-output tool: `{choice.get('selected_tool', '') or 'none'}`")
+        md_lines.append(f"- Output decision: `{choice.get('decision', '')}`")
+        md_lines.append(f"- Confidence: `{choice.get('confidence', '')}`")
         md_lines.append("")
     report_md_path = output_dir / "crawler-tool-matrix-report.md"
     _write_text(report_md_path, "\n".join(md_lines))
@@ -269,6 +635,7 @@ def run_crawler_probe(task_id: str, goal: str, crawler_plan: Dict[str, Any]) -> 
         "required_tools": requested_tools,
         "coverage": coverage,
         "site_summaries": {site["site"]: site.get("summary", {}) for site in site_payloads},
+        "site_profile_updates": site_profile_updates,
     }
 
 
@@ -287,18 +654,25 @@ def run_crawler_retro(task_id: str, goal: str, crawler_plan: Dict[str, Any], exe
     for site in sites:
         site_id = str(site.get("site", "")).strip()
         tool_results = list(site.get("tool_results", []) or [])
-        best = tool_results[0] if tool_results else {}
-        best_tool = str(best.get("tool", "")).strip()
+        best_choice = _task_output_choice(site_id, tool_results)
+        best_tool = str(best_choice.get("selected_tool", "")).strip()
+        ranked_first = tool_results[0] if tool_results else {}
         best_tool_by_site[site_id] = {
             "tool": best_tool,
-            "score": int(best.get("score", 0) or 0),
-            "status": str(best.get("status", "")).strip(),
+            "score": int(ranked_first.get("arbitration_score", ranked_first.get("score", 0)) or 0),
+            "status": str(ranked_first.get("status", "")).strip(),
+            "preferred_tool_order": _preferred_tool_order(tool_results),
+            "decision": best_choice.get("decision", ""),
         }
         blocked = [str(item.get("tool", "")) for item in tool_results if str(item.get("status", "")).strip() == "blocked"]
         if best_tool:
-            lessons.append(f"{site_id} 当前最优抓取栈是 {best_tool}，得分 {best_tool_by_site[site_id]['score']}。")
+            lessons.append(f"{site_id} 当前任务输出首选是 {best_tool}，优先顺序为 {', '.join(best_tool_by_site[site_id]['preferred_tool_order'])}。")
+        else:
+            lessons.append(f"{site_id} 当前没有足够稳定的任务输出工具，结论应保持 blocked/insufficient。")
         if blocked:
             lessons.append(f"{site_id} 被明显拦截的工具包括：{', '.join(blocked)}。")
+        if site_id == "1688":
+            lessons.append("1688 可设计授权登录态模式，但必须与匿名 profile 分离，且不能承诺无人工干预通过 slider/captcha/device-risk。")
     output_dir = _task_crawler_dir(task_id)
     retro_payload = {
         "task_id": task_id,
@@ -309,6 +683,7 @@ def run_crawler_retro(task_id: str, goal: str, crawler_plan: Dict[str, Any], exe
         "selected_stack": (crawler_plan.get("selected_stack", {}) or {}).get("stack_id", ""),
         "fallback_stacks": list(crawler_plan.get("fallback_stacks", []) or []),
         "coverage": execution_artifacts.get("coverage", {}),
+        "site_profile_updates": execution_artifacts.get("site_profile_updates", {}),
     }
     retro_json_path = output_dir / "crawler-retro.json"
     _write_json(retro_json_path, retro_payload)
@@ -331,8 +706,10 @@ def run_crawler_retro(task_id: str, goal: str, crawler_plan: Dict[str, Any], exe
     for site_id, info in best_tool_by_site.items():
         current.setdefault("sites", {})[site_id] = {
             "preferred_tool": info.get("tool", ""),
+            "preferred_tool_order": info.get("preferred_tool_order", []),
             "last_score": info.get("score", 0),
             "last_status": info.get("status", ""),
+            "last_decision": info.get("decision", ""),
             "last_task_id": task_id,
             "updated_at": _utc_now_iso(),
         }

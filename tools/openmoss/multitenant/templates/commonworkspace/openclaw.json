@@ -13,8 +13,7 @@
   },
   "openmoss": {
     "bridge": {
-      "enabled": true,
-      "provider": "imclaw"
+      "enabled": false
     },
     "voice": {
       "enabled": true

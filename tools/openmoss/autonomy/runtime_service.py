@@ -25,6 +25,7 @@ from pathlib import Path
 
 from action_executor import dispatch_stage, poll_active_execution
 from learning_engine import get_error_recurrence
+from learning_engine import update_task_summary
 from manager import TASKS_ROOT, advance_execute_subtask, apply_hook_effects, apply_recovery, build_args, checkpoint_task, complete_stage_internal, contract_path, find_link_by_task_id, infer_link_session_key, load_contract, load_state, log_event, run_once, save_contract, save_state, state_path, verify_task, write_business_outcome, write_link
 from promotion_engine import promote_recurring_errors
 from verifier_registry import run_verifier
@@ -38,7 +39,7 @@ from event_bus import publish_event
 from browser_channel_recovery import prune_relay_tabs, recover_browser_channel, navigate_relay_to_url
 from browser_task_signals import collect_browser_task_signals
 from mission_supervisor import supervise_task
-from orchestrator import _derive_allowed_tools, _derive_stage_contracts, _derive_task_milestones, _goal_requires_strict_continuation, build_crawler_plan, derive_business_verification_requirements
+from orchestrator import _derive_allowed_tools, _derive_complex_task_controller, _derive_stage_contracts, _derive_task_milestones, _goal_requires_strict_continuation, build_crawler_plan, derive_business_verification_requirements
 from paths import CONTRACT_QUARANTINE_ROOT
 from progress_evidence import build_progress_evidence
 from system_doctor import run_system_doctor
@@ -545,6 +546,63 @@ def _upgrade_missing_goal_decomposition(task_id: str) -> dict | None:
     }
 
 
+def _upgrade_missing_complex_task_controller(task_id: str) -> dict | None:
+    """
+    中文注解：
+    - 功能：为历史任务补齐复杂任务总控配置、阶段契约和 release gate。
+    - 设计意图：让过去创建的复杂任务也能吃到新的阶段产物/阶段验收能力，而不是只惠及未来任务。
+    """
+    contract = load_contract(task_id)
+    metadata = contract.metadata.get("control_center", {}) or {}
+    intent = metadata.get("intent", {}) or {}
+    mission_profile = metadata.get("mission_profile", {}) or {}
+    coding_methodology = metadata.get("coding_methodology", {}) or {}
+    complex_task_controller = _derive_complex_task_controller(contract.user_goal, intent, mission_profile, coding_methodology)
+    if not complex_task_controller.get("enabled"):
+        return None
+    strict = _goal_requires_strict_continuation(contract.user_goal, intent, mission_profile)
+    stage_contracts = _derive_stage_contracts(
+        task_id,
+        {
+            "goal": contract.user_goal,
+            "done_definition": contract.done_definition,
+            "intent": intent,
+            "selected_plan": metadata.get("selected_plan", {}) or {},
+            "mission_profile": mission_profile,
+            "strict_continuation_required": strict,
+            "approval": metadata.get("approval", {}) or {},
+            "crawler": metadata.get("crawler", {}) or {},
+            "complex_task_controller": complex_task_controller,
+        },
+    )
+    changed = False
+    if metadata.get("complex_task_controller") != complex_task_controller:
+        metadata["complex_task_controller"] = complex_task_controller
+        contract.metadata["control_center"] = metadata
+        changed = True
+    if contract.stages != stage_contracts:
+        contract.stages = stage_contracts
+        changed = True
+    if not changed:
+        return None
+    save_contract(contract)
+    state = load_state(task_id)
+    state.metadata["contract_metadata"] = contract.metadata
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    log_event(
+        task_id,
+        "complex_task_controller_upgraded",
+        enabled=True,
+        controller=complex_task_controller.get("controller", ""),
+    )
+    return {
+        "task_id": task_id,
+        "enabled": True,
+        "controller": complex_task_controller.get("controller", ""),
+    }
+
+
 def _goal_requires_crawler_system(contract, metadata: dict) -> bool:
     """
     中文注解：
@@ -729,9 +787,50 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
     decision = mission_cycle.get("next_decision", {})
     action = str(decision.get("action", ""))
     governance_attention = mission_cycle.get("governance_attention", {}) or {}
+    plan_transition_guard = mission_cycle.get("plan_transition_guard", {}) or {}
+    plan_rollback_guard = mission_cycle.get("plan_rollback_guard", {}) or {}
+    dynamic_reselection = mission_cycle.get("dynamic_reselection", {}) or {}
     state.metadata["last_control_center_decision"] = decision
     state.metadata["last_governance_attention"] = governance_attention
     state.metadata["last_project_control"] = (((mission_cycle.get("context_packet", {}) or {}).get("governance", {}) or {}).get("project_control", {}) or {})
+    state.metadata["last_dynamic_reselection"] = dynamic_reselection
+    if plan_transition_guard:
+        state.metadata["last_plan_transition_guard"] = plan_transition_guard
+        if plan_transition_guard.get("allowed"):
+            state.metadata["last_plan_transition_snapshot"] = {
+                "captured_at": utc_now_iso(),
+                "status": state.status,
+                "current_stage": state.current_stage,
+                "next_action": state.next_action,
+                "blockers": list(state.blockers or []),
+                "previous_plan_id": str(plan_transition_guard.get("previous_plan_id", "")).strip(),
+                "new_plan_id": str(plan_transition_guard.get("new_plan_id", "")).strip(),
+                "heartbeat_guard": plan_transition_guard.get("heartbeat_guard", {}) or {},
+            }
+    if plan_rollback_guard:
+        state.metadata["last_plan_rollback_guard"] = plan_rollback_guard
+        if plan_rollback_guard.get("performed"):
+            rollback_captured_at = utc_now_iso()
+            cooldown_until = datetime.now(timezone.utc).timestamp() + 900
+            cooldown_until_iso = datetime.fromtimestamp(cooldown_until, tz=timezone.utc).isoformat()
+            state.metadata["last_plan_rollback_snapshot"] = {
+                "captured_at": rollback_captured_at,
+                "status": state.status,
+                "current_stage": state.current_stage,
+                "next_action": state.next_action,
+                "blockers": list(state.blockers or []),
+                "previous_plan_id": str(plan_rollback_guard.get("current_plan_id", "")).strip(),
+                "restored_plan_id": str(plan_rollback_guard.get("restored_plan_id", "")).strip(),
+                "rollback_reasons": list(plan_rollback_guard.get("rollback_reasons", []) or []),
+                "heartbeat_status": plan_rollback_guard.get("heartbeat_status", {}) or {},
+            }
+            state.metadata["plan_transition_cooldown"] = {
+                "started_at": rollback_captured_at,
+                "cooldown_until": cooldown_until_iso,
+                "restored_plan_id": str(plan_rollback_guard.get("restored_plan_id", "")).strip(),
+                "previous_plan_id": str(plan_rollback_guard.get("current_plan_id", "")).strip(),
+                "rollback_reasons": list(plan_rollback_guard.get("rollback_reasons", []) or []),
+            }
     if not decision.get("auto_safe", False):
         state.last_update_at = utc_now_iso()
         save_state(state)
@@ -1160,14 +1259,15 @@ def _auto_finalize_completed_business_task(task_id: str) -> dict | None:
     incomplete = [name for name in state.stage_order if state.stages.get(name) and state.stages[name].status != "completed"]
     if incomplete != ["learn"]:
         return None
+    postmortem = _write_task_postmortem(task_id, reason="business_outcome_auto_finalize")
     completion = complete_stage_internal(
         task_id=task_id,
         stage_name="learn",
-        summary="Business outcome already confirmed; runtime finalized learning and closure automatically.",
+        summary="Business outcome already confirmed; runtime finalized learning, wrote the postmortem, and closed the task.",
     )
     verify_task(build_args(task_id=task_id))
     state = load_state(task_id)
-    log_event(task_id, "business_outcome_auto_finalized", completion=completion)
+    log_event(task_id, "business_outcome_auto_finalized", completion=completion, postmortem=postmortem)
     return {
         "task_id": task_id,
         "status": state.status,
@@ -1175,6 +1275,135 @@ def _auto_finalize_completed_business_task(task_id: str) -> dict | None:
         "next_action": state.next_action,
         "action": "business_outcome_auto_finalized",
         "completion": completion,
+        "postmortem": postmortem,
+    }
+
+
+def _goal_guardian_config(task_id: str) -> dict:
+    contract = load_contract(task_id)
+    return ((contract.metadata.get("control_center", {}) or {}).get("goal_guardian", {}) or {})
+
+
+def _task_postmortem_ready(task_id: str) -> bool:
+    state = load_state(task_id)
+    postmortem = state.metadata.get("postmortem", {}) or {}
+    return bool(postmortem.get("written"))
+
+
+def _write_task_postmortem(task_id: str, *, reason: str = "") -> dict:
+    """
+    中文注解：
+    - 功能：为任务写出一份结构化 postmortem，并同步到 task summary/state metadata。
+    - 设计意图：把“learn/reflect”从口头要求变成落盘产物；未落盘前不允许真正 completed。
+    """
+    contract = load_contract(task_id)
+    state = load_state(task_id)
+    postmortem = state.metadata.get("postmortem", {}) or {}
+    if postmortem.get("written") and str(postmortem.get("path", "")).strip():
+        return postmortem
+    completed_stages = [name for name in state.stage_order if state.stages.get(name) and state.stages[name].status == "completed"]
+    open_stages = [name for name in state.stage_order if state.stages.get(name) and state.stages[name].status != "completed"]
+    learn_backlog = list(state.learning_backlog or [])
+    stage_summaries = {
+        name: {
+            "status": stage.status,
+            "summary": stage.summary,
+            "blocker": stage.blocker,
+            "verification_status": stage.verification_status,
+        }
+        for name, stage in (state.stages or {}).items()
+    }
+    path = TASKS_ROOT / task_id / "postmortem.md"
+    lines = [
+        f"# Task Postmortem: {task_id}",
+        "",
+        f"- Goal: {contract.user_goal}",
+        f"- Done definition: {contract.done_definition}",
+        f"- Reason written: {reason or 'runtime learn closure'}",
+        f"- Current status: {state.status}",
+        f"- Current stage: {state.current_stage}",
+        "",
+        "## What Worked",
+        "- The task kept a structured stage contract and milestone model.",
+        "- Runtime and doctor supervision remained attached during execution.",
+        "",
+        "## What Failed Or Nearly Failed",
+        f"- Remaining blockers before closure: {', '.join(state.blockers or ['none'])}",
+        f"- Open stages before final closure: {', '.join(open_stages or ['none'])}",
+        "",
+        "## Stage Evidence",
+        "```json",
+        json.dumps(stage_summaries, ensure_ascii=False, indent=2),
+        "```",
+        "",
+        "## Remaining Risks",
+        f"- Learning backlog items: {', '.join(learn_backlog or ['none'])}",
+        "",
+        "## Next Reusable Rule",
+        "- Do not allow a complex task to terminate before learn/reflect artifacts and postmortem are written.",
+        "",
+        "## Completion Trace",
+        f"- Completed stages: {', '.join(completed_stages or ['none'])}",
+        f"- Written at: {utc_now_iso()}",
+        "",
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines), encoding="utf-8")
+    payload = {
+        "written": True,
+        "path": str(path),
+        "written_at": utc_now_iso(),
+        "reason": reason or "runtime learn closure",
+    }
+    state.metadata["postmortem"] = payload
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    update_task_summary(
+        task_id,
+        {
+            "postmortem_written": True,
+            "postmortem_path": str(path),
+            "postmortem_written_at": payload["written_at"],
+            "goal_guardian_closed": True,
+        },
+    )
+    log_event(task_id, "task_postmortem_written", postmortem=payload)
+    return payload
+
+
+def _enforce_goal_guardian_completion_gate(task_id: str) -> dict | None:
+    """
+    中文注解：
+    - 功能：在任务已经走到 completed 时，确保复盘门槛已经满足；否则重新打开 learn。
+    """
+    guardian = _goal_guardian_config(task_id)
+    if not guardian.get("enabled") or not guardian.get("require_postmortem_before_completion"):
+        return None
+    state = load_state(task_id)
+    if state.status != "completed" or _task_postmortem_ready(task_id):
+        return None
+    learn_stage = state.stages.get("learn")
+    if learn_stage:
+        learn_stage.status = "pending"
+        learn_stage.summary = ""
+        learn_stage.verification_status = "not-run"
+        learn_stage.blocker = ""
+        learn_stage.completed_at = ""
+        learn_stage.updated_at = utc_now_iso()
+    state.status = "planning"
+    state.current_stage = "learn" if learn_stage else state.current_stage
+    state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+    state.blockers = ["goal guardian requires postmortem before final completion"]
+    state.metadata.pop("completion_notice_sent", None)
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    log_event(task_id, "goal_guardian_reopened_for_missing_postmortem")
+    return {
+        "task_id": task_id,
+        "status": state.status,
+        "current_stage": state.current_stage,
+        "next_action": state.next_action,
+        "action": "goal_guardian_reopened_for_missing_postmortem",
     }
 
 
@@ -1190,6 +1419,7 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
     """
     _upgrade_missing_business_requirements(task_id)
     _upgrade_missing_goal_decomposition(task_id)
+    _upgrade_missing_complex_task_controller(task_id)
     _upgrade_missing_crawler_system(task_id)
     contract = load_contract(task_id)
     state = load_state(task_id)
@@ -1239,6 +1469,10 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
         return auto_finalized
     control_center_result = _apply_control_center_decision(task_id, state, mission_cycle)
     state = load_state(task_id)
+    guardian_gate = _enforce_goal_guardian_completion_gate(task_id)
+    if guardian_gate:
+        guardian_gate["mission_cycle"] = mission_cycle
+        return guardian_gate
     if control_center_result and control_center_result.get("action") == "advanced_execute_subtask":
         return control_center_result
     if (
@@ -1307,6 +1541,16 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
                 "action": "awaiting_project_crawler_remediation",
                 "governance_attention": state.metadata.get("last_governance_attention", {}) or {},
                 "project_gate": state.metadata.get("project_crawler_gate", {}) or {},
+                "blocked_runtime_state": blocked_runtime_state,
+                "mission_cycle": mission_cycle,
+            }
+        if state.next_action == "doctor_request_human_guidance":
+            return {
+                "task_id": task_id,
+                "status": state.status,
+                "current_stage": state.current_stage,
+                "next_action": state.next_action,
+                "action": "awaiting_human_guidance",
                 "blocked_runtime_state": blocked_runtime_state,
                 "mission_cycle": mission_cycle,
             }
@@ -1513,10 +1757,11 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
             }
         checkpoint_task(build_args(task_id=task_id))
         promotions = promote_recurring_errors()
+        postmortem = _write_task_postmortem(task_id, reason="learn_stage_completion")
         completion = complete_stage_internal(
             task_id=task_id,
             stage_name="learn",
-            summary=f"Learning artifacts refreshed and promotion scan completed ({len(promotions.get('added', []))} new rules)",
+            summary=f"Learning artifacts refreshed, postmortem written, and promotion scan completed ({len(promotions.get('added', []))} new rules)",
             evidence_ref=str((TASKS_ROOT / task_id / "runtime-evolution-proposal.json")),
         )
         state = load_state(task_id)
@@ -1528,6 +1773,7 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
             "action": "learn_completed",
             "completion": completion,
             "promotions": promotions,
+            "postmortem": postmortem,
             "task_summary_path": str((TASKS_ROOT.parent / "learning" / "task_summaries" / f"{task_id}.json")),
             "mission_cycle": mission_cycle,
         }

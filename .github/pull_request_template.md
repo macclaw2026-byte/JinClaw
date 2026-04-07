@@ -19,6 +19,21 @@
 - [ ] Upstream monitoring
 - [ ] Governance / CI
 
+## Doctor Coverage
+
+- [ ] Already covered by the canonical JinClaw doctor
+- [ ] Exports signal/artifact into the canonical doctor path
+- [ ] Temporary blind spot declared with backstop + retrofit owner
+
+Component:
+Direct coverage path:
+Exported signal/artifact:
+Primary monitor:
+Backstop monitor:
+Delayed verification:
+Blind spot:
+Retrofit owner:
+
 ## Validation
 
 - [ ] `jinclaw-status`

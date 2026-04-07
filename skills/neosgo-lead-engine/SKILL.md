@@ -46,5 +46,7 @@ This skill should trigger for requests like:
 - data architecture: `references/data-architecture.md`
 - scoring logic: `references/scoring-model.md`
 - implementation roadmap: `references/implementation-roadmap.md`
+- mail integration: `references/mail-integration.md`
 - importer script: `scripts/import_archives_to_duckdb.py`
-r.py`
+- mail batch export: `scripts/export_outreach_mail_batch.py`
+- Apple Mail bridge: `scripts/apple_mail_bridge.py`

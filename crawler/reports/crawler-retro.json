@@ -1,0 +1,147 @@
+{
+  "generatedAt": "2026-03-30T09:45:00-07:00",
+  "scope": {
+    "sites": [
+      "amazon",
+      "walmart",
+      "temu",
+      "1688"
+    ],
+    "basis": "current recorded test results and existing latest-run/profile/contract artifacts"
+  },
+  "firstRunPolicy": {
+    "rule": "for a site's first observed run, execute all known tools, compare outputs, normalize task fields, choose the best surviving result set, and record preferred + fallback order",
+    "stateFile": "/Users/mac_claw/.openclaw/workspace/crawler/state/first_run_state.json",
+    "runner": "/Users/mac_claw/.openclaw/workspace/crawler/logic/crawler_runner.py",
+    "policyDoc": "/Users/mac_claw/.openclaw/workspace/crawler/logic/crawler-decision-policy.md"
+  },
+  "sites": {
+    "amazon": {
+      "mode": "anonymous-public",
+      "recommendedUse": {
+        "primary": "local-agent-browser-cli",
+        "fallbackOrder": [
+          "local-agent-browser-cli",
+          "scrapy-cffi",
+          "curl-cffi",
+          "playwright",
+          "playwright-stealth",
+          "crawl4ai-cli"
+        ]
+      },
+      "taskReadiness": "usable",
+      "keyFindings": [
+        "browser-type route currently wins in recorded evidence",
+        "scrapy-cffi and curl-cffi can sometimes obtain page material but quality/field extraction is weaker or less stable",
+        "playwright and playwright-stealth hit Amazon error pages in the recorded sample"
+      ],
+      "recordFiles": [
+        "/Users/mac_claw/.openclaw/workspace/crawler/site-profiles/amazon.md",
+        "/Users/mac_claw/.openclaw/workspace/crawler/site-profiles/amazon.json",
+        "/Users/mac_claw/.openclaw/workspace/crawler/reports/amazon-latest-run.json",
+        "/Users/mac_claw/.openclaw/workspace/crawler/reports/amazon-contract.json"
+      ]
+    },
+    "walmart": {
+      "mode": "anonymous-public-route-specific",
+      "recommendedUse": {
+        "primary": null,
+        "fallbackOrder": [
+          "crawl4ai-cli",
+          "local-agent-browser-cli",
+          "playwright-stealth",
+          "playwright",
+          "scrapy-cffi"
+        ]
+      },
+      "taskReadiness": "blocked-or-insufficient-evidence",
+      "keyFindings": [
+        "current evidence is dominated by robot/human verification pages",
+        "do not treat Walmart as stable anonymous production extraction yet",
+        "needs another strict same-basis all-tools rerun before promoting any single tool path"
+      ],
+      "recordFiles": [
+        "/Users/mac_claw/.openclaw/workspace/crawler/site-profiles/walmart.md",
+        "/Users/mac_claw/.openclaw/workspace/crawler/site-profiles/walmart.json",
+        "/Users/mac_claw/.openclaw/workspace/crawler/reports/walmart-latest-run.json",
+        "/Users/mac_claw/.openclaw/workspace/crawler/reports/walmart-contract.json"
+      ]
+    },
+    "temu": {
+      "mode": "browser-first-anonymous",
+      "recommendedUse": {
+        "primary": "local-agent-browser-cli",
+        "fallbackOrder": [
+          "local-agent-browser-cli",
+          "crawl4ai-cli",
+          "scrapy-cffi",
+          "curl-cffi",
+          "playwright",
+          "playwright-stealth"
+        ]
+      },
+      "taskReadiness": "partially-usable-browser-first",
+      "keyFindings": [
+        "local-agent-browser-cli is the only clearly usable route in the latest recorded matrix",
+        "http-oriented paths tend to be shell-heavy, partial, or blocked",
+        "Temu should currently be treated as browser-first rather than generic crawler-first"
+      ],
+      "recordFiles": [
+        "/Users/mac_claw/.openclaw/workspace/crawler/site-profiles/temu.md",
+        "/Users/mac_claw/.openclaw/workspace/crawler/site-profiles/temu.json",
+        "/Users/mac_claw/.openclaw/workspace/crawler/reports/temu-latest-run.json",
+        "/Users/mac_claw/.openclaw/workspace/crawler/reports/temu-contract.json"
+      ]
+    },
+    "1688": {
+      "mode": "anonymous-blocked",
+      "recommendedUse": {
+        "primary": null,
+        "fallbackOrder": [
+          "local-agent-browser-cli",
+          "playwright-stealth",
+          "playwright",
+          "curl-cffi",
+          "scrapy-cffi",
+          "crawl4ai-cli"
+        ]
+      },
+      "taskReadiness": "anonymous-blocked",
+      "keyFindings": [
+        "anonymous results consistently fall into login, slider, punish, nocaptcha, or x5secdata flows",
+        "1688 anonymous profile must not be treated as a stable production extraction target",
+        "authenticated mode, if authorized, must be a separate browser-based profile and run history"
+      ],
+      "authBoundary": {
+        "canImplement": true,
+        "mode": "browser-authorized-session-only",
+        "credentialHandling": "use credentials only inside one normal browser login flow",
+        "notAllowed": [
+          "credential spray across all crawler stacks",
+          "captcha or slider bypass",
+          "claiming unattended success is guaranteed"
+        ],
+        "humanInLoop": "required if slider/captcha/device verification appears"
+      },
+      "recordFiles": [
+        "/Users/mac_claw/.openclaw/workspace/crawler/site-profiles/1688.md",
+        "/Users/mac_claw/.openclaw/workspace/crawler/site-profiles/1688.json",
+        "/Users/mac_claw/.openclaw/workspace/crawler/reports/1688-latest-run.json",
+        "/Users/mac_claw/.openclaw/workspace/crawler/reports/1688-contract.json",
+        "/Users/mac_claw/.openclaw/workspace/crawler/site-profiles/1688-auth-policy.md"
+      ]
+    }
+  },
+  "remainingBlockers": [
+    "a fresh strict same-basis all-tools rerun is still needed to put all four sites on one synchronized matrix baseline",
+    "field normalization is still heuristic and should be refined toward per-task or per-site schema extraction"
+  ],
+  "securityBoundary": {
+    "preserved": true,
+    "notes": [
+      "no captcha/slider bypass attempted",
+      "no real credentials received or stored",
+      "1688 auth is modeled only as an authorized browser workflow with manual intervention when challenged"
+    ]
+  }
+}

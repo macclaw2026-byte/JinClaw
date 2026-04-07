@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "JingStack Skill Questionnaire",
+  "type": "object",
+  "required": [
+    "skill_slug",
+    "display_name",
+    "description",
+    "when_to_use",
+    "triggers",
+    "jobs_to_be_done",
+    "workflow",
+    "inputs",
+    "outputs",
+    "resources",
+    "constraints",
+    "testing"
+  ],
+  "properties": {
+    "skill_slug": {"type": "string"},
+    "display_name": {"type": "string"},
+    "description": {"type": "string"},
+    "when_to_use": {"type": "array", "items": {"type": "string"}},
+    "triggers": {"type": "array", "items": {"type": "string"}},
+    "jobs_to_be_done": {"type": "array", "items": {"type": "string"}},
+    "workflow": {
+      "type": "object",
+      "required": ["preserve_lifecycle"],
+      "properties": {
+        "preserve_lifecycle": {"type": "boolean"},
+        "notes": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "inputs": {"type": "array", "items": {"type": "string"}},
+    "outputs": {"type": "array", "items": {"type": "string"}},
+    "resources": {
+      "type": "object",
+      "required": ["scripts", "references", "assets"],
+      "properties": {
+        "scripts": {"type": "array", "items": {"type": "string"}},
+        "references": {"type": "array", "items": {"type": "string"}},
+        "assets": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "constraints": {"type": "array", "items": {"type": "string"}},
+    "testing": {
+      "type": "object",
+      "required": ["checks", "evidence"],
+      "properties": {
+        "checks": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "host_notes": {"type": "array", "items": {"type": "string"}}
+  }
+}

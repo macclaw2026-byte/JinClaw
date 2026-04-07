@@ -39,3 +39,7 @@ jobs:
           test -x tools/bin/jinclaw-status
           test -x tools/bin/jinclaw-doctor
           test -x tools/bin/jinclaw-upgrade-check
+
+      - name: Verify single-doctor contract
+        run: |
+          python3 tools/openmoss/ops/check_doctor_contract.py

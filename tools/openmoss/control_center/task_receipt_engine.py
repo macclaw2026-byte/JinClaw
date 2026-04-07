@@ -107,6 +107,69 @@ def _session_file_for_key(session_key: str) -> Path | None:
     return None
 
 
+def _channel_delivery_context(provider: str, conversation_id: str) -> Dict[str, object]:
+    channel = str(provider or "").strip()
+    target = str(conversation_id or "").strip()
+    if channel == "telegram":
+        return {
+            "channel": "telegram",
+            "to": f"telegram:{target}",
+            "accountId": "default",
+        }
+    return {
+        "channel": channel or "webchat",
+        "to": target,
+    }
+
+
+def _ensure_session_receipt_target(session_key: str, provider: str, conversation_id: str) -> Path | None:
+    """
+    中文注解：
+    - 功能：当聊天入口已经有 session_key 但 sessions registry 尚未建好时，补建一个最小可写 transcript。
+    - 设计意图：避免 Telegram/其它聊天入口在“路由已成功、回执找不到 session 文件”时表现成已读不回。
+    """
+    existing = _session_file_for_key(session_key)
+    if existing:
+        return existing
+    if not session_key:
+        return None
+    registry = _load_sessions_registry()
+    if not isinstance(registry, dict):
+        registry = {}
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    session_id = uuid.uuid4().hex
+    session_file = OPENCLAW_SESSIONS_ROOT / f"{session_id}.jsonl"
+    session_file.parent.mkdir(parents=True, exist_ok=True)
+    initial_record = {
+        "type": "session",
+        "version": 3,
+        "id": session_id,
+        "timestamp": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "cwd": str(Path.home()),
+    }
+    session_file.write_text(json.dumps(initial_record, ensure_ascii=False) + "\n", encoding="utf-8")
+    delivery_context = _channel_delivery_context(provider, conversation_id)
+    display_name = f"{provider}:{conversation_id}"
+    registry[session_key] = {
+        "sessionId": session_id,
+        "updatedAt": now_ms,
+        "systemSent": True,
+        "abortedLastRun": False,
+        "displayName": display_name,
+        "channel": delivery_context.get("channel", provider or "webchat"),
+        "deliveryContext": delivery_context,
+        "lastChannel": delivery_context.get("channel", provider or "webchat"),
+        "lastTo": delivery_context.get("to", conversation_id),
+        "lastAccountId": delivery_context.get("accountId", "default"),
+        "sessionFile": str(session_file),
+    }
+    (OPENCLAW_SESSIONS_ROOT / "sessions.json").write_text(
+        json.dumps(registry, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return session_file
+
+
 def _append_session_receipt(session_key: str, text: str) -> Dict[str, object]:
     """
     中文注解：
@@ -313,6 +376,8 @@ def emit_route_receipt(route: Dict[str, object], *, provider: str, conversation_
     - 功能：实现 `emit_route_receipt` 对应的处理逻辑。
     - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    - 发送策略：若当前路由已经识别出可直接投递到聊天窗口的任务产物附件，则优先走原生聊天附件投递；
+      附件直发成功后，不再额外往 session transcript 追加一条重复文字回执，避免用户在聊天框里看到“双回执”。
     """
     route = reconcile_route_with_authoritative_state(route)
     text = build_receipt_text(route)
@@ -328,15 +393,26 @@ def emit_route_receipt(route: Dict[str, object], *, provider: str, conversation_
         "governance": (route.get("authoritative_task_status", {}) or {}).get("governance", {}),
     }
     _write_json(BRAIN_RECEIPTS_ROOT / provider / f"{conversation_id}.json", receipt)
-    delivery = {"delivered": False, "reason": "no_session_key"}
-    if session_key:
-        delivery = _append_session_receipt(session_key, text)
-    attachment_delivery = {"delivered": False, "reason": "no_output_attachments"}
+
     attachments = _attachment_candidates_from_route(route)
+    attachment_delivery = {"delivered": False, "reason": "no_output_attachments"}
     if attachments:
         attachment_delivery = _send_attachments_via_openclaw(provider, conversation_id, text, attachments)
+
+    delivery = {"delivered": False, "reason": "suppressed_due_to_attachment_delivery"}
+    if attachment_delivery.get("delivered") is not True:
+        delivery = {"delivered": False, "reason": "no_session_key"}
+        if session_key:
+            _ensure_session_receipt_target(session_key, provider, conversation_id)
+            delivery = _append_session_receipt(session_key, text)
+
     receipt["delivery"] = delivery
     receipt["attachment_delivery"] = attachment_delivery
     receipt["attachments"] = attachments
+    receipt["delivery_strategy"] = (
+        "native_chat_attachment_first"
+        if attachments
+        else "session_receipt_only"
+    )
     _write_json(BRAIN_RECEIPTS_ROOT / provider / f"{conversation_id}.json", receipt)
     return receipt

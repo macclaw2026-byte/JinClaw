@@ -1,0 +1,114 @@
+{
+  "items": [
+    {
+      "account_id": "account-exampledesignstudio-com",
+      "contact_id": "contact-example-design-studio",
+      "company_name": "Example Design Studio",
+      "website_root_domain": "exampledesignstudio.com",
+      "account_type": "designer",
+      "persona_type": "buyer",
+      "geo": "US",
+      "fit_score": 40.0,
+      "intent_score": 24.0,
+      "reachability_score": 6.0,
+      "data_quality_score": 8.5,
+      "total_score": 78.5,
+      "reachability_status": "unknown",
+      "top_signals": [
+        "trade_program_fit",
+        "design_led_projects"
+      ],
+      "score_tier": "B",
+      "source_confidence": 0.88,
+      "source_url": "https://exampledesignstudio.com/contact"
+    },
+    {
+      "account_id": "account-samplebuildco-com",
+      "contact_id": "contact-sample-build-co",
+      "company_name": "Sample Build Co",
+      "website_root_domain": "samplebuildco.com",
+      "account_type": "contractor",
+      "persona_type": "operations_manager",
+      "geo": "US",
+      "fit_score": 40.0,
+      "intent_score": 24.0,
+      "reachability_score": 6.0,
+      "data_quality_score": 8.5,
+      "total_score": 78.5,
+      "reachability_status": "unknown",
+      "top_signals": [
+        "quote_request_path",
+        "active_project_pipeline"
+      ],
+      "score_tier": "B",
+      "source_confidence": 0.84,
+      "source_url": "https://samplebuildco.com/quote"
+    },
+    {
+      "account_id": "account-regionaldistributor-example",
+      "contact_id": "contact-regional-distributor-group",
+      "company_name": "Regional Distributor Group",
+      "website_root_domain": "regionaldistributor.example",
+      "account_type": "distributor",
+      "persona_type": "founder",
+      "geo": "US",
+      "fit_score": 40.0,
+      "intent_score": 24.0,
+      "reachability_score": 6.0,
+      "data_quality_score": 8.5,
+      "total_score": 78.5,
+      "reachability_status": "unknown",
+      "top_signals": [
+        "dealer_program_fit",
+        "multi_region_coverage"
+      ],
+      "score_tier": "B",
+      "source_confidence": 0.81,
+      "source_url": "https://regionaldistributor.example/partner"
+    },
+    {
+      "account_id": "account-exampledealer-com",
+      "contact_id": "contact-example-dealer",
+      "company_name": "Example Dealer",
+      "website_root_domain": "exampledealer.com",
+      "account_type": "distributor",
+      "persona_type": "buyer",
+      "geo": "US",
+      "fit_score": 40.0,
+      "intent_score": 24.0,
+      "reachability_score": 18.0,
+      "data_quality_score": 10.0,
+      "total_score": 92.0,
+      "reachability_status": "email_ready",
+      "top_signals": [
+        "dealer_program_fit",
+        "regional_distribution"
+      ],
+      "score_tier": "A",
+      "source_confidence": 0.86,
+      "source_url": "https://exampledealer.com/partners"
+    },
+    {
+      "account_id": "account-demo-contractor-com",
+      "contact_id": "contact-demo-contractor",
+      "company_name": "Demo Contractor",
+      "website_root_domain": "demo-contractor.com",
+      "account_type": "contractor",
+      "persona_type": "operations_manager",
+      "geo": "US",
+      "fit_score": 40.0,
+      "intent_score": 22.0,
+      "reachability_score": 15.0,
+      "data_quality_score": 10.0,
+      "total_score": 87.0,
+      "reachability_status": "form_ready",
+      "top_signals": [
+        "quote_request_path",
+        "active_install_work"
+      ],
+      "score_tier": "A",
+      "source_confidence": 0.79,
+      "source_url": "https://demo-contractor.com/contact"
+    }
+  ]
+}

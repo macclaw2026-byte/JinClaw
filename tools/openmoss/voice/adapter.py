@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/voice/adapter.py`
+- 文件作用：负责`adapter` 相关的一方系统逻辑。
+- 顶层函数：load_voice_config、ensure_voice_layout、build_moss_tts_command、build_moss_ttsd_command、run_command、build_ttsd_input_jsonl。
+- 顶层类：VoiceConfig。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import json
@@ -18,6 +26,12 @@ DEFAULT_TTSD_REPO = Path("/tmp/openmoss-inspect/MOSS-TTSD")
 
 @dataclass
 class VoiceConfig:
+    """
+    中文注解：
+    - 功能：封装 `VoiceConfig` 对应的数据结构或行为对象。
+    - 角色：属于本模块中的对外可见逻辑，通常由上游流程实例化后参与状态流转或能力执行。
+    - 调用关系：请结合模块级说明与类方法一起阅读，理解它在主链中的位置。
+    """
     dry_run: bool
     backend: str
     tts_repo: Path
@@ -29,6 +43,12 @@ class VoiceConfig:
 
 
 def load_voice_config() -> VoiceConfig:
+    """
+    中文注解：
+    - 功能：实现 `load_voice_config` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     local = VOICE_ROOT / "config.local.json"
     raw = {
         "dry_run": True,
@@ -55,10 +75,22 @@ def load_voice_config() -> VoiceConfig:
 
 
 def ensure_voice_layout(cfg: VoiceConfig) -> None:
+    """
+    中文注解：
+    - 功能：实现 `ensure_voice_layout` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
 
 def build_moss_tts_command(cfg: VoiceConfig, text: str, output_wav: Path) -> List[str]:
+    """
+    中文注解：
+    - 功能：实现 `build_moss_tts_command` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if cfg.backend == "library":
         script = VOICE_ROOT / "run_moss_tts.py"
         return [
@@ -80,6 +112,12 @@ def build_moss_tts_command(cfg: VoiceConfig, text: str, output_wav: Path) -> Lis
 
 
 def build_moss_ttsd_command(cfg: VoiceConfig, input_jsonl: Path, save_dir: Path) -> List[str]:
+    """
+    中文注解：
+    - 功能：实现 `build_moss_ttsd_command` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     script = cfg.ttsd_repo / "inference.py"
     return [
         "python3",
@@ -96,6 +134,12 @@ def build_moss_ttsd_command(cfg: VoiceConfig, input_jsonl: Path, save_dir: Path)
 
 
 def run_command(command: List[str], dry_run: bool) -> dict:
+    """
+    中文注解：
+    - 功能：实现 `run_command` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if dry_run:
         return {"ok": True, "dry_run": True, "command": command}
     completed = subprocess.run(command, capture_output=True, text=True)
@@ -110,6 +154,12 @@ def run_command(command: List[str], dry_run: bool) -> dict:
 
 
 def build_ttsd_input_jsonl(lines: List[dict]) -> Path:
+    """
+    中文注解：
+    - 功能：实现 `build_ttsd_input_jsonl` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     fd, tmp_name = tempfile.mkstemp(prefix="moss-ttsd-", suffix=".jsonl")
     tmp_path = Path(tmp_name)
     with open(tmp_path, "w", encoding="utf-8") as fh:

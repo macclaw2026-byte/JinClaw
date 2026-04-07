@@ -1,0 +1,10 @@
+{
+  "updated_at": "2026-04-07T00:49:26.464824+00:00",
+  "provider_scores": {
+    "duckduckgo": 0.1,
+    "bing_rss": 0.87
+  },
+  "provider_failures": {
+    "duckduckgo": 22
+  }
+}

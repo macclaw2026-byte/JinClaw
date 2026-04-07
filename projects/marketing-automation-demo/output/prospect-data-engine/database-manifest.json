@@ -1,0 +1,12 @@
+{
+  "tables": [
+    "accounts",
+    "contacts",
+    "opportunity_signals",
+    "reachability",
+    "lead_scores",
+    "source_registry",
+    "lifecycle_events"
+  ],
+  "status": "seeded"
+}

@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/intent_analyzer.py`
+- 文件作用：负责识别目标意图、风险与能力需求。
+- 顶层函数：_classify_task_types、analyze_intent、main。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import json
@@ -11,6 +19,12 @@ DOMAIN_RE = re.compile(r"\b(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}\b")
 
 
 def _classify_task_types(goal: str) -> List[str]:
+    """
+    中文注解：
+    - 功能：实现 `_classify_task_types` 对应的处理逻辑。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     normalized = goal.lower()
     task_types = []
     if any(
@@ -50,6 +64,12 @@ def _classify_task_types(goal: str) -> List[str]:
 
 
 def analyze_intent(goal: str, *, source: str = "manual") -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `analyze_intent` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     normalized = goal.strip()
     lowered = normalized.lower()
     task_types = _classify_task_types(normalized)
@@ -89,7 +109,7 @@ def analyze_intent(goal: str, *, source: str = "manual") -> Dict[str, object]:
     domains = DOMAIN_RE.findall(normalized)
     likely_platforms = [
         token
-        for token in ["amazon", "github", "telegram", "cloudflare", "shopify", "reddit", "walmart", "seller", "neosgo"]
+        for token in ["amazon", "github", "telegram", "cloudflare", "shopify", "reddit", "walmart", "seller", "neosgo", "temu"]
         if token in lowered
     ]
     return {
@@ -111,6 +131,12 @@ def analyze_intent(goal: str, *, source: str = "manual") -> Dict[str, object]:
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     import argparse
 
     parser = argparse.ArgumentParser(description="Analyze a user instruction into a structured mission intent")

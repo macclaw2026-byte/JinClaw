@@ -1,0 +1,844 @@
+{
+  "run_id": "20260405T033641Z",
+  "generated_at": "2026-04-05T03:36:41.563967+00:00",
+  "mode": "publish_live",
+  "publish_allowed": true,
+  "api_base_url": "https://mc.neosgo.com",
+  "blocked": false,
+  "missing_requirements": [],
+  "workflow_order": [
+    "ingest_history_and_feedback",
+    "distill_feedback",
+    "market_research",
+    "adaptive_strategy_selection",
+    "content_execution",
+    "report_and_state_writeback"
+  ],
+  "historical_feedback": {
+    "row_count": 0,
+    "slug_metrics": {},
+    "topic_metrics": {},
+    "top_topics": []
+  },
+  "history_summary": {
+    "run_count": 8,
+    "avg_writes": 5.5,
+    "avg_gaps": 22.75,
+    "recent_failures": 1
+  },
+  "market_research": {
+    "goal": "Use historical signal first, then market-gap research, then adapt note and GEO priorities before each write cycle.",
+    "top_research_candidates": [
+      {
+        "topic": "bathroom",
+        "label": "Bathroom vanity sizing and placement",
+        "signals": [
+          "mirror width fit",
+          "sconce placement",
+          "vanity light proportion"
+        ],
+        "note_gap": 1,
+        "geo_gap": 2,
+        "historical_clicks": 0.0,
+        "historical_feedback_score": 0.0,
+        "research_score": 3.0
+      },
+      {
+        "topic": "chandelier",
+        "label": "Dining chandelier scale and hanging rules",
+        "signals": [
+          "table-centered sizing",
+          "drop height",
+          "room proportion"
+        ],
+        "note_gap": 1,
+        "geo_gap": 2,
+        "historical_clicks": 0.0,
+        "historical_feedback_score": 0.0,
+        "research_score": 3.0
+      },
+      {
+        "topic": "living-room",
+        "label": "Layered living room lighting",
+        "signals": [
+          "ambient/task/accent balance",
+          "sconce placement",
+          "ceiling plus accent mix"
+        ],
+        "note_gap": 1,
+        "geo_gap": 2,
+        "historical_clicks": 0.0,
+        "historical_feedback_score": 0.0,
+        "research_score": 3.0
+      },
+      {
+        "topic": "pendant",
+        "label": "Pendant sizing and spacing",
+        "signals": [
+          "kitchen island spacing",
+          "pendant count",
+          "hanging height"
+        ],
+        "note_gap": 1,
+        "geo_gap": 0,
+        "historical_clicks": 0.0,
+        "historical_feedback_score": 0.0,
+        "research_score": 2.0
+      }
+    ],
+    "geo_clusters": [
+      {
+        "key": "new_england",
+        "states": [
+          "RI",
+          "MA",
+          "CT",
+          "NH",
+          "ME",
+          "VT"
+        ],
+        "reason": "Regional cluster with coherent style overlap and strong early GEO compounding potential."
+      }
+    ]
+  },
+  "adaptive_profile": {
+    "primary_focus_topic": "bathroom",
+    "topic_priority": [
+      {
+        "topic": "bathroom",
+        "adaptive_score": 4.5,
+        "gap_urgency": 1,
+        "fresh_geo_need": 2,
+        "historical_clicks": 0.0,
+        "feedback_score": 0.0
+      },
+      {
+        "topic": "chandelier",
+        "adaptive_score": 4.5,
+        "gap_urgency": 1,
+        "fresh_geo_need": 2,
+        "historical_clicks": 0.0,
+        "feedback_score": 0.0
+      },
+      {
+        "topic": "living-room",
+        "adaptive_score": 4.5,
+        "gap_urgency": 1,
+        "fresh_geo_need": 2,
+        "historical_clicks": 0.0,
+        "feedback_score": 0.0
+      },
+      {
+        "topic": "pendant",
+        "adaptive_score": 1.5,
+        "gap_urgency": 1,
+        "fresh_geo_need": 0,
+        "historical_clicks": 0.0,
+        "feedback_score": 0.0
+      }
+    ],
+    "history_context": {
+      "run_count": 8,
+      "avg_writes": 5.5,
+      "avg_gaps": 22.75,
+      "recent_failures": 1
+    },
+    "research_lead_topic": "bathroom"
+  },
+  "summary": {
+    "existing_note_count": 4,
+    "backlog_note_count": 4,
+    "feedback_row_count": 0,
+    "writes_count": 12,
+    "gap_count": 20,
+    "published_note_backfills": 0,
+    "published_variant_backfills": 4,
+    "geo_priority_order": [
+      "RI",
+      "MA",
+      "CT",
+      "NH",
+      "ME",
+      "VT",
+      "NY",
+      "CA",
+      "TX",
+      "FL"
+    ],
+    "primary_focus_topic": "bathroom",
+    "research_lead_topic": "bathroom"
+  },
+  "writes": [
+    {
+      "kind": "geo_variant_create",
+      "note_id": "cmnjt920c000910spywql628j",
+      "note_slug": "bathroom-vanity-light-size-guide",
+      "variantId": "cmnl7mjif005710spa3qtev4b",
+      "geo_slug": "portland-me",
+      "state": "ME",
+      "status": "DRAFT",
+      "published": true,
+      "publish_result": {
+        "variant": {
+          "id": "cmnl7mjif005710spa3qtev4b",
+          "noteId": "cmnjt920c000910spywql628j",
+          "slug": "portland-maine",
+          "geoLabel": "Portland, Maine",
+          "city": "Portland",
+          "state": "ME",
+          "geoGroup": "city",
+          "intentKeyword": "portland bathroom vanity light size guide",
+          "title": "Bathroom Vanity Light Size Guide in Portland",
+          "description": "A sizing guide for bathroom vanity lighting with practical placement and proportion advice. Localized for Portland, ME.",
+          "quickAnswer": "Vanity lighting should feel proportionate to the mirror width and provide even facial illumination without harsh glare. This version is localized for Portland, ME.",
+          "sections": [
+            {
+              "body": "Use the same sizing and placement logic, while adapting finish, warmth, and visual presence to the design preferences commonly seen in Portland projects.",
+              "heading": "What works well in Portland projects?"
+            }
+          ],
+          "faq": [],
+          "seoTitle": null,
+          "seoDescription": null,
+          "ogTitle": null,
+          "ogDescription": null,
+          "canonicalUrl": null,
+          "internalLinks": [],
+          "schemaJsonLd": null,
+          "status": "PUBLISHED",
+          "publishedAt": "2026-04-05T03:36:43.247Z",
+          "createdByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "updatedByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "createdAt": "2026-04-05T03:36:42.568Z",
+          "updatedAt": "2026-04-05T03:36:43.248Z"
+        }
+      },
+      "public_url": "https://neosgo.com/notes/bathroom-vanity-light-size-guide/geo/portland-me"
+    },
+    {
+      "kind": "geo_variant_create",
+      "note_id": "cmnjt920c000910spywql628j",
+      "note_slug": "bathroom-vanity-light-size-guide",
+      "variantId": "cmnl7mkk9005f10spu2zsp21r",
+      "geo_slug": "burlington-vt",
+      "state": "VT",
+      "status": "DRAFT",
+      "published": true,
+      "publish_result": {
+        "variant": {
+          "id": "cmnl7mkk9005f10spu2zsp21r",
+          "noteId": "cmnjt920c000910spywql628j",
+          "slug": "burlington-vermont",
+          "geoLabel": "Burlington, Vermont",
+          "city": "Burlington",
+          "state": "VT",
+          "geoGroup": "city",
+          "intentKeyword": "burlington bathroom vanity light size guide",
+          "title": "Bathroom Vanity Light Size Guide in Burlington",
+          "description": "A sizing guide for bathroom vanity lighting with practical placement and proportion advice. Localized for Burlington, VT.",
+          "quickAnswer": "Vanity lighting should feel proportionate to the mirror width and provide even facial illumination without harsh glare. This version is localized for Burlington, VT.",
+          "sections": [
+            {
+              "body": "Use the same sizing and placement logic, while adapting finish, warmth, and visual presence to the design preferences commonly seen in Burlington projects.",
+              "heading": "What works well in Burlington projects?"
+            }
+          ],
+          "faq": [],
+          "seoTitle": null,
+          "seoDescription": null,
+          "ogTitle": null,
+          "ogDescription": null,
+          "canonicalUrl": null,
+          "internalLinks": [],
+          "schemaJsonLd": null,
+          "status": "PUBLISHED",
+          "publishedAt": "2026-04-05T03:36:44.594Z",
+          "createdByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "updatedByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "createdAt": "2026-04-05T03:36:43.929Z",
+          "updatedAt": "2026-04-05T03:36:44.595Z"
+        }
+      },
+      "public_url": "https://neosgo.com/notes/bathroom-vanity-light-size-guide/geo/burlington-vt"
+    },
+    {
+      "kind": "geo_variant_create",
+      "note_id": "cmnjt920c000910spywql628j",
+      "note_slug": "bathroom-vanity-light-size-guide",
+      "variantId": "cmnl7mllp005n10sp6hpvqf7i",
+      "geo_slug": "new-york-ny",
+      "state": "NY",
+      "status": "DRAFT",
+      "published": true,
+      "publish_result": {
+        "variant": {
+          "id": "cmnl7mllp005n10sp6hpvqf7i",
+          "noteId": "cmnjt920c000910spywql628j",
+          "slug": "new-york-new-york",
+          "geoLabel": "New York, New York",
+          "city": "New York",
+          "state": "NY",
+          "geoGroup": "city",
+          "intentKeyword": "new york bathroom vanity light size guide",
+          "title": "Bathroom Vanity Light Size Guide in New York",
+          "description": "A sizing guide for bathroom vanity lighting with practical placement and proportion advice. Localized for New York, NY.",
+          "quickAnswer": "Vanity lighting should feel proportionate to the mirror width and provide even facial illumination without harsh glare. This version is localized for New York, NY.",
+          "sections": [
+            {
+              "body": "Use the same sizing and placement logic, while adapting finish, warmth, and visual presence to the design preferences commonly seen in New York projects.",
+              "heading": "What works well in New York projects?"
+            }
+          ],
+          "faq": [],
+          "seoTitle": null,
+          "seoDescription": null,
+          "ogTitle": null,
+          "ogDescription": null,
+          "canonicalUrl": null,
+          "internalLinks": [],
+          "schemaJsonLd": null,
+          "status": "PUBLISHED",
+          "publishedAt": "2026-04-05T03:36:45.992Z",
+          "createdByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "updatedByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "createdAt": "2026-04-05T03:36:45.277Z",
+          "updatedAt": "2026-04-05T03:36:45.993Z"
+        }
+      },
+      "public_url": "https://neosgo.com/notes/bathroom-vanity-light-size-guide/geo/new-york-ny"
+    },
+    {
+      "kind": "geo_variant_create",
+      "note_id": "cmnjt920c000910spywql628j",
+      "note_slug": "bathroom-vanity-light-size-guide",
+      "variantId": "cmnl7mmp0005v10spmgs84hay",
+      "geo_slug": "los-angeles-ca",
+      "state": "CA",
+      "status": "DRAFT",
+      "published": true,
+      "publish_result": {
+        "variant": {
+          "id": "cmnl7mmp0005v10spmgs84hay",
+          "noteId": "cmnjt920c000910spywql628j",
+          "slug": "los-angeles-california",
+          "geoLabel": "Los Angeles, California",
+          "city": "Los Angeles",
+          "state": "CA",
+          "geoGroup": "city",
+          "intentKeyword": "los angeles bathroom vanity light size guide",
+          "title": "Bathroom Vanity Light Size Guide in Los Angeles",
+          "description": "A sizing guide for bathroom vanity lighting with practical placement and proportion advice. Localized for Los Angeles, CA.",
+          "quickAnswer": "Vanity lighting should feel proportionate to the mirror width and provide even facial illumination without harsh glare. This version is localized for Los Angeles, CA.",
+          "sections": [
+            {
+              "body": "Use the same sizing and placement logic, while adapting finish, warmth, and visual presence to the design preferences commonly seen in Los Angeles projects.",
+              "heading": "What works well in Los Angeles projects?"
+            }
+          ],
+          "faq": [],
+          "seoTitle": null,
+          "seoDescription": null,
+          "ogTitle": null,
+          "ogDescription": null,
+          "canonicalUrl": null,
+          "internalLinks": [],
+          "schemaJsonLd": null,
+          "status": "PUBLISHED",
+          "publishedAt": "2026-04-05T03:36:47.394Z",
+          "createdByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "updatedByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "createdAt": "2026-04-05T03:36:46.692Z",
+          "updatedAt": "2026-04-05T03:36:47.395Z"
+        }
+      },
+      "public_url": "https://neosgo.com/notes/bathroom-vanity-light-size-guide/geo/los-angeles-ca"
+    },
+    {
+      "kind": "geo_variant_publish_backfill",
+      "note_id": "cmnjt91pu000410spox3zdpfl",
+      "note_slug": "kitchen-island-pendant-light-spacing-guide",
+      "variantId": "cmnl7jysf003q10sp4a30yfwc",
+      "geo_slug": "manchester-new-hampshire",
+      "status": "DRAFT",
+      "published": true,
+      "publish_result": {
+        "variant": {
+          "id": "cmnl7jysf003q10sp4a30yfwc",
+          "noteId": "cmnjt91pu000410spox3zdpfl",
+          "slug": "manchester-new-hampshire",
+          "geoLabel": "Manchester, New Hampshire",
+          "city": "Manchester",
+          "state": "NH",
+          "geoGroup": "city",
+          "intentKeyword": "manchester kitchen island pendant light spacing",
+          "title": "Kitchen Island Pendant Light Spacing Guide in Manchester",
+          "description": "A practical guide to sizing, spacing, and hanging pendant lights over a kitchen island. Localized for Manchester, NH.",
+          "quickAnswer": "Pendant spacing over a kitchen island should balance island length, fixture width, and visual breathing room between each light. This version is localized for Manchester, NH.",
+          "sections": [
+            {
+              "body": "Use the same sizing and placement logic, while adapting finish, warmth, and visual presence to the design preferences commonly seen in Manchester projects.",
+              "heading": "What works well in Manchester projects?"
+            }
+          ],
+          "faq": [],
+          "seoTitle": null,
+          "seoDescription": null,
+          "ogTitle": null,
+          "ogDescription": null,
+          "canonicalUrl": null,
+          "internalLinks": [],
+          "schemaJsonLd": null,
+          "status": "PUBLISHED",
+          "publishedAt": "2026-04-05T03:36:49.147Z",
+          "createdByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "updatedByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "createdAt": "2026-04-05T03:34:42.399Z",
+          "updatedAt": "2026-04-05T03:36:49.148Z"
+        }
+      },
+      "public_url": "https://neosgo.com/notes/kitchen-island-pendant-light-spacing-guide/geo/manchester-new-hampshire"
+    },
+    {
+      "kind": "geo_variant_publish_backfill",
+      "note_id": "cmnjt91pu000410spox3zdpfl",
+      "note_slug": "kitchen-island-pendant-light-spacing-guide",
+      "variantId": "cmnl7jy9j003l10sp7c60vyiv",
+      "geo_slug": "new-haven-connecticut",
+      "status": "DRAFT",
+      "published": true,
+      "publish_result": {
+        "variant": {
+          "id": "cmnl7jy9j003l10sp7c60vyiv",
+          "noteId": "cmnjt91pu000410spox3zdpfl",
+          "slug": "new-haven-connecticut",
+          "geoLabel": "New Haven, Connecticut",
+          "city": "New Haven",
+          "state": "CT",
+          "geoGroup": "city",
+          "intentKeyword": "new haven kitchen island pendant light spacing",
+          "title": "Kitchen Island Pendant Light Spacing Guide in New Haven",
+          "description": "A practical guide to sizing, spacing, and hanging pendant lights over a kitchen island. Localized for New Haven, CT.",
+          "quickAnswer": "Pendant spacing over a kitchen island should balance island length, fixture width, and visual breathing room between each light. This version is localized for New Haven, CT.",
+          "sections": [
+            {
+              "body": "Use the same sizing and placement logic, while adapting finish, warmth, and visual presence to the design preferences commonly seen in New Haven projects.",
+              "heading": "What works well in New Haven projects?"
+            }
+          ],
+          "faq": [],
+          "seoTitle": null,
+          "seoDescription": null,
+          "ogTitle": null,
+          "ogDescription": null,
+          "canonicalUrl": null,
+          "internalLinks": [],
+          "schemaJsonLd": null,
+          "status": "PUBLISHED",
+          "publishedAt": "2026-04-05T03:36:49.495Z",
+          "createdByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "updatedByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "createdAt": "2026-04-05T03:34:41.719Z",
+          "updatedAt": "2026-04-05T03:36:49.496Z"
+        }
+      },
+      "public_url": "https://neosgo.com/notes/kitchen-island-pendant-light-spacing-guide/geo/new-haven-connecticut"
+    },
+    {
+      "kind": "geo_variant_publish_backfill",
+      "note_id": "cmnjt91pu000410spox3zdpfl",
+      "note_slug": "kitchen-island-pendant-light-spacing-guide",
+      "variantId": "cmnl7jxqx003g10span3hpk2n",
+      "geo_slug": "boston-massachusetts",
+      "status": "DRAFT",
+      "published": true,
+      "publish_result": {
+        "variant": {
+          "id": "cmnl7jxqx003g10span3hpk2n",
+          "noteId": "cmnjt91pu000410spox3zdpfl",
+          "slug": "boston-massachusetts",
+          "geoLabel": "Boston, Massachusetts",
+          "city": "Boston",
+          "state": "MA",
+          "geoGroup": "city",
+          "intentKeyword": "boston kitchen island pendant light spacing",
+          "title": "Kitchen Island Pendant Light Spacing Guide in Boston",
+          "description": "A practical guide to sizing, spacing, and hanging pendant lights over a kitchen island. Localized for Boston, MA.",
+          "quickAnswer": "Pendant spacing over a kitchen island should balance island length, fixture width, and visual breathing room between each light. This version is localized for Boston, MA.",
+          "sections": [
+            {
+              "body": "Use the same sizing and placement logic, while adapting finish, warmth, and visual presence to the design preferences commonly seen in Boston projects.",
+              "heading": "What works well in Boston projects?"
+            }
+          ],
+          "faq": [],
+          "seoTitle": null,
+          "seoDescription": null,
+          "ogTitle": null,
+          "ogDescription": null,
+          "canonicalUrl": null,
+          "internalLinks": [],
+          "schemaJsonLd": null,
+          "status": "PUBLISHED",
+          "publishedAt": "2026-04-05T03:36:49.858Z",
+          "createdByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "updatedByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "createdAt": "2026-04-05T03:34:41.050Z",
+          "updatedAt": "2026-04-05T03:36:49.861Z"
+        }
+      },
+      "public_url": "https://neosgo.com/notes/kitchen-island-pendant-light-spacing-guide/geo/boston-massachusetts"
+    },
+    {
+      "kind": "geo_variant_publish_backfill",
+      "note_id": "cmnjt91pu000410spox3zdpfl",
+      "note_slug": "kitchen-island-pendant-light-spacing-guide",
+      "variantId": "cmnl7jx79003b10sp3k1y7zmr",
+      "geo_slug": "providence-rhode-island",
+      "status": "DRAFT",
+      "published": true,
+      "publish_result": {
+        "variant": {
+          "id": "cmnl7jx79003b10sp3k1y7zmr",
+          "noteId": "cmnjt91pu000410spox3zdpfl",
+          "slug": "providence-rhode-island",
+          "geoLabel": "Providence, Rhode Island",
+          "city": "Providence",
+          "state": "RI",
+          "geoGroup": "city",
+          "intentKeyword": "providence kitchen island pendant light spacing",
+          "title": "Kitchen Island Pendant Light Spacing Guide in Providence",
+          "description": "A practical guide to sizing, spacing, and hanging pendant lights over a kitchen island. Localized for Providence, RI.",
+          "quickAnswer": "Pendant spacing over a kitchen island should balance island length, fixture width, and visual breathing room between each light. This version is localized for Providence, RI.",
+          "sections": [
+            {
+              "body": "Use the same sizing and placement logic, while adapting finish, warmth, and visual presence to the design preferences commonly seen in Providence projects.",
+              "heading": "What works well in Providence projects?"
+            }
+          ],
+          "faq": [],
+          "seoTitle": null,
+          "seoDescription": null,
+          "ogTitle": null,
+          "ogDescription": null,
+          "canonicalUrl": null,
+          "internalLinks": [],
+          "schemaJsonLd": null,
+          "status": "PUBLISHED",
+          "publishedAt": "2026-04-05T03:36:50.221Z",
+          "createdByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "updatedByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "createdAt": "2026-04-05T03:34:40.342Z",
+          "updatedAt": "2026-04-05T03:36:50.222Z"
+        }
+      },
+      "public_url": "https://neosgo.com/notes/kitchen-island-pendant-light-spacing-guide/geo/providence-rhode-island"
+    },
+    {
+      "kind": "geo_variant_publish_match",
+      "note_id": "cmnjt91pu000410spox3zdpfl",
+      "note_slug": "kitchen-island-pendant-light-spacing-guide",
+      "variantId": "cmnl7jx79003b10sp3k1y7zmr",
+      "geo_slug": "providence-rhode-island",
+      "state": "RI",
+      "status": "DRAFT",
+      "published": true,
+      "publish_result": {
+        "variant": {
+          "id": "cmnl7jx79003b10sp3k1y7zmr",
+          "noteId": "cmnjt91pu000410spox3zdpfl",
+          "slug": "providence-rhode-island",
+          "geoLabel": "Providence, Rhode Island",
+          "city": "Providence",
+          "state": "RI",
+          "geoGroup": "city",
+          "intentKeyword": "providence kitchen island pendant light spacing",
+          "title": "Kitchen Island Pendant Light Spacing Guide in Providence",
+          "description": "A practical guide to sizing, spacing, and hanging pendant lights over a kitchen island. Localized for Providence, RI.",
+          "quickAnswer": "Pendant spacing over a kitchen island should balance island length, fixture width, and visual breathing room between each light. This version is localized for Providence, RI.",
+          "sections": [
+            {
+              "body": "Use the same sizing and placement logic, while adapting finish, warmth, and visual presence to the design preferences commonly seen in Providence projects.",
+              "heading": "What works well in Providence projects?"
+            }
+          ],
+          "faq": [],
+          "seoTitle": null,
+          "seoDescription": null,
+          "ogTitle": null,
+          "ogDescription": null,
+          "canonicalUrl": null,
+          "internalLinks": [],
+          "schemaJsonLd": null,
+          "status": "PUBLISHED",
+          "publishedAt": "2026-04-05T03:36:50.558Z",
+          "createdByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "updatedByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "createdAt": "2026-04-05T03:34:40.342Z",
+          "updatedAt": "2026-04-05T03:36:50.559Z"
+        }
+      },
+      "public_url": "https://neosgo.com/notes/kitchen-island-pendant-light-spacing-guide/geo/providence-rhode-island"
+    },
+    {
+      "kind": "geo_variant_publish_match",
+      "note_id": "cmnjt91pu000410spox3zdpfl",
+      "note_slug": "kitchen-island-pendant-light-spacing-guide",
+      "variantId": "cmnl7jxqx003g10span3hpk2n",
+      "geo_slug": "boston-massachusetts",
+      "state": "MA",
+      "status": "DRAFT",
+      "published": true,
+      "publish_result": {
+        "variant": {
+          "id": "cmnl7jxqx003g10span3hpk2n",
+          "noteId": "cmnjt91pu000410spox3zdpfl",
+          "slug": "boston-massachusetts",
+          "geoLabel": "Boston, Massachusetts",
+          "city": "Boston",
+          "state": "MA",
+          "geoGroup": "city",
+          "intentKeyword": "boston kitchen island pendant light spacing",
+          "title": "Kitchen Island Pendant Light Spacing Guide in Boston",
+          "description": "A practical guide to sizing, spacing, and hanging pendant lights over a kitchen island. Localized for Boston, MA.",
+          "quickAnswer": "Pendant spacing over a kitchen island should balance island length, fixture width, and visual breathing room between each light. This version is localized for Boston, MA.",
+          "sections": [
+            {
+              "body": "Use the same sizing and placement logic, while adapting finish, warmth, and visual presence to the design preferences commonly seen in Boston projects.",
+              "heading": "What works well in Boston projects?"
+            }
+          ],
+          "faq": [],
+          "seoTitle": null,
+          "seoDescription": null,
+          "ogTitle": null,
+          "ogDescription": null,
+          "canonicalUrl": null,
+          "internalLinks": [],
+          "schemaJsonLd": null,
+          "status": "PUBLISHED",
+          "publishedAt": "2026-04-05T03:36:50.894Z",
+          "createdByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "updatedByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "createdAt": "2026-04-05T03:34:41.050Z",
+          "updatedAt": "2026-04-05T03:36:50.895Z"
+        }
+      },
+      "public_url": "https://neosgo.com/notes/kitchen-island-pendant-light-spacing-guide/geo/boston-massachusetts"
+    },
+    {
+      "kind": "geo_variant_publish_match",
+      "note_id": "cmnjt91pu000410spox3zdpfl",
+      "note_slug": "kitchen-island-pendant-light-spacing-guide",
+      "variantId": "cmnl7jy9j003l10sp7c60vyiv",
+      "geo_slug": "new-haven-connecticut",
+      "state": "CT",
+      "status": "DRAFT",
+      "published": true,
+      "publish_result": {
+        "variant": {
+          "id": "cmnl7jy9j003l10sp7c60vyiv",
+          "noteId": "cmnjt91pu000410spox3zdpfl",
+          "slug": "new-haven-connecticut",
+          "geoLabel": "New Haven, Connecticut",
+          "city": "New Haven",
+          "state": "CT",
+          "geoGroup": "city",
+          "intentKeyword": "new haven kitchen island pendant light spacing",
+          "title": "Kitchen Island Pendant Light Spacing Guide in New Haven",
+          "description": "A practical guide to sizing, spacing, and hanging pendant lights over a kitchen island. Localized for New Haven, CT.",
+          "quickAnswer": "Pendant spacing over a kitchen island should balance island length, fixture width, and visual breathing room between each light. This version is localized for New Haven, CT.",
+          "sections": [
+            {
+              "body": "Use the same sizing and placement logic, while adapting finish, warmth, and visual presence to the design preferences commonly seen in New Haven projects.",
+              "heading": "What works well in New Haven projects?"
+            }
+          ],
+          "faq": [],
+          "seoTitle": null,
+          "seoDescription": null,
+          "ogTitle": null,
+          "ogDescription": null,
+          "canonicalUrl": null,
+          "internalLinks": [],
+          "schemaJsonLd": null,
+          "status": "PUBLISHED",
+          "publishedAt": "2026-04-05T03:36:51.229Z",
+          "createdByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "updatedByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "createdAt": "2026-04-05T03:34:41.719Z",
+          "updatedAt": "2026-04-05T03:36:51.230Z"
+        }
+      },
+      "public_url": "https://neosgo.com/notes/kitchen-island-pendant-light-spacing-guide/geo/new-haven-connecticut"
+    },
+    {
+      "kind": "geo_variant_publish_match",
+      "note_id": "cmnjt91pu000410spox3zdpfl",
+      "note_slug": "kitchen-island-pendant-light-spacing-guide",
+      "variantId": "cmnl7jysf003q10sp4a30yfwc",
+      "geo_slug": "manchester-new-hampshire",
+      "state": "NH",
+      "status": "DRAFT",
+      "published": true,
+      "publish_result": {
+        "variant": {
+          "id": "cmnl7jysf003q10sp4a30yfwc",
+          "noteId": "cmnjt91pu000410spox3zdpfl",
+          "slug": "manchester-new-hampshire",
+          "geoLabel": "Manchester, New Hampshire",
+          "city": "Manchester",
+          "state": "NH",
+          "geoGroup": "city",
+          "intentKeyword": "manchester kitchen island pendant light spacing",
+          "title": "Kitchen Island Pendant Light Spacing Guide in Manchester",
+          "description": "A practical guide to sizing, spacing, and hanging pendant lights over a kitchen island. Localized for Manchester, NH.",
+          "quickAnswer": "Pendant spacing over a kitchen island should balance island length, fixture width, and visual breathing room between each light. This version is localized for Manchester, NH.",
+          "sections": [
+            {
+              "body": "Use the same sizing and placement logic, while adapting finish, warmth, and visual presence to the design preferences commonly seen in Manchester projects.",
+              "heading": "What works well in Manchester projects?"
+            }
+          ],
+          "faq": [],
+          "seoTitle": null,
+          "seoDescription": null,
+          "ogTitle": null,
+          "ogDescription": null,
+          "canonicalUrl": null,
+          "internalLinks": [],
+          "schemaJsonLd": null,
+          "status": "PUBLISHED",
+          "publishedAt": "2026-04-05T03:36:51.574Z",
+          "createdByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "updatedByUserId": "cmlg0yg7k0001bb7d9fcg59k3",
+          "createdAt": "2026-04-05T03:34:42.399Z",
+          "updatedAt": "2026-04-05T03:36:51.575Z"
+        }
+      },
+      "public_url": "https://neosgo.com/notes/kitchen-island-pendant-light-spacing-guide/geo/manchester-new-hampshire"
+    }
+  ],
+  "gaps": [
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "bathroom-vanity-light-size-guide",
+      "geo_slug": "portland-me",
+      "state": "ME"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "bathroom-vanity-light-size-guide",
+      "geo_slug": "burlington-vt",
+      "state": "VT"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "bathroom-vanity-light-size-guide",
+      "geo_slug": "new-york-ny",
+      "state": "NY"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "bathroom-vanity-light-size-guide",
+      "geo_slug": "los-angeles-ca",
+      "state": "CA"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "bathroom-vanity-light-size-guide",
+      "geo_slug": "austin-tx",
+      "state": "TX"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "bathroom-vanity-light-size-guide",
+      "geo_slug": "miami-fl",
+      "state": "FL"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "dining-room-chandelier-size-guide",
+      "geo_slug": "portland-me",
+      "state": "ME"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "dining-room-chandelier-size-guide",
+      "geo_slug": "burlington-vt",
+      "state": "VT"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "dining-room-chandelier-size-guide",
+      "geo_slug": "new-york-ny",
+      "state": "NY"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "dining-room-chandelier-size-guide",
+      "geo_slug": "los-angeles-ca",
+      "state": "CA"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "dining-room-chandelier-size-guide",
+      "geo_slug": "austin-tx",
+      "state": "TX"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "dining-room-chandelier-size-guide",
+      "geo_slug": "miami-fl",
+      "state": "FL"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "living-room-layered-lighting-guide",
+      "geo_slug": "portland-me",
+      "state": "ME"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "living-room-layered-lighting-guide",
+      "geo_slug": "burlington-vt",
+      "state": "VT"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "living-room-layered-lighting-guide",
+      "geo_slug": "new-york-ny",
+      "state": "NY"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "living-room-layered-lighting-guide",
+      "geo_slug": "los-angeles-ca",
+      "state": "CA"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "living-room-layered-lighting-guide",
+      "geo_slug": "austin-tx",
+      "state": "TX"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "living-room-layered-lighting-guide",
+      "geo_slug": "miami-fl",
+      "state": "FL"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "kitchen-island-pendant-light-spacing-guide",
+      "geo_slug": "portland-me",
+      "state": "ME"
+    },
+    {
+      "type": "missing_geo_variant",
+      "note_slug": "kitchen-island-pendant-light-spacing-guide",
+      "geo_slug": "burlington-vt",
+      "state": "VT"
+    }
+  ],
+  "deliveries": []
+}

@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/ops/openclaw_selfheal.py`
+- 文件作用：负责运维脚本中与 `openclaw_selfheal` 相关的诊断、启动或修复逻辑。
+- 顶层函数：utc_now_iso、run_cmd、read_json、write_json、parse_json_output、capture_diagnostics、classify_issues、classify_warnings、write_snapshot、restart_gateway、main。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import json
@@ -18,10 +26,22 @@ GATEWAY_LOG_PATH = Path("/Users/mac_claw/.openclaw/logs/gateway.log")
 
 
 def utc_now_iso() -> str:
+    """
+    中文注解：
+    - 功能：实现 `utc_now_iso` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return datetime.now(timezone.utc).isoformat()
 
 
 def run_cmd(command: List[str], timeout: int = 20) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：实现 `run_cmd` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     try:
         proc = subprocess.run(command, capture_output=True, text=True, check=False, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
@@ -40,17 +60,35 @@ def run_cmd(command: List[str], timeout: int = 20) -> Dict[str, Any]:
 
 
 def read_json(path: Path, default: Any) -> Any:
+    """
+    中文注解：
+    - 功能：实现 `read_json` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if not path.exists():
         return default
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def write_json(path: Path, payload: Any) -> None:
+    """
+    中文注解：
+    - 功能：实现 `write_json` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def parse_json_output(result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：实现 `parse_json_output` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if not result.get("ok"):
         return {}
     try:
@@ -60,6 +98,12 @@ def parse_json_output(result: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def capture_diagnostics() -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：实现 `capture_diagnostics` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     status_result = run_cmd(["openclaw", "gateway", "status", "--json"])
     health_result = run_cmd(["openclaw", "gateway", "health", "--json"])
     status = parse_json_output(status_result)
@@ -104,6 +148,12 @@ def capture_diagnostics() -> Dict[str, Any]:
 
 
 def classify_issues(snapshot: Dict[str, Any]) -> List[str]:
+    """
+    中文注解：
+    - 功能：实现 `classify_issues` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     issues: List[str] = []
     if not snapshot.get("service_running"):
         issues.append("gateway_service_not_running")
@@ -117,6 +167,12 @@ def classify_issues(snapshot: Dict[str, Any]) -> List[str]:
 
 
 def classify_warnings(snapshot: Dict[str, Any]) -> List[str]:
+    """
+    中文注解：
+    - 功能：实现 `classify_warnings` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     warnings: List[str] = []
     if snapshot.get("telegram_effective_ok") and (
         not snapshot.get("telegram_running") or snapshot.get("telegram_token_source") == "none"
@@ -131,6 +187,12 @@ def classify_warnings(snapshot: Dict[str, Any]) -> List[str]:
 
 
 def write_snapshot(snapshot: Dict[str, Any]) -> str:
+    """
+    中文注解：
+    - 功能：实现 `write_snapshot` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     path = SNAPSHOT_ROOT / f"{stamp}.json"
     write_json(path, snapshot)
@@ -138,10 +200,22 @@ def write_snapshot(snapshot: Dict[str, Any]) -> str:
 
 
 def restart_gateway() -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：实现 `restart_gateway` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return run_cmd(["openclaw", "gateway", "restart"], timeout=30)
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     snapshot = capture_diagnostics()
     issues = classify_issues(snapshot)
     warnings = classify_warnings(snapshot)

@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/upstream_watch/watch_updates.py`
+- 文件作用：负责`watch_updates` 相关的一方系统逻辑。
+- 顶层函数：utc_now_iso、read_json、write_json、github_json、fetch_repo_snapshot、classify_change、build_intake_note、render_markdown_report、run_once、main。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import argparse
@@ -22,26 +30,56 @@ CONFIG_PATH = WATCH_ROOT / "repos.json"
 
 
 def utc_now_iso() -> str:
+    """
+    中文注解：
+    - 功能：实现 `utc_now_iso` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return datetime.now(timezone.utc).isoformat()
 
 
 def read_json(path: Path, default):
+    """
+    中文注解：
+    - 功能：实现 `read_json` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     if not path.exists():
         return default
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def write_json(path: Path, payload: object) -> None:
+    """
+    中文注解：
+    - 功能：实现 `write_json` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def github_json(path: str) -> Dict[str, object] | List[Dict[str, object]]:
+    """
+    中文注解：
+    - 功能：实现 `github_json` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     url = f"https://api.github.com{path}"
     token = os.environ.get("GITHUB_TOKEN", "").strip()
     headers = {"Accept": "application/vnd.github+json", "User-Agent": "JinClaw-Upstream-Watch"}
 
     def _request_json(use_token: bool) -> Dict[str, object] | List[Dict[str, object]]:
+        """
+        中文注解：
+        - 功能：实现 `_request_json` 对应的处理逻辑。
+        - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+        - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+        """
         req = urllib.request.Request(url, headers=headers)
         if use_token and token:
             req.add_header("Authorization", f"Bearer {token}")
@@ -57,6 +95,12 @@ def github_json(path: str) -> Dict[str, object] | List[Dict[str, object]]:
 
 
 def fetch_repo_snapshot(source: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `fetch_repo_snapshot` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     repo = str(source["repo"])
     repo_meta = github_json(f"/repos/{repo}")
     try:
@@ -100,6 +144,12 @@ def fetch_repo_snapshot(source: Dict[str, object]) -> Dict[str, object]:
 
 
 def classify_change(previous: Dict[str, object], current: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `classify_change` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     changed_fields: List[str] = []
     if previous.get("pushed_at") != current.get("pushed_at"):
         changed_fields.append("pushed_at")
@@ -120,6 +170,12 @@ def classify_change(previous: Dict[str, object], current: Dict[str, object]) -> 
 
 
 def build_intake_note(source: Dict[str, object], change: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `build_intake_note` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     action = "borrow_and_localize"
     if source["category"] == "upstream-core" and source["priority"] == "critical":
         action = "evaluate_for_real_sync"
@@ -136,6 +192,12 @@ def build_intake_note(source: Dict[str, object], change: Dict[str, object]) -> D
 
 
 def render_markdown_report(items: List[Dict[str, object]]) -> str:
+    """
+    中文注解：
+    - 功能：实现 `render_markdown_report` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     lines = ["# JinClaw Upstream Watch Report", "", f"Generated at: `{utc_now_iso()}`", ""]
     for item in items:
         snapshot = item["snapshot"]
@@ -160,6 +222,12 @@ def render_markdown_report(items: List[Dict[str, object]]) -> str:
 
 
 def run_once() -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `run_once` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     config = read_json(CONFIG_PATH, {"sources": []})
     previous_state = read_json(STATE_PATH, {"repos": {}})
     items = []
@@ -187,6 +255,12 @@ def run_once() -> Dict[str, object]:
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     parser = argparse.ArgumentParser(description="Watch upstream OSS projects that JinClaw depends on or borrows from")
     parser.add_argument("--once", action="store_true", help="Run one check now")
     args = parser.parse_args()

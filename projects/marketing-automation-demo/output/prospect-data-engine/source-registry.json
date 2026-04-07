@@ -1,0 +1,46 @@
+{
+  "items": [
+    {
+      "source_id": "source-prospect-seeds",
+      "source_label": "prospect-seeds.json",
+      "source_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/data/prospect-seeds.json",
+      "source_family": "seed_registry",
+      "source_tier": 0,
+      "raw_record_count": 3,
+      "deduped_record_count": 3,
+      "duplicate_count": 0,
+      "duplicate_rate": 0.0,
+      "average_source_confidence": 0.8433,
+      "quality_rating": "high",
+      "captured_at": "2026-04-06T22:44:10.338814+00:00"
+    },
+    {
+      "source_id": "source-discovered-public-accounts",
+      "source_label": "discovered-public-accounts.json",
+      "source_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/data/raw-imports/discovered-public-accounts.json",
+      "source_family": "unclassified_public_source",
+      "source_tier": 3,
+      "raw_record_count": 0,
+      "deduped_record_count": 0,
+      "duplicate_count": 0,
+      "duplicate_rate": 0.0,
+      "average_source_confidence": 0.0,
+      "quality_rating": "empty",
+      "captured_at": "2026-04-06T22:44:10.340902+00:00"
+    },
+    {
+      "source_id": "source-sample-public-leads",
+      "source_label": "sample-public-leads.csv",
+      "source_path": "/Users/mac_claw/.openclaw/workspace/projects/marketing-automation-demo/data/raw-imports/sample-public-leads.csv",
+      "source_family": "official_websites",
+      "source_tier": 1,
+      "raw_record_count": 2,
+      "deduped_record_count": 2,
+      "duplicate_count": 0,
+      "duplicate_rate": 0.0,
+      "average_source_confidence": 0.825,
+      "quality_rating": "high",
+      "captured_at": "2026-04-06T22:44:10.341150+00:00"
+    }
+  ]
+}

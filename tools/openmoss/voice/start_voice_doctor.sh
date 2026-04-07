@@ -1,4 +1,9 @@
 #!/bin/zsh
+# 中文说明：
+# - 文件路径：`tools/openmoss/voice/start_voice_doctor.sh`
+# - 文件作用：负责`start_voice_doctor` 相关的一方系统逻辑。
+# - 包含 shell 函数：无显式 shell 函数。
+#
 
 set -euo pipefail
 

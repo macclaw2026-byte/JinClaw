@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+中文说明：
+- 文件路径：`tools/openmoss/control_center/security_policy.py`
+- 文件作用：负责控制中心中与 `security_policy` 相关的编排、分析或决策逻辑。
+- 顶层函数：default_security_policy、classify_external_action、assess_plan_risk、main。
+- 顶层类：无顶层类。
+- 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
+"""
 from __future__ import annotations
 
 import json
@@ -16,6 +24,12 @@ DEFAULT_NETWORK_ALLOW_PATTERNS = [
 
 
 def default_security_policy() -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `default_security_policy` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     return {
         "principle": "solve_by_all_reasonable_means_without_crossing_security_boundaries",
         "data_security_first": True,
@@ -43,6 +57,12 @@ def default_security_policy() -> Dict[str, object]:
 
 
 def classify_external_action(action_type: str) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `classify_external_action` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     table = {
         "public_read": {"risk": "low", "approval_mode": "auto_review"},
         "public_download": {"risk": "medium", "approval_mode": "manual_approval"},
@@ -56,6 +76,12 @@ def classify_external_action(action_type: str) -> Dict[str, object]:
 
 
 def assess_plan_risk(plan: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：实现 `assess_plan_risk` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     required = plan.get("external_actions", [])
     assessed = []
     highest = "low"
@@ -69,6 +95,12 @@ def assess_plan_risk(plan: Dict[str, object]) -> Dict[str, object]:
 
 
 def main() -> int:
+    """
+    中文注解：
+    - 功能：实现 `main` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
     print(json.dumps(default_security_policy(), ensure_ascii=False, indent=2))
     return 0
 

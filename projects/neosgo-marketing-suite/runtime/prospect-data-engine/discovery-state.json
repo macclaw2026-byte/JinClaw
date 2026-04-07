@@ -1,0 +1,7 @@
+{
+  "status": "ok",
+  "enabled_target_count": 42,
+  "discovered_count": 27,
+  "failure_count": 15,
+  "raw_import_path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/raw-imports/discovered-public-accounts.json"
+}

@@ -1,0 +1,136 @@
+{
+  "generated_at": "2026-04-07T00:49:26.465764+00:00",
+  "items": [
+    {
+      "target_url": "https://etisales.com",
+      "account_type": "designer",
+      "persona_type": "founder",
+      "geo": "NY",
+      "signal_hints": [
+        "design_led_projects",
+        "trade_program_fit",
+        "public_website_discovery"
+      ],
+      "enabled": true,
+      "retry_attempts": 1,
+      "retry_reason": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: Hostname mismatch, certificate is not valid for 'etisales.com'. (_ssl.c:1129)>",
+      "retry_not_before": "2026-04-07T06:49:26.458606+00:00"
+    },
+    {
+      "target_url": "https://www.cityelectricsupply.com/c/conduit-ducts-strut",
+      "target_id": "generated-target-2-1",
+      "account_type": "electrician",
+      "persona_type": "operations_manager",
+      "geo": "CT",
+      "query_id": null,
+      "query_family": "official_search",
+      "source_family": "official_websites",
+      "signal_hints": [
+        "search_discovery",
+        "installation_trade_fit",
+        "query_discovery"
+      ],
+      "enabled": true,
+      "generated_from_query": "\"electrical contractor\" \"Connecticut\" commercial residential",
+      "generated_from_providers": [
+        "bing_rss"
+      ],
+      "generated_from_provider": "bing_rss",
+      "generated_rank": 1,
+      "query_bias": 0.33,
+      "provider_hits": {
+        "bing_rss": 3
+      },
+      "retry_attempts": 1,
+      "retry_reason": "HTTP Error 403: Forbidden",
+      "retry_not_before": "2026-04-07T06:49:26.458606+00:00"
+    },
+    {
+      "target_url": "https://www.cityelectricsupply.com/",
+      "target_id": "generated-target-2-2",
+      "account_type": "electrician",
+      "persona_type": "operations_manager",
+      "geo": "CT",
+      "query_id": null,
+      "query_family": "official_search",
+      "source_family": "official_websites",
+      "signal_hints": [
+        "search_discovery",
+        "installation_trade_fit",
+        "query_discovery"
+      ],
+      "enabled": true,
+      "generated_from_query": "\"electrical contractor\" \"Connecticut\" commercial residential",
+      "generated_from_providers": [
+        "bing_rss"
+      ],
+      "generated_from_provider": "bing_rss",
+      "generated_rank": 2,
+      "query_bias": 0.33,
+      "provider_hits": {
+        "bing_rss": 3
+      },
+      "retry_attempts": 1,
+      "retry_reason": "HTTP Error 403: Forbidden",
+      "retry_not_before": "2026-04-07T06:49:26.458606+00:00"
+    },
+    {
+      "target_url": "https://www.wayfair.com/lighting/cat/lighting-c215735.html",
+      "target_id": "generated-target-22-1",
+      "account_type": "distributor",
+      "persona_type": "buyer",
+      "geo": "NH",
+      "query_id": null,
+      "query_family": "official_search",
+      "source_family": "official_websites",
+      "signal_hints": [
+        "search_discovery",
+        "dealer_program_fit",
+        "query_discovery"
+      ],
+      "enabled": true,
+      "generated_from_query": "\"lighting distributor\" \"New Hampshire\"",
+      "generated_from_providers": [
+        "bing_rss"
+      ],
+      "generated_from_provider": "bing_rss",
+      "generated_rank": 1,
+      "query_bias": 0.0,
+      "provider_hits": {
+        "bing_rss": 4
+      },
+      "retry_attempts": 6,
+      "retry_reason": "HTTP Error 429: Too Many Requests (CDN PX)",
+      "retry_not_before": "2026-04-07T06:49:26.458606+00:00"
+    },
+    {
+      "target_url": "https://www.homedepot.com/b/Lighting/N-5yc1vZbvn5",
+      "target_id": "generated-target-22-3",
+      "account_type": "distributor",
+      "persona_type": "buyer",
+      "geo": "NH",
+      "query_id": null,
+      "query_family": "official_search",
+      "source_family": "official_websites",
+      "signal_hints": [
+        "search_discovery",
+        "dealer_program_fit",
+        "query_discovery"
+      ],
+      "enabled": true,
+      "generated_from_query": "\"lighting distributor\" \"New Hampshire\"",
+      "generated_from_providers": [
+        "bing_rss"
+      ],
+      "generated_from_provider": "bing_rss",
+      "generated_rank": 3,
+      "query_bias": 0.0,
+      "provider_hits": {
+        "bing_rss": 4
+      },
+      "retry_attempts": 6,
+      "retry_reason": "HTTP Error 403: Forbidden",
+      "retry_not_before": "2026-04-07T06:49:26.458606+00:00"
+    }
+  ]
+}

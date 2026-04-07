@@ -1,0 +1,63 @@
+{
+  "site": "1688",
+  "last_evaluated": "2026-04-05",
+  "mode": "anonymous_truth_check_only",
+  "confidence": "low",
+  "tested_tools": [
+    "curl-cffi",
+    "playwright",
+    "scrapy-cffi"
+  ],
+  "preferred_tool_order": [
+    "curl-cffi",
+    "playwright",
+    "scrapy-cffi"
+  ],
+  "blocked_tools": [
+    "curl-cffi",
+    "playwright",
+    "scrapy-cffi"
+  ],
+  "usable_tools": [],
+  "first_choice_extraction_mode": "blocked_or_insufficient_evidence",
+  "selected_tool": "",
+  "task_output_fields": {},
+  "fallback_policy": "Start with the first preferred tool; if blocked/weak, step through the remaining preferred tools in order. Trigger full all-tools re-evaluation when the top path degrades materially.",
+  "known_failure_modes": [
+    {
+      "tool": "curl-cffi",
+      "status": "blocked",
+      "reasons": [
+        "captcha",
+        "punish",
+        "x5secdata"
+      ]
+    },
+    {
+      "tool": "playwright",
+      "status": "blocked",
+      "reasons": [
+        "captcha",
+        "punish",
+        "nocaptcha"
+      ]
+    },
+    {
+      "tool": "scrapy-cffi",
+      "status": "blocked",
+      "reasons": [
+        "x5secdata"
+      ]
+    }
+  ],
+  "authenticated_mode": {
+    "supported": true,
+    "mode": "browser_authorized_session",
+    "policy": [
+      "需要用户明确授权后才可进入登录态自动化。",
+      "优先使用浏览器型工具完成一次正常登录，而不是把凭证分发给所有抓取栈。",
+      "登录态 profile 与匿名 profile 必须分开记录。",
+      "若遇到 slider/captcha/device-risk，需要人工介入，不做绕过。"
+    ]
+  }
+}

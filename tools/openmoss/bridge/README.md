@@ -1,26 +1,17 @@
-# OpenMOSS Bridge Runtime
+# Legacy Bridge Retired
 
-这个目录预留给本地的 IMClaw / OpenMOSS bridge 运行时。
+这个目录原本承载 IMClaw / OpenMOSS bridge 旁路接入。
 
-建议后续放入：
+当前系统已经收敛为：
 
-- `bridge_runner.py`
-- `process_queue.py`
-- `reply_router.py`
-- `bridge_status.json`
-- `queue/`
-- `processed/`
-- `sessions/`
-- `group_settings.yaml`
+- 主聊天接入：OpenClaw 原生 `channels.telegram`
+- 主执行链：OpenClaw gateway + JinClaw autonomy runtime
 
-## 目标
+因此旧 bridge 运行链已经退役，不再参与：
 
-把 `OpenMOSS/imclaw-skill` 的能力做成适合当前 OpenClaw 工作区的本地运行时。
+- 收件
+- 派发
+- outbox 回发
+- 运维体检主链
 
-## 原则
-
-- 运行时与技能说明分离
-- 状态外置
-- 回复链可验证
-- 错误可恢复
-- 安全边界明确
+如果未来要增加新的聊天通道，请直接使用 `openclaw configure` 或 OpenClaw 原生 channel 机制，而不是恢复这套 bridge。
