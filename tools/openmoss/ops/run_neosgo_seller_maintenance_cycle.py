@@ -251,6 +251,33 @@ def _run_import_phase(base: str, token: str, candidates: list[dict], import_limi
             product_id = product_ids[0]
             row["product_id"] = product_id
             listing = _fetch_listing_detail(base, token, product_id)
+            status_payload = _fetch_listing_status(base, token, product_id)
+            row["post_import_status"] = listing.get("status") or status_payload.get("status")
+            row["editable_via_automation"] = bool(
+                listing.get("editableViaAutomation", status_payload.get("editableViaAutomation"))
+            )
+            row["inventory_editable_via_automation"] = bool(
+                listing.get("inventoryEditableViaAutomation", status_payload.get("inventoryEditableViaAutomation"))
+            )
+            if not row["editable_via_automation"]:
+                candidate_qty = candidate.get("quantityAvailable")
+                current_qty = ((listing.get("inventory") or {}).get("quantityAvailable"))
+                row["skipped_reason"] = "import_resolved_to_noneditable_existing_listing"
+                if row["inventory_editable_via_automation"]:
+                    try:
+                        candidate_qty_int = int(candidate_qty)
+                    except (TypeError, ValueError):
+                        candidate_qty_int = None
+                    if candidate_qty_int and candidate_qty_int > 0 and current_qty != candidate_qty_int:
+                        inventory_patch = _patch_listing(base, token, product_id, {"quantityAvailable": candidate_qty_int})
+                        row["inventory_patch_ok"] = bool(inventory_patch.get("ok"))
+                        if not inventory_patch.get("ok"):
+                            row["error"] = RUNNER.extract_request_error_message("inventory_patch", inventory_patch)
+                    else:
+                        row["inventory_patch_ok"] = False
+                rows.append(row)
+                time.sleep(DEFAULT_SLEEP_SECONDS)
+                continue
             payload = _build_listing_payload(listing, candidate)
             patch = _patch_listing(base, token, product_id, payload)
             row["patch_ok"] = bool(patch.get("ok"))
@@ -280,7 +307,7 @@ def _run_import_phase(base: str, token: str, candidates: list[dict], import_limi
             "eligibleCount": len(todo),
             "processedCount": len(rows),
             "successCount": sum(1 for row in rows if row.get("submit_ok")),
-            "failureCount": sum(1 for row in rows if row.get("error") or row.get("exception")),
+            "failureCount": sum(1 for row in rows if (row.get("error") or row.get("exception")) and not row.get("skipped_reason")),
             "draftListingSkuCount": len(draft_listing_skus),
         },
         "rows": rows,
