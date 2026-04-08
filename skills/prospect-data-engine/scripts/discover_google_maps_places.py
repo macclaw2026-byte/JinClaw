@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
+import textwrap
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus, urlparse
@@ -17,6 +19,7 @@ WEBSITE_RE = re.compile(r"^\[.*Website.*\]\((https?://[^)]+)\)$", re.I)
 PLACE_LINK_RE = re.compile(r"^\[\]\((https://www\.google\.com/maps/place/[^)]+)\)$", re.I)
 RATING_RE = re.compile(r"^\d+(?:\.\d+)?$")
 QUERY_ID_SANITIZE_RE = re.compile(r"[^a-z0-9]+")
+PHONE_RE = re.compile(r"\(\d{3}\)\s*\d{3}-\d{4}")
 STATE_GROUPS = {
     "ME": "new_england",
     "NH": "new_england",
@@ -158,6 +161,80 @@ def _fetch_markdown(query: str) -> str:
     request = Request(url, headers={"User-Agent": USER_AGENT})
     with urlopen(request, timeout=18) as response:
         return response.read().decode("utf-8", "ignore")
+
+
+def _workspace_root() -> Path:
+    current = Path(__file__).resolve()
+    for parent in current.parents:
+        if parent.name == "workspace":
+            return parent
+    return current.parents[4]
+
+
+def _fetch_maps_cards_via_playwright(query: str) -> list[dict[str, Any]]:
+    workspace_root = _workspace_root()
+    venv_python = workspace_root / "tools" / "matrix-venv" / "bin" / "python"
+    if not venv_python.exists():
+        raise RuntimeError(f"playwright runtime missing at {venv_python}")
+    script = textwrap.dedent(
+        r"""
+        from playwright.sync_api import sync_playwright
+        import json, sys
+        from urllib.parse import quote_plus
+
+        query = sys.argv[1]
+        url = f"https://www.google.com/maps/search/{quote_plus(query)}"
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 1440, "height": 1400})
+            page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=12000)
+            except Exception:
+                pass
+
+            for _ in range(3):
+                try:
+                    page.eval_on_selector('[role="feed"]', "(el) => { el.scrollTop = el.scrollHeight; }")
+                    page.wait_for_timeout(1200)
+                except Exception:
+                    break
+
+            data = page.evaluate(
+                '''() => {
+                  const cards = [...document.querySelectorAll('div[role="article"]')];
+                  return cards.map((card) => {
+                    const place = card.querySelector('a[href*="/maps/place/"]');
+                    const links = [...card.querySelectorAll('a[href]')].map((el) => ({
+                      href: el.href || '',
+                      text: (el.innerText || '').trim(),
+                      aria: el.getAttribute('aria-label') || ''
+                    }));
+                    return {
+                      aria_label: place ? (place.getAttribute('aria-label') || '') : '',
+                      place_url: place ? (place.href || '') : '',
+                      card_text: (card.innerText || '').trim(),
+                      links
+                    };
+                  });
+                }'''
+            )
+            browser.close()
+        print(json.dumps({"items": data}, ensure_ascii=False))
+        """
+    )
+    completed = subprocess.run(
+        [str(venv_python), "-c", script, query],
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError((completed.stderr or completed.stdout or "playwright maps fetch failed").strip())
+    payload = json.loads(completed.stdout)
+    return list(payload.get("items", []) or [])
 
 
 def _safe_query_id(state: str, query: str) -> str:
@@ -351,6 +428,86 @@ def _parse_markdown_results(markdown: str, state: str, group: str, query: str) -
     return rows
 
 
+def _parse_card_text(card_text: str, aria_label: str) -> tuple[str, str, str, str]:
+    lines = [line.strip() for line in card_text.splitlines() if line.strip()]
+    if lines and lines[0].lower() == "sponsored":
+        lines = lines[1:]
+    company_name = aria_label.strip() or (lines[0] if lines else "")
+    category = ""
+    address = ""
+    phone = ""
+    for line in lines[1:]:
+        if not category and any(token in line.lower() for token in ("interior", "decorator", "architect", "designer")):
+            if "·" in line:
+                category, address = [part.strip() for part in line.split("·", 1)]
+            else:
+                category = line.strip()
+        if not phone:
+            phone_match = PHONE_RE.search(line)
+            if phone_match:
+                phone = phone_match.group(0)
+    return company_name, category, address, phone
+
+
+def _parse_playwright_results(cards: list[dict[str, Any]], state: str, group: str, query: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen_place_urls: set[str] = set()
+    for card in cards:
+        place_url = str(card.get("place_url") or "").strip()
+        if not place_url or place_url in seen_place_urls:
+            continue
+        seen_place_urls.add(place_url)
+        links = list(card.get("links", []) or [])
+        website = ""
+        for link in links:
+            href = str(link.get("href") or "").strip()
+            if not href:
+                continue
+            lowered = href.lower()
+            if "google.com/maps/place/" in lowered:
+                continue
+            if "google.com/aclk" in lowered:
+                continue
+            if "google.com" in lowered:
+                continue
+            website = href
+            break
+        company_name, category, address, phone = _parse_card_text(str(card.get("card_text") or ""), str(card.get("aria_label") or ""))
+        if not company_name:
+            continue
+        rows.append(
+            {
+                "company_name": company_name,
+                "website_root_domain": _root_domain(website),
+                "website": website,
+                "email": "",
+                "source_url": place_url,
+                "account_type": "designer",
+                "persona_type": "founder",
+                "geo": f"{state} / {group}".strip(" /"),
+                "signals": [
+                    "google_maps_interior_designer_search",
+                    "google_maps_browser_rendered",
+                    f"region_{state.lower()}",
+                    f"query:{query}",
+                ],
+                "reachability_status": "form_available" if website else "unknown",
+                "source_confidence": 0.96 if website else 0.8,
+                "source_family": "google_maps_places",
+                "query_id": _safe_query_id(state, query),
+                "discovery_query": query,
+                "query_family": "google_maps_interior_designer",
+                "generated_from_provider": "google_maps_playwright_browser",
+                "place_url": place_url,
+                "rating": "",
+                "category": category,
+                "formatted_address": address,
+                "phone": phone,
+            }
+        )
+    return rows
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Discover Google Maps leads for NEOSGO via browser-style crawling, without API keys.")
     parser.add_argument("--project-root", required=True)
@@ -392,8 +549,8 @@ def main() -> int:
         group = item["group"]
         query = item["query"]
         try:
-            markdown = _fetch_markdown(query)
-            parsed_rows = _parse_markdown_results(markdown, state, group, query)
+            cards = _fetch_maps_cards_via_playwright(query)
+            parsed_rows = _parse_playwright_results(cards, state, group, query)
             deduped_rows = []
             for row in parsed_rows:
                 dedupe_key = (row.get("company_name", "").strip().lower(), row.get("website_root_domain", "").strip().lower())
