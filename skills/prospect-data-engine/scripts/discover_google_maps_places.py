@@ -334,6 +334,7 @@ def _state_discovered_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
 
 def _update_phase_progress(
     runtime_state: dict[str, Any],
+    planned_queries: list[dict[str, str]],
     selected_queries: list[dict[str, str]],
     query_runs: list[dict[str, Any]],
     rows: list[dict[str, Any]],
@@ -372,16 +373,25 @@ def _update_phase_progress(
     for state in NEW_ENGLAND_COUNTIES:
         state_to_queries.setdefault(state, [])
 
+    planned_query_ids_by_state: dict[str, set[str]] = {}
+    for item in planned_queries:
+        state = str(item.get("state", "")).strip()
+        query = str(item.get("query", "")).strip()
+        if not state or not query:
+            continue
+        planned_query_ids_by_state.setdefault(state, set()).add(_safe_query_id(state, query))
+    for state in NEW_ENGLAND_COUNTIES:
+        planned_query_ids_by_state.setdefault(state, set())
+
     for state, query_ids in state_to_queries.items():
         previous = dict(state_stats.get(state, {}) or {})
         previous_max = int(previous.get("max_discovered_count", 0))
         current_count = int(discovered_counts.get(state, 0))
         successful_queries = 0
-        total_queries = 0
-        for query_id, stat in query_stats.items():
-            if stat.get("state") != state:
-                continue
-            total_queries += 1
+        planned_query_ids = planned_query_ids_by_state.get(state, set())
+        total_queries = len(planned_query_ids)
+        for query_id in planned_query_ids:
+            stat = dict(query_stats.get(query_id, {}) or {})
             if int(stat.get("success_count", 0)) > 0:
                 successful_queries += 1
         stable_no_growth_runs = int(previous.get("stable_no_growth_runs", 0))
@@ -707,7 +717,13 @@ def main() -> int:
     if rows:
         _write_json(last_success_path, {"items": rows})
     next_cursor = (cursor + len(selected_queries)) % len(flattened_queries) if flattened_queries else 0
-    phase_progress = _update_phase_progress(runtime_state, selected_queries, query_runs, rows)
+    phase_progress = _update_phase_progress(
+        runtime_state,
+        flattened_queries,
+        selected_queries,
+        query_runs,
+        rows,
+    )
     _write_json(
         runtime_state_path,
         {
