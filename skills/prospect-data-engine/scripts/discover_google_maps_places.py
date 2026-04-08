@@ -530,9 +530,10 @@ def main() -> int:
         return 0
 
     region_plan = list(capture.get("region_plan", []) or [])
+    coverage_scope = str(capture.get("coverage_scope", "contiguous_us_48")).strip().lower()
     if capture.get("new_england_exhaustive", True):
         region_plan = _expand_new_england_exhaustive(region_plan)
-    if str(capture.get("coverage_scope", "contiguous_us_48")).strip().lower() == "contiguous_us_48":
+    if coverage_scope == "contiguous_us_48":
         region_plan = _expand_to_contiguous_48(region_plan)
     flattened_queries = _flatten_queries(region_plan)
     max_queries_per_run = int(capture.get("max_queries_per_run", 8) or 8)
