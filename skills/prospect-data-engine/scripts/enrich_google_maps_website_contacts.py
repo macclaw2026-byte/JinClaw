@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 
 EMAIL_RE = re.compile(r"([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})", re.I)
 CONTACT_HINT_RE = re.compile(r"(contact|about|team|studio|trade|connect)", re.I)
+FORM_HINT_RE = re.compile(r"(contact|quote|project|inquiry|enquiry|consult|trade|partner)", re.I)
 BLOCKED_EMAIL_PREFIXES = {"noreply", "no-reply", "donotreply", "do-not-reply", "example"}
 BLOCKED_EMAIL_PATTERNS = ("sentry", "user@domain.com")
 APPROVED_WEBSITE_TERMS = (
@@ -63,7 +64,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def _fetch_html(url: str) -> str:
     request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urlopen(request, timeout=20) as response:
+    with urlopen(request, timeout=8) as response:
         return response.read().decode("utf-8", "ignore")
 
 
@@ -85,7 +86,7 @@ def _extract_candidate_links(base_url: str, html: str) -> list[str]:
             continue
         seen.add(link)
         deduped.append(link)
-    return deduped[:4]
+    return deduped[:2]
 
 
 def _website_root_domain(url: str) -> str:
@@ -124,6 +125,31 @@ def _website_fit_assessment(page_html_map: dict[str, str]) -> tuple[str, list[st
     if review_hits:
         return "review", review_hits[:5]
     return "unknown", []
+
+
+def _detect_contact_form(page_html_map: dict[str, str]) -> tuple[bool, str, list[str]]:
+    for page, html in page_html_map.items():
+        lowered = html.lower()
+        signals: list[str] = []
+        if "<form" not in lowered and "hubspot-form" not in lowered and "wpforms" not in lowered and "formspree" not in lowered:
+            continue
+        if "<form" in lowered:
+            signals.append("html_form_tag")
+        if "type=\"email\"" in lowered or "type='email'" in lowered:
+            signals.append("email_field")
+        if "<textarea" in lowered:
+            signals.append("textarea_field")
+        if "hubspot" in lowered:
+            signals.append("hubspot_form")
+        if "formspree" in lowered:
+            signals.append("formspree")
+        if "wpforms" in lowered:
+            signals.append("wpforms")
+        if FORM_HINT_RE.search(page):
+            signals.append("contact_like_url")
+        if signals:
+            return True, page, signals[:6]
+    return False, "", []
 
 
 def main() -> int:
@@ -168,11 +194,17 @@ def main() -> int:
                 crawled_pages = list(cached.get("crawled_pages", []) or [])
                 website_fit_status = str(cached.get("website_fit_status", "unknown"))
                 website_fit_reasons = list(cached.get("website_fit_reasons", []) or [])
+                contact_form_detected = bool(cached.get("contact_form_detected", False))
+                contact_form_url = str(cached.get("contact_form_url", ""))
+                contact_form_signals = list(cached.get("contact_form_signals", []) or [])
             elif checked_sites >= max_sites_per_run:
                 validation_reason = "pending_batch"
                 deferred_count += 1
                 website_fit_status = "pending_batch"
                 website_fit_reasons = []
+                contact_form_detected = False
+                contact_form_url = ""
+                contact_form_signals = []
             else:
                 try:
                     homepage_html = _fetch_html(website)
@@ -210,20 +242,30 @@ def main() -> int:
                     if not email and deduped:
                         validation_reason = "no_valid_email_after_validation"
                     website_fit_status, website_fit_reasons = _website_fit_assessment(page_html_map)
+                    contact_form_detected, contact_form_url, contact_form_signals = _detect_contact_form(page_html_map)
                 except Exception as exc:  # noqa: BLE001
                     validation_reason = f"fetch_failed:{exc}"
                     website_fit_status = "unknown"
                     website_fit_reasons = []
+                    contact_form_detected = False
+                    contact_form_url = ""
+                    contact_form_signals = []
                 website_cache[website] = {
                     "email": email,
                     "validation_reason": validation_reason,
                     "crawled_pages": list(crawled_pages),
                     "website_fit_status": website_fit_status,
                     "website_fit_reasons": list(website_fit_reasons),
+                    "contact_form_detected": contact_form_detected,
+                    "contact_form_url": contact_form_url,
+                    "contact_form_signals": list(contact_form_signals),
                 }
         else:
             website_fit_status = "unknown"
             website_fit_reasons = []
+            contact_form_detected = False
+            contact_form_url = ""
+            contact_form_signals = []
 
         enriched.append(
             {
@@ -231,11 +273,22 @@ def main() -> int:
                 "email": email,
                 "email_validation_status": "valid" if email else "invalid_or_missing",
                 "email_validation_reason": validation_reason,
-                "reachability_status": "email_verified" if email else item.get("reachability_status", "unknown"),
+                "reachability_status": (
+                    "form_and_email_available"
+                    if email and contact_form_detected
+                    else "email_verified"
+                    if email
+                    else "form_available"
+                    if contact_form_detected
+                    else item.get("reachability_status", "unknown")
+                ),
                 "signals": list(item.get("signals", [])) + ([f"email_validation:{validation_reason}"] if validation_reason else []),
                 "crawled_pages": crawled_pages,
                 "website_fit_status": website_fit_status,
                 "website_fit_reasons": website_fit_reasons,
+                "contact_form_detected": contact_form_detected,
+                "contact_form_url": contact_form_url,
+                "contact_form_signals": contact_form_signals,
             }
         )
 
@@ -246,6 +299,7 @@ def main() -> int:
         "deferred_count": deferred_count,
         "email_candidate_count": email_candidate_count,
         "validated_email_count": validated_email_count,
+        "contact_form_detected_count": len([item for item in enriched if item.get("contact_form_detected")]),
         "raw_import_path": str(output_path),
     }
     _write_json(report_path, report)

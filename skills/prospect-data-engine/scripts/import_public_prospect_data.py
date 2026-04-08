@@ -204,8 +204,13 @@ def _infer_reachability(raw: dict) -> str:
         return direct
     email = _first_nonempty(raw, ["email"])
     website = _first_nonempty(raw, ["website", "website_url", "site"])
+    contact_form_detected = bool(raw.get("contact_form_detected", False))
+    if email and contact_form_detected:
+        return "form_and_email_available"
     if email:
         return "email_verified"
+    if contact_form_detected:
+        return "form_available"
     if website:
         return "form_available"
     return "unknown"
@@ -238,6 +243,9 @@ def _normalize_seed(raw: dict, index: int, source_label: str = "") -> dict:
         "phone": _first_nonempty(raw, ["phone"]),
         "website_fit_status": _first_nonempty(raw, ["website_fit_status"]),
         "website_fit_reasons": raw.get("website_fit_reasons", []),
+        "contact_form_detected": bool(raw.get("contact_form_detected", False)),
+        "contact_form_url": _first_nonempty(raw, ["contact_form_url"]),
+        "contact_form_signals": raw.get("contact_form_signals", []),
         "query_id": _first_nonempty(raw, ["query_id"]),
         "discovery_query": _first_nonempty(raw, ["discovery_query", "generated_from_query"]),
         "query_family": _first_nonempty(raw, ["query_family"]),

@@ -117,6 +117,22 @@ CONTIGUOUS_STATE_NAMES = {
     "WI": "Wisconsin",
     "WY": "Wyoming",
 }
+NEW_ENGLAND_COUNTIES = {
+    "RI": ["Bristol County", "Kent County", "Newport County", "Providence County", "Washington County"],
+    "MA": ["Barnstable County", "Berkshire County", "Bristol County", "Dukes County", "Essex County", "Franklin County", "Hampden County", "Hampshire County", "Middlesex County", "Nantucket County", "Norfolk County", "Plymouth County", "Suffolk County", "Worcester County"],
+    "CT": ["Fairfield County", "Hartford County", "Litchfield County", "Middlesex County", "New Haven County", "New London County", "Tolland County", "Windham County"],
+    "NH": ["Belknap County", "Carroll County", "Cheshire County", "Coos County", "Grafton County", "Hillsborough County", "Merrimack County", "Rockingham County", "Strafford County", "Sullivan County"],
+    "ME": ["Androscoggin County", "Aroostook County", "Cumberland County", "Franklin County", "Hancock County", "Kennebec County", "Knox County", "Lincoln County", "Oxford County", "Penobscot County", "Piscataquis County", "Sagadahoc County", "Somerset County", "Waldo County", "Washington County", "York County"],
+    "VT": ["Addison County", "Bennington County", "Caledonia County", "Chittenden County", "Essex County", "Franklin County", "Grand Isle County", "Lamoille County", "Orange County", "Orleans County", "Rutland County", "Washington County", "Windham County", "Windsor County"],
+}
+NEW_ENGLAND_PRIORITY_CITIES = {
+    "RI": ["Providence RI", "Warwick RI", "Newport RI", "Cranston RI"],
+    "MA": ["Boston MA", "Cambridge MA", "Worcester MA", "Newton MA", "Brookline MA", "Somerville MA"],
+    "CT": ["New Haven CT", "Stamford CT", "Hartford CT", "Greenwich CT", "Westport CT"],
+    "NH": ["Manchester NH", "Nashua NH", "Portsmouth NH", "Concord NH"],
+    "ME": ["Portland ME", "Bangor ME", "Kennebunk ME", "Kennebunkport ME"],
+    "VT": ["Burlington VT", "Stowe VT", "Montpelier VT", "Manchester VT"],
+}
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -178,6 +194,41 @@ def _expand_to_contiguous_48(region_plan: list[dict[str, Any]]) -> list[dict[str
                 "queries": [
                     f"interior designer in {state_name}",
                 ],
+            }
+        )
+    return expanded
+
+
+def _expand_new_england_exhaustive(region_plan: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    expanded: list[dict[str, Any]] = []
+    for item in region_plan:
+        state = str(item.get("state", "")).strip()
+        if state not in NEW_ENGLAND_COUNTIES:
+            expanded.append(item)
+            continue
+        state_name = CONTIGUOUS_STATE_NAMES.get(state, state)
+        query_set: list[str] = []
+        seen_queries: set[str] = set()
+
+        def add_query(query: str) -> None:
+            normalized = query.strip()
+            if not normalized or normalized in seen_queries:
+                return
+            seen_queries.add(normalized)
+            query_set.append(normalized)
+
+        add_query(f"interior designer in {state_name}")
+        for query in list(item.get("queries", []) or []):
+            add_query(str(query))
+        for county in NEW_ENGLAND_COUNTIES[state]:
+            add_query(f"interior designer in {county} {state}")
+        for city in NEW_ENGLAND_PRIORITY_CITIES.get(state, []):
+            add_query(f"interior designer in {city}")
+
+        expanded.append(
+            {
+                **item,
+                "queries": query_set,
             }
         )
     return expanded
@@ -322,6 +373,8 @@ def main() -> int:
         return 0
 
     region_plan = list(capture.get("region_plan", []) or [])
+    if capture.get("new_england_exhaustive", True):
+        region_plan = _expand_new_england_exhaustive(region_plan)
     if str(capture.get("coverage_scope", "contiguous_us_48")).strip().lower() == "contiguous_us_48":
         region_plan = _expand_to_contiguous_48(region_plan)
     flattened_queries = _flatten_queries(region_plan)
