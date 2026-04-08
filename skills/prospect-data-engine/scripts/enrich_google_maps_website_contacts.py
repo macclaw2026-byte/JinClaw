@@ -15,6 +15,41 @@ from urllib.request import Request, urlopen
 EMAIL_RE = re.compile(r"([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})", re.I)
 CONTACT_HINT_RE = re.compile(r"(contact|about|team|studio|trade|connect)", re.I)
 BLOCKED_EMAIL_PREFIXES = {"noreply", "no-reply", "donotreply", "do-not-reply", "example"}
+BLOCKED_EMAIL_PATTERNS = ("sentry", "user@domain.com")
+APPROVED_WEBSITE_TERMS = (
+    "interior design",
+    "interior designer",
+    "residential interiors",
+    "commercial interiors",
+    "hospitality design",
+    "space planning",
+    "furnishings",
+    "lighting design",
+    "decorative lighting",
+    "kitchen and bath",
+    "kitchen & bath",
+)
+REVIEW_WEBSITE_TERMS = (
+    "home decor",
+    "staging",
+    "design studio",
+    "custom home",
+    "renovation",
+    "builder",
+)
+REJECT_WEBSITE_TERMS = (
+    "landscape design",
+    "landscaping",
+    "painting services",
+    "paint contractor",
+    "floral design",
+    "event florist",
+    "digital magazine",
+    "publisher",
+    "property management",
+    "organized home",
+    "home organizing",
+)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -64,6 +99,8 @@ def _email_is_realish(email: str, website_domain: str) -> tuple[bool, str]:
     local, _, domain = email.partition("@")
     if local in BLOCKED_EMAIL_PREFIXES:
         return False, "blocked_prefix"
+    if any(pattern in email for pattern in BLOCKED_EMAIL_PATTERNS):
+        return False, "blocked_pattern"
     try:
         socket.getaddrinfo(domain, None)
     except OSError:
@@ -71,6 +108,22 @@ def _email_is_realish(email: str, website_domain: str) -> tuple[bool, str]:
     if website_domain and (domain == website_domain or domain.endswith(f".{website_domain}")):
         return True, "domain_match"
     return True, "domain_resolves"
+
+
+def _website_fit_assessment(page_html_map: dict[str, str]) -> tuple[str, list[str]]:
+    corpus = "\n".join(page_html_map.values()).lower()
+    approved_hits = [term for term in APPROVED_WEBSITE_TERMS if term in corpus]
+    reject_hits = [term for term in REJECT_WEBSITE_TERMS if term in corpus]
+    review_hits = [term for term in REVIEW_WEBSITE_TERMS if term in corpus]
+    if approved_hits and not reject_hits:
+        return "approved", approved_hits[:5]
+    if reject_hits and not approved_hits:
+        return "reject", reject_hits[:5]
+    if approved_hits and reject_hits:
+        return "review", [f"mixed:{approved_hits[0]}", f"mixed:{reject_hits[0]}"]
+    if review_hits:
+        return "review", review_hits[:5]
+    return "unknown", []
 
 
 def main() -> int:
@@ -113,9 +166,13 @@ def main() -> int:
                 email = str(cached.get("email", ""))
                 validation_reason = str(cached.get("validation_reason", "unknown"))
                 crawled_pages = list(cached.get("crawled_pages", []) or [])
+                website_fit_status = str(cached.get("website_fit_status", "unknown"))
+                website_fit_reasons = list(cached.get("website_fit_reasons", []) or [])
             elif checked_sites >= max_sites_per_run:
                 validation_reason = "pending_batch"
                 deferred_count += 1
+                website_fit_status = "pending_batch"
+                website_fit_reasons = []
             else:
                 try:
                     homepage_html = _fetch_html(website)
@@ -152,13 +209,21 @@ def main() -> int:
                             break
                     if not email and deduped:
                         validation_reason = "no_valid_email_after_validation"
+                    website_fit_status, website_fit_reasons = _website_fit_assessment(page_html_map)
                 except Exception as exc:  # noqa: BLE001
                     validation_reason = f"fetch_failed:{exc}"
+                    website_fit_status = "unknown"
+                    website_fit_reasons = []
                 website_cache[website] = {
                     "email": email,
                     "validation_reason": validation_reason,
                     "crawled_pages": list(crawled_pages),
+                    "website_fit_status": website_fit_status,
+                    "website_fit_reasons": list(website_fit_reasons),
                 }
+        else:
+            website_fit_status = "unknown"
+            website_fit_reasons = []
 
         enriched.append(
             {
@@ -169,6 +234,8 @@ def main() -> int:
                 "reachability_status": "email_verified" if email else item.get("reachability_status", "unknown"),
                 "signals": list(item.get("signals", [])) + ([f"email_validation:{validation_reason}"] if validation_reason else []),
                 "crawled_pages": crawled_pages,
+                "website_fit_status": website_fit_status,
+                "website_fit_reasons": website_fit_reasons,
             }
         )
 

@@ -194,6 +194,21 @@ def _select_query_window(items: list[dict[str, str]], start: int, size: int) -> 
     return selected
 
 
+def _dedupe_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, str, str]] = set()
+    for row in rows:
+        place_url = str(row.get("place_url") or row.get("source_url") or "").strip().lower()
+        company_name = str(row.get("company_name") or "").strip().lower()
+        website_root_domain = str(row.get("website_root_domain") or "").strip().lower()
+        dedupe_key = (place_url, company_name, website_root_domain)
+        if dedupe_key in seen_keys:
+            continue
+        seen_keys.add(dedupe_key)
+        deduped.append(row)
+    return sorted(deduped, key=lambda item: (item.get("geo", ""), item.get("company_name", "")))
+
+
 def _parse_markdown_results(markdown: str, state: str, group: str, query: str) -> list[dict[str, Any]]:
     lines = [line.strip() for line in markdown.splitlines()]
     rows: list[dict[str, Any]] = []
@@ -356,12 +371,12 @@ def main() -> int:
                 }
             )
 
-    rows = sorted(all_rows, key=lambda item: (item.get("geo", ""), item.get("company_name", "")))
+    rows = _dedupe_rows([*cached_items, *all_rows])
     status = "ok"
     used_cached_results = False
     cached_last_success = _read_json(last_success_path)
     cached_last_success_items = list(cached_last_success.get("items", []) or [])
-    if not rows and failure_count:
+    if not all_rows and failure_count:
         if cached_items:
             rows = cached_items
             status = "rate_limited_using_cached_results"
@@ -376,7 +391,7 @@ def main() -> int:
         used_cached_results = True
 
     _write_json(output_path, {"items": rows})
-    if all_rows:
+    if rows:
         _write_json(last_success_path, {"items": rows})
     next_cursor = (cursor + len(selected_queries)) % len(flattened_queries) if flattened_queries else 0
     _write_json(

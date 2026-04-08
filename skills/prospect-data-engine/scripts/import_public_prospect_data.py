@@ -236,6 +236,8 @@ def _normalize_seed(raw: dict, index: int, source_label: str = "") -> dict:
         "category": _first_nonempty(raw, ["category", "primary_type"]),
         "formatted_address": _first_nonempty(raw, ["formatted_address"]),
         "phone": _first_nonempty(raw, ["phone"]),
+        "website_fit_status": _first_nonempty(raw, ["website_fit_status"]),
+        "website_fit_reasons": raw.get("website_fit_reasons", []),
         "query_id": _first_nonempty(raw, ["query_id"]),
         "discovery_query": _first_nonempty(raw, ["discovery_query", "generated_from_query"]),
         "query_family": _first_nonempty(raw, ["query_family"]),
@@ -248,10 +250,18 @@ def _assess_neosgo_fit(seed: dict) -> tuple[str, list[str]]:
     company_name = (seed.get("company_name") or "").strip().lower()
     category = (seed.get("category") or "").strip().lower()
     website = (seed.get("website_root_domain") or "").strip().lower()
+    website_fit_status = (seed.get("website_fit_status") or "").strip().lower()
+    website_fit_reasons = list(seed.get("website_fit_reasons", []) or [])
 
     reasons: list[str] = []
 
     if source_family == "google_maps_places":
+        if website_fit_status == "approved":
+            return "approved", ["approved_website_fit", *website_fit_reasons[:4]]
+        if website_fit_status == "reject":
+            return "reject", ["rejected_website_fit", *website_fit_reasons[:4]]
+        if website_fit_status == "review":
+            return "review", ["review_website_fit", *website_fit_reasons[:4]]
         if any(keyword in category for keyword in NEOSGO_FIT_REJECT_CATEGORY_KEYWORDS):
             return "reject", [f"reject_category:{category or 'unknown'}"]
         if any(keyword in company_name for keyword in NEOSGO_FIT_REJECT_NAME_KEYWORDS):
