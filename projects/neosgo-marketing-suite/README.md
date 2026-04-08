@@ -30,6 +30,21 @@ Useful operational commands:
 - Check whether the current repo state is safe for a scoped PR:
   `python3 /Users/mac_claw/.openclaw/workspace/skills/marketing-automation-suite/scripts/check_pr_readiness.py --repo-root /Users/mac_claw/.openclaw/workspace --allow-prefix skills/marketing-automation-suite --allow-prefix skills/prospect-data-engine --allow-prefix skills/marketing-strategy-engine --allow-prefix skills/outreach-feedback-engine --allow-prefix projects/neosgo-marketing-suite`
 
+Google Maps lead capture:
+- This project now has a dedicated `Google Maps -> website -> validated email` discovery lane for `interior designer` accounts.
+- Region strategy starts from New England and is configured in:
+  [project-config.json](/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/config/project-config.json)
+- Required environment variable:
+  - `NEOSGO_GOOGLE_MAPS_API_KEY`
+  - or fallback `GOOGLE_MAPS_API_KEY`
+- Google Maps raw import output:
+  - `data/raw-imports/discovered-google-maps-places.json`
+- Website/email enrichment output:
+  - `data/raw-imports/discovered-google-maps-validated-contacts.json`
+- Reports:
+  - `output/prospect-data-engine/google-maps-discovery-report.json`
+  - `output/prospect-data-engine/google-maps-email-enrichment-report.json`
+
 Feedback operations:
 - SOP:
   [references/feedback-loop-sop.md](/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/references/feedback-loop-sop.md)

@@ -14,6 +14,10 @@ DOCTOR_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "doctor"
 HEARTBEAT_LAST_CYCLE_PATH = DOCTOR_ROOT / "heartbeats" / "last_cycle.json"
 DASHBOARD_PATH = DOCTOR_ROOT / "dashboard.html"
 TASKS_ROOT = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/autonomy/tasks")
+WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
+NEOSGO_MARKETING_ROOT = WORKSPACE_ROOT / "projects" / "neosgo-marketing-suite"
+NEOSGO_SELLER_STATE_PATH = WORKSPACE_ROOT / "data" / "neosgo-seller-maintenance-state.json"
+NEOSGO_SEO_GEO_STATE_PATH = WORKSPACE_ROOT / "projects" / "neosgo-seo-geo-engine" / "runtime" / "state.json"
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -132,6 +136,229 @@ def _render_doctor_reports(reports: list[dict[str, Any]], limit: int = 12) -> st
             """
         )
     return '<div class="report-grid">' + "".join(cards) + "</div>"
+
+
+def _task_row(name: str, status: str, mode: str, detail: str) -> dict[str, str]:
+    return {
+        "name": name,
+        "status": status,
+        "mode": mode,
+        "detail": detail,
+    }
+
+
+def _workflow_status_tone(status: str) -> str:
+    normalized = status.strip().lower()
+    if normalized in {"ok", "active", "healthy", "ready", "running", "completed"}:
+        return "ok"
+    if normalized in {"partial", "waiting", "review", "queued", "triggered"}:
+        return "warn"
+    if normalized in {"blocked", "failed", "missing_api_key", "error"}:
+        return "danger"
+    return "muted"
+
+
+def _workflow_mode_tone(mode: str) -> str:
+    normalized = mode.strip().lower()
+    if normalized in {"持续进行", "continuous"}:
+        return "ok"
+    if normalized in {"触发进行", "triggered"}:
+        return "warn"
+    return "muted"
+
+
+def _latest_marketing_cycle() -> dict[str, Any]:
+    path = NEOSGO_MARKETING_ROOT / "runtime" / "marketing-automation-suite" / "last_cycle.json"
+    return _read_json(path)
+
+
+def _latest_marketing_state() -> dict[str, Any]:
+    path = NEOSGO_MARKETING_ROOT / "runtime" / "state.json"
+    return _read_json(path)
+
+
+def _latest_seller_state() -> dict[str, Any]:
+    return _read_json(NEOSGO_SELLER_STATE_PATH)
+
+
+def _latest_seo_geo_state() -> dict[str, Any]:
+    return _read_json(NEOSGO_SEO_GEO_STATE_PATH)
+
+
+def _workflow_overview() -> list[dict[str, Any]]:
+    marketing_cycle = _latest_marketing_cycle()
+    marketing_state = _latest_marketing_state()
+    seller_state = _latest_seller_state()
+    seo_geo_state = _latest_seo_geo_state()
+
+    marketing_steps = (marketing_cycle.get("steps", {}) or {})
+    marketing_report = marketing_cycle.get("report", {}) or {}
+    marketing_google_maps = marketing_steps.get("google_maps_discovery", {}) or {}
+    marketing_email_enrichment = marketing_steps.get("google_maps_email_enrichment", {}) or {}
+    marketing_quality = marketing_report.get("quality_gate", {}) or {}
+    marketing_strategy = marketing_steps.get("marketing_strategy_tasks", {}) or {}
+    marketing_queue = marketing_steps.get("execution_queue", {}) or {}
+
+    seller_scan = seller_state.get("candidate_scan_meta", {}) or {}
+    seller_import = seller_state.get("import_phase", {}) or {}
+    seller_draft = seller_state.get("draft_phase", {}) or {}
+    seller_rejected = seller_state.get("rejected_phase", {}) or {}
+    seller_inventory = seller_state.get("inventory_sync_phase", {}) or {}
+
+    seo_runs = list(seo_geo_state.get("runs", []) or [])
+    latest_seo_run = seo_runs[-1] if seo_runs else {}
+
+    return [
+        {
+            "name": "NEOSGO 市场营销工作流",
+            "summary": "潜在客户挖掘、数据清洗、客户数据库、定制营销策略与实施队列。",
+            "tasks": [
+                _task_row(
+                    "Google Maps 区域潜客挖掘",
+                    "ok" if marketing_google_maps.get("ok") else ("missing_api_key" if marketing_google_maps.get("payload", {}).get("status") == "blocked_missing_google_maps_api_key" else "waiting"),
+                    "持续进行",
+                    f"最近一轮：{marketing_google_maps.get('payload', {}).get('discovered_count', 0)} 家，区域策略：New England 优先",
+                ),
+                _task_row(
+                    "官网访问与邮箱抓取/校验",
+                    "ok" if marketing_email_enrichment.get("ok") else "waiting",
+                    "持续进行",
+                    f"最近一轮：提取 {marketing_email_enrichment.get('payload', {}).get('email_candidate_count', 0)} 个邮箱候选，验证通过 {marketing_email_enrichment.get('payload', {}).get('validated_email_count', 0)} 个",
+                ),
+                _task_row(
+                    "客户数据库维护",
+                    "ok" if str(marketing_quality.get("status", "")).strip().lower() == "pass" else "review",
+                    "持续进行",
+                    f"质量门：{marketing_quality.get('status', '-')}，策略可用：{marketing_quality.get('allowed_for_strategy', '-')}",
+                ),
+                _task_row(
+                    "创建定制营销方案",
+                    "ok" if marketing_strategy.get("ok") else "triggered",
+                    "触发进行",
+                    f"最近一轮策略任务：{marketing_strategy.get('payload', {}).get('task_count', 0)} 条",
+                ),
+                _task_row(
+                    "实施营销与反馈回流",
+                    "ok" if marketing_queue.get("ok") else "triggered",
+                    "触发进行",
+                    f"执行队列：{marketing_queue.get('payload', {}).get('queued_count', 0)} 条；项目状态：{marketing_state.get('status', '-')}",
+                ),
+            ],
+        },
+        {
+            "name": "NEOSGO Seller 维护工作流",
+            "summary": "GIGA 候选扫描、NEW_IMPORT 导入、DRAFT/REJECTED 处理与库存同步。",
+            "tasks": [
+                _task_row(
+                    "扫描 GIGA candidates",
+                    "ok",
+                    "持续进行",
+                    f"模式：{seller_scan.get('mode', '-')}；本轮扫描页数：{seller_scan.get('pages_scanned', '-')}",
+                ),
+                _task_row(
+                    "导入新的未导入产品",
+                    "ok" if int(seller_import.get("failureCount", 0) or 0) == 0 else "review",
+                    "触发进行",
+                    f"eligible={seller_import.get('eligibleCount', 0)}，processed={seller_import.get('processedCount', 0)}，failure={seller_import.get('failureCount', 0)}",
+                ),
+                _task_row(
+                    "优化 DRAFT 并提交审核",
+                    "ok" if int(seller_draft.get("blocked_count", 0) or 0) == 0 else "review",
+                    "触发进行",
+                    f"enumerated={seller_draft.get('enumerated_count', 0)}，submitted={seller_draft.get('submitted_count', 0)}",
+                ),
+                _task_row(
+                    "重提 REJECTED listing",
+                    "ok" if int(seller_rejected.get("blocked_count", 0) or 0) == 0 else "review",
+                    "触发进行",
+                    f"enumerated={seller_rejected.get('enumerated_count', 0)}，submitted={seller_rejected.get('submitted_count', 0)}",
+                ),
+                _task_row(
+                    "同步已上传 listing 库存",
+                    "ok",
+                    "持续进行",
+                    f"processed={seller_inventory.get('processed_count', 0)}，patched={seller_inventory.get('patched_count', 0)}",
+                ),
+            ],
+        },
+        {
+            "name": "NEOSGO SEO + GEO 工作流",
+            "summary": "GSC 同步、反馈蒸馏、研究选题、内容生成与发布。",
+            "tasks": [
+                _task_row(
+                    "同步 GSC 与反馈",
+                    "ok" if latest_seo_run else "waiting",
+                    "持续进行",
+                    f"最近 run：{latest_seo_run.get('run_id', '-')}；feedback rows={latest_seo_run.get('feedback_row_count', '-')}",
+                ),
+                _task_row(
+                    "研究与主题选择",
+                    "ok" if latest_seo_run else "waiting",
+                    "持续进行",
+                    f"primary focus={latest_seo_run.get('primary_focus_topic', '-')}",
+                ),
+                _task_row(
+                    "内容与 GEO 发布/回填",
+                    "ok" if latest_seo_run and not latest_seo_run.get('blocked') else "review",
+                    "触发进行",
+                    f"writes={latest_seo_run.get('writes_count', '-')}，gap={latest_seo_run.get('gap_count', '-')}",
+                ),
+            ],
+        },
+    ]
+
+
+def _render_workflow_rows(items: list[dict[str, str]]) -> str:
+    if not items:
+        return '<tr><td colspan="4" class="empty-cell">No workflow tasks</td></tr>'
+    rows = []
+    for index, item in enumerate(items, start=1):
+        rows.append(
+            f"""
+            <tr>
+              <td>{index}</td>
+              <td>{html.escape(item.get("name", ""))}</td>
+              <td>{_badge(item.get("mode", ""), _workflow_mode_tone(item.get("mode", "")))}</td>
+              <td>{_badge(item.get("status", ""), _workflow_status_tone(item.get("status", "")))}</td>
+              <td>{html.escape(item.get("detail", ""))}</td>
+            </tr>
+            """
+        )
+    return "".join(rows)
+
+
+def _render_workflow_section(workflows: list[dict[str, Any]]) -> str:
+    if not workflows:
+        return '<div class="empty">No workflow data</div>'
+    parts = []
+    for workflow in workflows:
+        parts.append(
+            f"""
+            <div class="card workflow-card">
+              <div class="workflow-head">
+                <div>
+                  <h3 class="workflow-title">{html.escape(workflow.get("name", ""))}</h3>
+                  <p class="workflow-summary">{html.escape(workflow.get("summary", ""))}</p>
+                </div>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>任务</th>
+                    <th>类型</th>
+                    <th>状态</th>
+                    <th>说明</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {_render_workflow_rows(workflow.get("tasks", []))}
+                </tbody>
+              </table>
+            </div>
+            """
+        )
+    return "".join(parts)
 
 
 def _collect_complex_task_overview(limit: int = 18) -> dict[str, Any]:
@@ -402,6 +629,26 @@ def build_dashboard() -> str:
       grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
       gap: 14px;
     }}
+    .workflow-card {{
+      padding: 18px 18px 10px;
+    }}
+    .workflow-head {{
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 12px;
+    }}
+    .workflow-title {{
+      margin: 0 0 6px;
+      font-size: 21px;
+    }}
+    .workflow-summary {{
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }}
     .report-card {{
       border: 1px solid var(--line);
       background: rgba(255,255,255,0.75);
@@ -476,6 +723,14 @@ def build_dashboard() -> str:
         <div class="stat-value">{avg_drift_score:.3f}</div>
         {_badge('risk temperature', _tone_for_ratio(avg_drift_score))}
       </div>
+    </section>
+
+    <section class="section">
+      <div>
+        <h2 class="section-title">Workflow Board</h2>
+        <p class="section-sub">按工作流分级展示任务清单、顺序、当前状态，以及“持续进行 / 触发进行”类型。</p>
+      </div>
+      {_render_workflow_section(_workflow_overview())}
     </section>
 
     <section class="section">

@@ -60,6 +60,7 @@
   },
   "prospect_data_engine": {
     "source_families": [
+      "google_maps_places",
       "official_websites",
       "google_business_profile",
       "linkedin_company_pages",
@@ -67,6 +68,87 @@
       "association_lists",
       "exhibitor_lists"
     ],
+    "google_maps_capture": {
+      "enabled": true,
+      "keyword": "interior designer",
+      "starting_region_group": "new_england",
+      "max_pages_per_query": 3,
+      "page_size": 20,
+      "field_mask": [
+        "places.id",
+        "places.displayName",
+        "places.formattedAddress",
+        "places.websiteUri",
+        "places.googleMapsUri",
+        "places.primaryType",
+        "places.types",
+        "nextPageToken"
+      ],
+      "region_plan": [
+        {
+          "group": "new_england",
+          "state": "RI",
+          "queries": [
+            "interior designer in Rhode Island",
+            "interior designer in Providence RI",
+            "interior designer in Warwick RI",
+            "interior designer in Newport RI"
+          ]
+        },
+        {
+          "group": "new_england",
+          "state": "MA",
+          "queries": [
+            "interior designer in Massachusetts",
+            "interior designer in Boston MA",
+            "interior designer in Cambridge MA",
+            "interior designer in Worcester MA",
+            "interior designer in Newton MA"
+          ]
+        },
+        {
+          "group": "new_england",
+          "state": "CT",
+          "queries": [
+            "interior designer in Connecticut",
+            "interior designer in New Haven CT",
+            "interior designer in Stamford CT",
+            "interior designer in Hartford CT",
+            "interior designer in Greenwich CT"
+          ]
+        },
+        {
+          "group": "new_england",
+          "state": "NH",
+          "queries": [
+            "interior designer in New Hampshire",
+            "interior designer in Manchester NH",
+            "interior designer in Nashua NH",
+            "interior designer in Portsmouth NH"
+          ]
+        },
+        {
+          "group": "new_england",
+          "state": "ME",
+          "queries": [
+            "interior designer in Maine",
+            "interior designer in Portland ME",
+            "interior designer in Bangor ME",
+            "interior designer in Kennebunk ME"
+          ]
+        },
+        {
+          "group": "new_england",
+          "state": "VT",
+          "queries": [
+            "interior designer in Vermont",
+            "interior designer in Burlington VT",
+            "interior designer in Stowe VT",
+            "interior designer in Montpelier VT"
+          ]
+        }
+      ]
+    },
     "score_weights": {
       "fit": 40,
       "intent": 30,

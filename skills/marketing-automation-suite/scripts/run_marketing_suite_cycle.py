@@ -17,6 +17,8 @@ PROSPECT_BOOTSTRAP = WORKSPACE_ROOT / "skills/prospect-data-engine/scripts/boots
 PROSPECT_IMPORT = WORKSPACE_ROOT / "skills/prospect-data-engine/scripts/import_public_prospect_data.py"
 PROSPECT_DISCOVERY = WORKSPACE_ROOT / "skills/prospect-data-engine/scripts/discover_public_accounts.py"
 PROSPECT_SEARCH_DISCOVERY = WORKSPACE_ROOT / "skills/prospect-data-engine/scripts/expand_search_discovery.py"
+GOOGLE_MAPS_DISCOVERY = WORKSPACE_ROOT / "skills/prospect-data-engine/scripts/discover_google_maps_places.py"
+GOOGLE_MAPS_EMAIL_ENRICHMENT = WORKSPACE_ROOT / "skills/prospect-data-engine/scripts/enrich_google_maps_website_contacts.py"
 DISCOVERY_RECIPES = WORKSPACE_ROOT / "skills/prospect-data-engine/scripts/build_discovery_recipe_library.py"
 DISCOVERY_QUERY_WEIGHTS = WORKSPACE_ROOT / "skills/prospect-data-engine/scripts/apply_discovery_query_weights.py"
 SOURCE_HEALTH_RETRY = WORKSPACE_ROOT / "skills/prospect-data-engine/scripts/update_source_health_retry.py"
@@ -116,6 +118,16 @@ def main() -> int:
 
     search_discovery_result = _run_python(
         PROSPECT_SEARCH_DISCOVERY,
+        "--project-root",
+        str(project_root),
+    )
+    google_maps_discovery_result = _run_python(
+        GOOGLE_MAPS_DISCOVERY,
+        "--project-root",
+        str(project_root),
+    )
+    google_maps_email_enrichment_result = _run_python(
+        GOOGLE_MAPS_EMAIL_ENRICHMENT,
         "--project-root",
         str(project_root),
     )
@@ -284,6 +296,8 @@ def main() -> int:
             "discovery_recipe_library": recipe_result,
             "discovery_query_weight_update_pre": pre_query_weight_result,
             "prospect_search_discovery": search_discovery_result,
+            "google_maps_discovery": google_maps_discovery_result,
+            "google_maps_email_enrichment": google_maps_email_enrichment_result,
             "prospect_discovery": discovery_result,
             "industry_directory_discovery": directory_discovery_result,
             "google_business_profile_discovery": gbp_discovery_result,
@@ -332,6 +346,8 @@ def main() -> int:
                 recipe_result,
                 pre_query_weight_result,
                 search_discovery_result,
+                google_maps_discovery_result,
+                google_maps_email_enrichment_result,
                 discovery_result,
                 directory_discovery_result,
                 gbp_discovery_result,
@@ -378,6 +394,8 @@ def main() -> int:
             "discovery_recipe_library": recipe_result,
             "discovery_query_weight_update_pre": pre_query_weight_result,
             "prospect_search_discovery": search_discovery_result,
+            "google_maps_discovery": google_maps_discovery_result,
+            "google_maps_email_enrichment": google_maps_email_enrichment_result,
             "prospect_discovery": discovery_result,
             "industry_directory_discovery": directory_discovery_result,
             "google_business_profile_discovery": gbp_discovery_result,
@@ -429,6 +447,8 @@ def main() -> int:
                 recipe_result,
                 pre_query_weight_result,
                 search_discovery_result,
+                google_maps_discovery_result,
+                google_maps_email_enrichment_result,
                 discovery_result,
                 directory_discovery_result,
                 gbp_discovery_result,
