@@ -76,12 +76,16 @@ def _email_is_realish(email: str, website_domain: str) -> tuple[bool, str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Visit websites from Google Maps places and extract validated emails.")
     parser.add_argument("--project-root", required=True)
+    parser.add_argument("--max-sites-per-run", type=int, default=0)
     args = parser.parse_args()
 
     project_root = Path(args.project_root).expanduser().resolve()
+    config = _read_json(project_root / "config" / "project-config.json")
+    capture = ((config.get("prospect_data_engine", {}) or {}).get("google_maps_capture", {}) or {})
     source_path = project_root / "data" / "raw-imports" / "discovered-google-maps-places.json"
     report_path = project_root / "output" / "prospect-data-engine" / "google-maps-email-enrichment-report.json"
     output_path = project_root / "data" / "raw-imports" / "discovered-google-maps-validated-contacts.json"
+    max_sites_per_run = int(args.max_sites_per_run or capture.get("email_enrichment_max_sites_per_run", 40) or 40)
 
     if not source_path.exists():
         payload = {"status": "waiting_for_google_maps_places", "email_candidate_count": 0, "validated_email_count": 0}
@@ -94,6 +98,8 @@ def main() -> int:
     validated_email_count = 0
     email_candidate_count = 0
     checked_sites = 0
+    deferred_count = 0
+    website_cache: dict[str, dict[str, Any]] = {}
 
     for item in items:
         website = str(item.get("website", "")).strip()
@@ -102,43 +108,57 @@ def main() -> int:
         validation_reason = "no_website"
         crawled_pages = []
         if website:
-            try:
-                homepage_html = _fetch_html(website)
-                checked_sites += 1
-                pages = [website, *_extract_candidate_links(website, homepage_html)]
-                page_html_map = {website: homepage_html}
-                for page in pages[1:]:
-                    try:
-                        page_html_map[page] = _fetch_html(page)
-                    except Exception:  # noqa: BLE001
-                        continue
-                emails = []
-                for page, html in page_html_map.items():
-                    crawled_pages.append(page)
-                    emails.extend(match.lower() for match in EMAIL_RE.findall(html))
-                    emails.extend(
-                        match.lower()
-                        for match in re.findall(r"mailto:([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})", html, re.I)
-                    )
-                deduped = []
-                seen = set()
-                for candidate in emails:
-                    if candidate in seen:
-                        continue
-                    seen.add(candidate)
-                    deduped.append(candidate)
-                email_candidate_count += len(deduped)
-                for candidate in deduped:
-                    ok, reason = _email_is_realish(candidate, website_domain)
-                    if ok:
-                        email = candidate
-                        validation_reason = reason
-                        validated_email_count += 1
-                        break
-                if not email and deduped:
-                    validation_reason = "no_valid_email_after_validation"
-            except Exception as exc:  # noqa: BLE001
-                validation_reason = f"fetch_failed:{exc}"
+            if website in website_cache:
+                cached = website_cache[website]
+                email = str(cached.get("email", ""))
+                validation_reason = str(cached.get("validation_reason", "unknown"))
+                crawled_pages = list(cached.get("crawled_pages", []) or [])
+            elif checked_sites >= max_sites_per_run:
+                validation_reason = "pending_batch"
+                deferred_count += 1
+            else:
+                try:
+                    homepage_html = _fetch_html(website)
+                    checked_sites += 1
+                    pages = [website, *_extract_candidate_links(website, homepage_html)]
+                    page_html_map = {website: homepage_html}
+                    for page in pages[1:]:
+                        try:
+                            page_html_map[page] = _fetch_html(page)
+                        except Exception:  # noqa: BLE001
+                            continue
+                    emails = []
+                    for page, html in page_html_map.items():
+                        crawled_pages.append(page)
+                        emails.extend(match.lower() for match in EMAIL_RE.findall(html))
+                        emails.extend(
+                            match.lower()
+                            for match in re.findall(r"mailto:([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})", html, re.I)
+                        )
+                    deduped = []
+                    seen = set()
+                    for candidate in emails:
+                        if candidate in seen:
+                            continue
+                        seen.add(candidate)
+                        deduped.append(candidate)
+                    email_candidate_count += len(deduped)
+                    for candidate in deduped:
+                        ok, reason = _email_is_realish(candidate, website_domain)
+                        if ok:
+                            email = candidate
+                            validation_reason = reason
+                            validated_email_count += 1
+                            break
+                    if not email and deduped:
+                        validation_reason = "no_valid_email_after_validation"
+                except Exception as exc:  # noqa: BLE001
+                    validation_reason = f"fetch_failed:{exc}"
+                website_cache[website] = {
+                    "email": email,
+                    "validation_reason": validation_reason,
+                    "crawled_pages": list(crawled_pages),
+                }
 
         enriched.append(
             {
@@ -156,6 +176,7 @@ def main() -> int:
     report = {
         "status": "ok",
         "checked_site_count": checked_sites,
+        "deferred_count": deferred_count,
         "email_candidate_count": email_candidate_count,
         "validated_email_count": validated_email_count,
         "raw_import_path": str(output_path),

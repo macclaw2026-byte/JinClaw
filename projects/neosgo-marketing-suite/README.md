@@ -34,9 +34,7 @@ Google Maps lead capture:
 - This project now has a dedicated `Google Maps -> website -> validated email` discovery lane for `interior designer` accounts.
 - Region strategy starts from New England and is configured in:
   [project-config.json](/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/config/project-config.json)
-- Required environment variable:
-  - `NEOSGO_GOOGLE_MAPS_API_KEY`
-  - or fallback `GOOGLE_MAPS_API_KEY`
+- Discovery now uses browser-style crawling of public Google Maps result pages, then visits official websites to extract and validate emails.
 - Google Maps raw import output:
   - `data/raw-imports/discovered-google-maps-places.json`
 - Website/email enrichment output:

@@ -72,8 +72,10 @@
       "enabled": true,
       "keyword": "interior designer",
       "starting_region_group": "new_england",
+      "max_queries_per_run": 8,
       "max_pages_per_query": 3,
       "page_size": 20,
+      "email_enrichment_max_sites_per_run": 40,
       "field_mask": [
         "places.id",
         "places.displayName",

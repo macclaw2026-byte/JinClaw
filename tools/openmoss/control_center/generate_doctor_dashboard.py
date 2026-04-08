@@ -18,6 +18,8 @@ WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
 NEOSGO_MARKETING_ROOT = WORKSPACE_ROOT / "projects" / "neosgo-marketing-suite"
 NEOSGO_SELLER_STATE_PATH = WORKSPACE_ROOT / "data" / "neosgo-seller-maintenance-state.json"
 NEOSGO_SEO_GEO_STATE_PATH = WORKSPACE_ROOT / "projects" / "neosgo-seo-geo-engine" / "runtime" / "state.json"
+NEOSGO_MARKETING_GOOGLE_MAPS_REPORT = NEOSGO_MARKETING_ROOT / "output" / "prospect-data-engine" / "google-maps-discovery-report.json"
+NEOSGO_MARKETING_GOOGLE_MAPS_EMAIL_REPORT = NEOSGO_MARKETING_ROOT / "output" / "prospect-data-engine" / "google-maps-email-enrichment-report.json"
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -177,6 +179,14 @@ def _latest_marketing_state() -> dict[str, Any]:
     return _read_json(path)
 
 
+def _latest_marketing_google_maps_report() -> dict[str, Any]:
+    return _read_json(NEOSGO_MARKETING_GOOGLE_MAPS_REPORT)
+
+
+def _latest_marketing_google_maps_email_report() -> dict[str, Any]:
+    return _read_json(NEOSGO_MARKETING_GOOGLE_MAPS_EMAIL_REPORT)
+
+
 def _latest_seller_state() -> dict[str, Any]:
     return _read_json(NEOSGO_SELLER_STATE_PATH)
 
@@ -188,6 +198,8 @@ def _latest_seo_geo_state() -> dict[str, Any]:
 def _workflow_overview() -> list[dict[str, Any]]:
     marketing_cycle = _latest_marketing_cycle()
     marketing_state = _latest_marketing_state()
+    marketing_google_maps_report = _latest_marketing_google_maps_report()
+    marketing_google_maps_email_report = _latest_marketing_google_maps_email_report()
     seller_state = _latest_seller_state()
     seo_geo_state = _latest_seo_geo_state()
 
@@ -195,6 +207,8 @@ def _workflow_overview() -> list[dict[str, Any]]:
     marketing_report = marketing_cycle.get("report", {}) or {}
     marketing_google_maps = marketing_steps.get("google_maps_discovery", {}) or {}
     marketing_email_enrichment = marketing_steps.get("google_maps_email_enrichment", {}) or {}
+    marketing_google_maps_payload = marketing_google_maps_report or (marketing_google_maps.get("payload", {}) or {})
+    marketing_email_enrichment_payload = marketing_google_maps_email_report or (marketing_email_enrichment.get("payload", {}) or {})
     marketing_quality = marketing_report.get("quality_gate", {}) or {}
     marketing_strategy = marketing_steps.get("marketing_strategy_tasks", {}) or {}
     marketing_queue = marketing_steps.get("execution_queue", {}) or {}
@@ -215,15 +229,27 @@ def _workflow_overview() -> list[dict[str, Any]]:
             "tasks": [
                 _task_row(
                     "Google Maps 区域潜客挖掘",
-                    "ok" if marketing_google_maps.get("ok") else ("missing_api_key" if marketing_google_maps.get("payload", {}).get("status") == "blocked_missing_google_maps_api_key" else "waiting"),
+                    (
+                        "ok"
+                        if marketing_google_maps_payload.get("discovered_count", 0)
+                        else (
+                            "review"
+                            if int(marketing_google_maps_payload.get("failure_count", 0) or 0) > 0
+                            else "waiting"
+                        )
+                    ),
                     "持续进行",
-                    f"最近一轮：{marketing_google_maps.get('payload', {}).get('discovered_count', 0)} 家，区域策略：New England 优先",
+                    f"最近一轮：{marketing_google_maps_payload.get('discovered_count', 0)} 家，失败 query={marketing_google_maps_payload.get('failure_count', 0)}，本轮 query={marketing_google_maps_payload.get('scheduled_query_count', '-')}",
                 ),
                 _task_row(
                     "官网访问与邮箱抓取/校验",
-                    "ok" if marketing_email_enrichment.get("ok") else "waiting",
+                    (
+                        "ok"
+                        if int(marketing_email_enrichment_payload.get("validated_email_count", 0) or 0) > 0
+                        else ("review" if int(marketing_email_enrichment_payload.get("deferred_count", 0) or 0) > 0 else "waiting")
+                    ),
                     "持续进行",
-                    f"最近一轮：提取 {marketing_email_enrichment.get('payload', {}).get('email_candidate_count', 0)} 个邮箱候选，验证通过 {marketing_email_enrichment.get('payload', {}).get('validated_email_count', 0)} 个",
+                    f"最近一轮：提取 {marketing_email_enrichment_payload.get('email_candidate_count', 0)} 个邮箱候选，验证通过 {marketing_email_enrichment_payload.get('validated_email_count', 0)} 个，待补抓 {marketing_email_enrichment_payload.get('deferred_count', 0)} 个站点",
                 ),
                 _task_row(
                     "客户数据库维护",
