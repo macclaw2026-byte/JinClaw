@@ -1,9 +1,0 @@
-{
-  "has_anomaly": false,
-  "signals": {
-    "spam_complaint_risk": 0,
-    "hard_bounce": 0,
-    "invalid_contact": 0,
-    "unsubscribe": 0
-  }
-}

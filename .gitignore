@@ -19,6 +19,10 @@
 /tools/openmoss/runtime/
 /tools/openmoss/generated_capabilities/
 /projects/**/data/
+/projects/**/output/
+/projects/**/runtime/
+/projects/**/reports/
+/tasks/*-state.md
 
 # Secrets and local environment files
 .env
