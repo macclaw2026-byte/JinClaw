@@ -62,6 +62,16 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _priority_regions(config: dict[str, Any]) -> list[str]:
+    project = dict(config.get("project", {}) or {})
+    regions = []
+    for item in list(project.get("priority_regions", []) or []):
+        region = str(item).strip().upper()
+        if region and region not in regions:
+            regions.append(region)
+    return regions
+
+
 def _fetch_html(url: str) -> str:
     request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urlopen(request, timeout=8) as response:
@@ -164,7 +174,9 @@ def main() -> int:
     source_path = project_root / "data" / "raw-imports" / "discovered-google-maps-places.json"
     report_path = project_root / "output" / "prospect-data-engine" / "google-maps-email-enrichment-report.json"
     output_path = project_root / "data" / "raw-imports" / "discovered-google-maps-validated-contacts.json"
+    runtime_state_path = project_root / "runtime" / "prospect-data-engine" / "google-maps-email-enrichment-state.json"
     max_sites_per_run = int(args.max_sites_per_run or capture.get("email_enrichment_max_sites_per_run", 40) or 40)
+    priority_regions = _priority_regions(config)
 
     if not source_path.exists():
         payload = {"status": "waiting_for_google_maps_places", "email_candidate_count": 0, "validated_email_count": 0}
@@ -173,6 +185,8 @@ def main() -> int:
         return 0
 
     items = list(_read_json(source_path).get("items", []) or [])
+    previous_output = {str(item.get("source_url", "")).strip(): item for item in list(_read_json(output_path).get("items", []) or [])}
+    runtime_state = _read_json(runtime_state_path) if runtime_state_path.exists() else {}
     enriched = []
     validated_email_count = 0
     email_candidate_count = 0
@@ -180,14 +194,46 @@ def main() -> int:
     deferred_count = 0
     website_cache: dict[str, dict[str, Any]] = {}
 
-    for item in items:
+    def sort_key(item: dict[str, Any]) -> tuple[int, int, int, str]:
+        state = str(item.get("geo", "")).split("/", 1)[0].strip().upper()
+        source_url = str(item.get("source_url", "")).strip()
+        previous = dict(previous_output.get(source_url, {}) or {})
+        previous_reason = str(previous.get("email_validation_reason", "") or "")
+        website = str(item.get("website", "")).strip()
+        priority_bucket = 0 if state in priority_regions else 1
+        unresolved_bucket = 0 if website and previous_reason in {"", "pending_batch", "no_website", "fetch_failed"} else 1
+        cursor_bucket = 0
+        return (priority_bucket, unresolved_bucket, cursor_bucket, str(item.get("company_name", "")))
+
+    ordered_items = sorted(items, key=sort_key)
+
+    for item in ordered_items:
         website = str(item.get("website", "")).strip()
         website_domain = str(item.get("website_root_domain", "")).strip()
+        source_url = str(item.get("source_url", "")).strip()
+        previous = dict(previous_output.get(source_url, {}) or {})
         email = ""
         validation_reason = "no_website"
         crawled_pages = []
+        if previous:
+            email = str(previous.get("email", "") or "")
+            validation_reason = str(previous.get("email_validation_reason", "") or validation_reason)
+            crawled_pages = list(previous.get("crawled_pages", []) or [])
+            website_fit_status = str(previous.get("website_fit_status", "unknown"))
+            website_fit_reasons = list(previous.get("website_fit_reasons", []) or [])
+            contact_form_detected = bool(previous.get("contact_form_detected", False))
+            contact_form_url = str(previous.get("contact_form_url", ""))
+            contact_form_signals = list(previous.get("contact_form_signals", []) or [])
+        else:
+            website_fit_status = "unknown"
+            website_fit_reasons = []
+            contact_form_detected = False
+            contact_form_url = ""
+            contact_form_signals = []
         if website:
-            if website in website_cache:
+            if validation_reason in {"domain_match", "domain_resolves"} or contact_form_detected:
+                pass
+            elif website in website_cache:
                 cached = website_cache[website]
                 email = str(cached.get("email", ""))
                 validation_reason = str(cached.get("validation_reason", "unknown"))
@@ -269,6 +315,7 @@ def main() -> int:
 
         enriched.append(
             {
+                **previous,
                 **item,
                 "email": email,
                 "email_validation_status": "valid" if email else "invalid_or_missing",
@@ -293,6 +340,16 @@ def main() -> int:
         )
 
     _write_json(output_path, {"items": enriched})
+    _write_json(
+        runtime_state_path,
+        {
+            **runtime_state,
+            "checked_site_count": checked_sites,
+            "deferred_count": deferred_count,
+            "priority_regions": priority_regions,
+            "max_sites_per_run": max_sites_per_run,
+        },
+    )
     report = {
         "status": "ok",
         "checked_site_count": checked_sites,

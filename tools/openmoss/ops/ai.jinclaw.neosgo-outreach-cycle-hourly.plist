@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.jinclaw.neosgo-outreach-cycle-hourly</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string>
+    <string>python3</string>
+    <string>/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/scripts/run_outreach_cycle.py</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StartInterval</key>
+  <integer>3600</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/mac_claw/.openclaw/workspace/output/neosgo-outreach/cycle.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/mac_claw/.openclaw/workspace/output/neosgo-outreach/cycle.stderr.log</string>
+</dict>
+</plist>

@@ -1,0 +1,138 @@
+campaign:
+  id: "neosgo-initial-outreach"
+  name: "NEOSGO Initial Outreach Campaign"
+  language: "en"
+  mode: "test_first"
+
+delivery_rules:
+  prefer_contact_form: true
+  fallback_to_email: true
+  test_email_required: true
+  test_recipient_email: "jacken737@gmail.com"
+  send_next_email_only_after_delivery_confirmed: true
+  min_minutes_between_emails: 5
+  stop_immediately_on_send_failure: true
+  validate_email_before_send: true
+
+sender_identity:
+  full_name: "Jinkun Dai"
+  first_name: "Jinkun"
+  last_name: "Dai"
+  title: ""
+  company_name: "Neosgo"
+  display_name: "Neosgo Lighting"
+  company_website: "https://neosgo.com"
+  sender_email: "cs@neosgo.com"
+  reply_to_email: "cs@neosgo.com"
+  phone: "9789307476"
+  address_line_1: "678 George Washington Hwy,"
+  address_line_2: ""
+  city: "Lincoln"
+  state: "RI"
+  postal_code: "02865"
+  country: "USA"
+
+message_assets:
+  primary_subject: "Neosgo Partnership Opportunity"
+  alternate_subject: ""
+  contact_form_subject: "Neosgo Partnership Opportunity"
+  email_subject: "Neosgo Partnership Opportunity"
+  intro_paragraph: |
+    Fill this only if you want a short alternate intro paragraph.
+  main_message_body: |
+    Hi,
+
+    Hope this email finds you well.
+    Quick question — are you currently sourcing products for your projects yourself, or working with suppliers?
+
+    We’re building NeosGo, a platform that helps interior designers turn sourcing into a revenue stream.
+
+    Through our Professional Buyer program, designers can:
+    - Source products directly through us
+    - Add their own margin or earn commission on projects
+    - Let us handle inventory, warehousing, and delivery
+
+    We already stock products in the U.S., so lead times are much faster than typical overseas sourcing.
+
+    Access to the Professional Buyer program is available upon registration, and many designers start by testing it on a single project.
+
+    Would you be open to taking a quick look?
+
+    Best,
+   
+
+  short_company_intro: ""
+  product_or_service_summary: ""
+  credibility_or_trust_line: ""
+  call_to_action: ""
+  fallback_call_to_action: ""
+  closing_line: ""
+  signature_name: "Neosgo Lighting"
+  signature_block: |
+    Neosgo Lighting
+    https://neosgo.com
+
+contact_form_defaults:
+  full_name: "Jinkun Dai"
+  first_name: "Jinkun"
+  last_name: "Dai"
+  title: ""
+  company_name: "Neosgo"
+  company_website: "https://neosgo.com"
+  sender_email: "cs@neosgo.com"
+  reply_to_email: "cs@neosgo.com"
+  phone: "9789307476"
+  address_line_1: "678 George Washington Hwy,"
+  address_line_2: ""
+  city: "Lincoln"
+  state: "RI"
+  postal_code: "02865"
+  country: "USA"
+  subject: "Neosgo Partnership Opportunity"
+  message: |
+    Fill the contact form body here if you want it to differ from main_message_body.
+
+    If left as a placeholder, the system should use message_assets.main_message_body.
+
+email_defaults:
+  from_email: "cs@neosgo.com"
+  from_name: "Neosgo Lighting"
+  reply_to: "cs@neosgo.com"
+  subject: "Neosgo Partnership Opportunity"
+  body_text: |
+    Fill the email body here if you want it to differ from main_message_body.
+
+    If left as a placeholder, the system should use message_assets.main_message_body.
+  signature_text: |
+    Neosgo Lighting
+    https://neosgo.com
+
+optional_form_fields:
+  company_description: ""
+  industry: ""
+  product_category: ""
+  inquiry_type: ""
+  project_type: ""
+  budget_range: ""
+  timeline: ""
+  catalog_url: ""
+  portfolio_url: ""
+  notes_for_extra_fields: ""
+
+telegram_notifications:
+  notify_on_campaign_start: true
+  notify_on_contact_form_submitted: true
+  notify_on_email_sent: true
+  notify_on_email_delivered: true
+  notify_on_failure_immediately: true
+  notify_on_campaign_summary: true
+
+operator_notes:
+  filling_instructions:
+    - "Keep primary_subject and main_message_body as the canonical source text."
+    - "If contact_form_subject or email_subject is blank, use primary_subject."
+    - "Use YAML block style (|) for multi-paragraph content so line breaks are preserved."
+    - "If contact_form_defaults.message or email_defaults.body_text is blank or left as placeholder text, use main_message_body."
+    - "Use real sender identity only. Do not invent company or address details."
+    - "optional_form_fields are fallback values for websites that require extra fields."
+  current_status: "fill_me"
