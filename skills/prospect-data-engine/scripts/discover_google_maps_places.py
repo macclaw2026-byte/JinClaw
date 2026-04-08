@@ -731,6 +731,9 @@ def main() -> int:
             "last_cursor_start": cursor,
             "last_run_query_count": len(selected_queries),
             "total_query_count": len(flattened_queries),
+            "active_phase": phase_progress.get("active_phase"),
+            "new_england_complete": phase_progress.get("new_england_complete"),
+            "state_stats": phase_progress.get("state_stats", {}),
             "phase_progress": phase_progress,
         },
     )

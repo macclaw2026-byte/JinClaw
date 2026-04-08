@@ -143,12 +143,20 @@ def _detect_contact_form(page_html_map: dict[str, str]) -> tuple[bool, str, list
         signals: list[str] = []
         if "<form" not in lowered and "hubspot-form" not in lowered and "wpforms" not in lowered and "formspree" not in lowered:
             continue
+        if "newsletter" in lowered and "<textarea" not in lowered and not FORM_HINT_RE.search(page):
+            continue
         if "<form" in lowered:
             signals.append("html_form_tag")
         if "type=\"email\"" in lowered or "type='email'" in lowered:
             signals.append("email_field")
         if "<textarea" in lowered:
             signals.append("textarea_field")
+        if "name=\"message\"" in lowered or "name='message'" in lowered or "placeholder=\"message" in lowered or "placeholder='message" in lowered:
+            signals.append("message_field")
+        if "name=\"subject\"" in lowered or "name='subject'" in lowered:
+            signals.append("subject_field")
+        if "inquiry" in lowered or "enquiry" in lowered or "project details" in lowered:
+            signals.append("inquiry_language")
         if "hubspot" in lowered:
             signals.append("hubspot_form")
         if "formspree" in lowered:
@@ -157,7 +165,7 @@ def _detect_contact_form(page_html_map: dict[str, str]) -> tuple[bool, str, list
             signals.append("wpforms")
         if FORM_HINT_RE.search(page):
             signals.append("contact_like_url")
-        if signals:
+        if "textarea_field" in signals or "message_field" in signals or "subject_field" in signals or "inquiry_language" in signals or ("contact_like_url" in signals and "email_field" in signals):
             return True, page, signals[:6]
     return False, "", []
 
