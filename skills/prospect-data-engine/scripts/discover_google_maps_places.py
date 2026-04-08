@@ -322,6 +322,104 @@ def _select_query_window(items: list[dict[str, str]], start: int, size: int) -> 
     return selected
 
 
+def _state_discovered_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        state = str(row.get("geo", "")).split("/", 1)[0].strip()
+        if not state:
+            continue
+        counts[state] = counts.get(state, 0) + 1
+    return counts
+
+
+def _update_phase_progress(
+    runtime_state: dict[str, Any],
+    selected_queries: list[dict[str, str]],
+    query_runs: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    phase_progress = dict(runtime_state.get("phase_progress", {}) or {})
+    query_stats = dict(phase_progress.get("query_stats", {}) or {})
+    state_stats = dict(phase_progress.get("state_stats", {}) or {})
+    discovered_counts = _state_discovered_counts(rows)
+
+    selected_by_id = {
+        _safe_query_id(item["state"], item["query"]): item
+        for item in selected_queries
+    }
+    for result in query_runs:
+        query_id = _safe_query_id(result["state"], result["query"])
+        previous = dict(query_stats.get(query_id, {}) or {})
+        success_count = int(previous.get("success_count", 0))
+        failure_count = int(previous.get("failure_count", 0))
+        if result.get("ok"):
+            success_count += 1
+        else:
+            failure_count += 1
+        query_stats[query_id] = {
+            "query_id": query_id,
+            "state": result["state"],
+            "group": result["group"],
+            "query": result["query"],
+            "success_count": success_count,
+            "failure_count": failure_count,
+            "last_result_count": int(result.get("result_count", 0) or 0),
+        }
+
+    state_to_queries: dict[str, list[str]] = {}
+    for query_id, item in selected_by_id.items():
+        state_to_queries.setdefault(item["state"], []).append(query_id)
+    for state in NEW_ENGLAND_COUNTIES:
+        state_to_queries.setdefault(state, [])
+
+    for state, query_ids in state_to_queries.items():
+        previous = dict(state_stats.get(state, {}) or {})
+        previous_max = int(previous.get("max_discovered_count", 0))
+        current_count = int(discovered_counts.get(state, 0))
+        successful_queries = 0
+        total_queries = 0
+        for query_id, stat in query_stats.items():
+            if stat.get("state") != state:
+                continue
+            total_queries += 1
+            if int(stat.get("success_count", 0)) > 0:
+                successful_queries += 1
+        stable_no_growth_runs = int(previous.get("stable_no_growth_runs", 0))
+        if current_count > previous_max:
+            stable_no_growth_runs = 0
+        elif query_ids:
+            stable_no_growth_runs += 1
+        state_stats[state] = {
+            "state": state,
+            "successful_queries": successful_queries,
+            "total_queries": total_queries,
+            "coverage_complete": bool(total_queries and successful_queries >= total_queries),
+            "current_discovered_count": current_count,
+            "max_discovered_count": max(previous_max, current_count),
+            "stable_no_growth_runs": stable_no_growth_runs,
+        }
+
+    stabilization_runs_required = 2
+    new_england_complete = True
+    for state in NEW_ENGLAND_COUNTIES:
+        state_info = dict(state_stats.get(state, {}) or {})
+        state_complete = bool(
+            state_info.get("coverage_complete")
+            and int(state_info.get("stable_no_growth_runs", 0)) >= stabilization_runs_required
+        )
+        state_info["complete"] = state_complete
+        state_info["stabilization_runs_required"] = stabilization_runs_required
+        state_stats[state] = state_info
+        if not state_complete:
+            new_england_complete = False
+
+    phase_progress["query_stats"] = query_stats
+    phase_progress["state_stats"] = state_stats
+    phase_progress["new_england_complete"] = new_england_complete
+    phase_progress["active_phase"] = "contiguous_us_48" if new_england_complete else "new_england"
+    return phase_progress
+
+
 def _dedupe_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     deduped: list[dict[str, Any]] = []
     seen_keys: set[tuple[str, str, str]] = set()
@@ -530,14 +628,18 @@ def main() -> int:
         return 0
 
     region_plan = list(capture.get("region_plan", []) or [])
-    coverage_scope = str(capture.get("coverage_scope", "contiguous_us_48")).strip().lower()
+    coverage_scope = str(capture.get("coverage_scope", "phased_contiguous_us_48")).strip().lower()
+    runtime_state = _read_json(runtime_state_path)
     if capture.get("new_england_exhaustive", True):
         region_plan = _expand_new_england_exhaustive(region_plan)
     if coverage_scope == "contiguous_us_48":
         region_plan = _expand_to_contiguous_48(region_plan)
+    elif coverage_scope == "phased_contiguous_us_48":
+        phase_progress = dict(runtime_state.get("phase_progress", {}) or {})
+        if phase_progress.get("new_england_complete"):
+            region_plan = _expand_to_contiguous_48(region_plan)
     flattened_queries = _flatten_queries(region_plan)
     max_queries_per_run = int(capture.get("max_queries_per_run", 8) or 8)
-    runtime_state = _read_json(runtime_state_path)
     cursor = int(runtime_state.get("cursor", 0) or 0)
     selected_queries = _select_query_window(flattened_queries, cursor, max_queries_per_run)
     all_rows: list[dict[str, Any]] = []
@@ -605,6 +707,7 @@ def main() -> int:
     if rows:
         _write_json(last_success_path, {"items": rows})
     next_cursor = (cursor + len(selected_queries)) % len(flattened_queries) if flattened_queries else 0
+    phase_progress = _update_phase_progress(runtime_state, selected_queries, query_runs, rows)
     _write_json(
         runtime_state_path,
         {
@@ -612,6 +715,7 @@ def main() -> int:
             "last_cursor_start": cursor,
             "last_run_query_count": len(selected_queries),
             "total_query_count": len(flattened_queries),
+            "phase_progress": phase_progress,
         },
     )
     report = {
@@ -626,6 +730,7 @@ def main() -> int:
         "queries": query_runs,
         "capture_mode": "browser_crawler_via_google_maps_html",
         "used_cached_results": used_cached_results,
+        "phase_progress": phase_progress,
     }
     _write_json(report_path, report)
     print(json.dumps(report, ensure_ascii=False, indent=2))

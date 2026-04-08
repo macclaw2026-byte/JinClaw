@@ -72,7 +72,7 @@
       "enabled": true,
       "keyword": "interior designer",
       "starting_region_group": "new_england",
-      "coverage_scope": "new_england_only",
+      "coverage_scope": "phased_contiguous_us_48",
       "new_england_exhaustive": true,
       "max_queries_per_run": 4,
       "max_pages_per_query": 3,
