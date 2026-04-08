@@ -22,6 +22,41 @@ REVIEW_TOLERANT_SOURCE_FAMILIES = {
     "linkedin_company_pages",
     "trade_directories",
 }
+NEOSGO_FIT_APPROVED_CATEGORY_KEYWORDS = {
+    "interior designer",
+    "interior decorator",
+    "architectural interiors",
+}
+NEOSGO_FIT_REVIEW_CATEGORY_KEYWORDS = {
+    "home staging",
+    "lighting consultant",
+    "lighting store",
+    "architect",
+}
+NEOSGO_FIT_REJECT_CATEGORY_KEYWORDS = {
+    "business center",
+    "paint store",
+    "painter",
+    "landscape designer",
+    "landscaper",
+    "garden center",
+    "florist",
+    "publisher",
+    "magazine",
+    "media company",
+}
+NEOSGO_FIT_REJECT_NAME_KEYWORDS = {
+    "paint",
+    "painting",
+    "tropical",
+    "landscape",
+    "landscaping",
+    "garden",
+    "magazine",
+    "media",
+    "publisher",
+    "florist",
+}
 
 
 def _read_json(path: Path) -> dict | list:
@@ -198,11 +233,46 @@ def _normalize_seed(raw: dict, index: int, source_label: str = "") -> dict:
         "source_confidence": float(raw.get("source_confidence", raw.get("fit_score", 70)) or 0.7) / (100.0 if str(raw.get("fit_score", "")).strip() else 1.0),
         "source_label": source_label,
         "source_family": _first_nonempty(raw, ["source_family"]),
+        "category": _first_nonempty(raw, ["category", "primary_type"]),
+        "formatted_address": _first_nonempty(raw, ["formatted_address"]),
+        "phone": _first_nonempty(raw, ["phone"]),
         "query_id": _first_nonempty(raw, ["query_id"]),
         "discovery_query": _first_nonempty(raw, ["discovery_query", "generated_from_query"]),
         "query_family": _first_nonempty(raw, ["query_family"]),
         "generated_from_provider": _first_nonempty(raw, ["generated_from_provider"]),
     }
+
+
+def _assess_neosgo_fit(seed: dict) -> tuple[str, list[str]]:
+    source_family = (seed.get("source_family") or "").strip()
+    company_name = (seed.get("company_name") or "").strip().lower()
+    category = (seed.get("category") or "").strip().lower()
+    website = (seed.get("website_root_domain") or "").strip().lower()
+
+    reasons: list[str] = []
+
+    if source_family == "google_maps_places":
+        if any(keyword in category for keyword in NEOSGO_FIT_REJECT_CATEGORY_KEYWORDS):
+            return "reject", [f"reject_category:{category or 'unknown'}"]
+        if any(keyword in company_name for keyword in NEOSGO_FIT_REJECT_NAME_KEYWORDS):
+            return "reject", [f"reject_name_keyword:{company_name}"]
+        if any(keyword in category for keyword in NEOSGO_FIT_APPROVED_CATEGORY_KEYWORDS):
+            reasons.append("approved_google_maps_category")
+            return "approved", reasons
+        if "interior" in company_name or "design" in company_name or "interiors" in company_name:
+            reasons.append("approved_company_name_match")
+            return "approved", reasons
+        if any(keyword in category for keyword in NEOSGO_FIT_REVIEW_CATEGORY_KEYWORDS):
+            return "review", [f"review_category:{category or 'unknown'}"]
+        return "review", ["google_maps_uncertain_fit"]
+
+    if source_family in {"seed_registry", "curated_public_source"}:
+        return "approved", ["trusted_seed_or_curated_source"]
+
+    if "lighting" in company_name or "lighting" in website:
+        return "approved", ["lighting_company_match"]
+
+    return "approved", ["default_allow"]
 
 
 def _load_csv(path: Path) -> list[dict]:
@@ -313,6 +383,7 @@ def _quality_gate(source_registry: list[dict], deduped: list[dict], strategy_rea
     empty_sources = [item["source_label"] for item in source_registry if item["quality_rating"] == "empty"]
     missing_domain_count = len([item for item in deduped if not item.get("website_root_domain")])
     missing_source_url_count = len([item for item in deduped if not item.get("source_url")])
+    rejected_fit_count = len([item for item in deduped if item.get("fit_precheck_status") == "reject"])
     allowed = True
     blockers: list[str] = []
     warnings: list[str] = []
@@ -339,6 +410,7 @@ def _quality_gate(source_registry: list[dict], deduped: list[dict], strategy_rea
         "strategy_ready_count": strategy_ready_count,
         "missing_domain_count": missing_domain_count,
         "missing_source_url_count": missing_source_url_count,
+        "rejected_fit_count": rejected_fit_count,
         "review_sources": review_sources,
         "low_quality_sources": low_quality_sources,
         "empty_sources": empty_sources,
@@ -465,6 +537,23 @@ def _build_review_queue(source_registry: list[dict], deduped: list[dict], duplic
                     },
                 }
             )
+        if seed.get("fit_precheck_status") == "review":
+            review_items.append(
+                {
+                    "review_id": f"review-fit-{index}",
+                    "review_type": "neosgo_fit_review",
+                    "severity": "medium",
+                    "status": "open",
+                    "account_hint": seed.get("company_name") or seed.get("website_root_domain") or f"seed-{index}",
+                    "reason": "uncertain_neosgo_fit",
+                    "evidence": {
+                        "source_family": seed.get("source_family"),
+                        "category": seed.get("category"),
+                        "fit_precheck_reasons": seed.get("fit_precheck_reasons", []),
+                        "source_url": seed.get("source_url"),
+                    },
+                }
+            )
     return review_items
 
 
@@ -551,6 +640,9 @@ def main() -> int:
             )
             continue
         seen_by_key[key] = seed
+        fit_precheck_status, fit_precheck_reasons = _assess_neosgo_fit(seed)
+        seed["fit_precheck_status"] = fit_precheck_status
+        seed["fit_precheck_reasons"] = fit_precheck_reasons
         deduped.append(seed)
 
     merged_path = output_root / "merged-prospect-seeds.json"
@@ -558,7 +650,11 @@ def main() -> int:
     source_registry_path = output_root / "source-registry.json"
     duplicate_conflicts_path = output_root / "duplicate-conflicts.json"
     low_quality_source_labels = {item["source_label"] for item in source_registry if item.get("quality_rating") == "low"}
-    strategy_ready_seeds = [item for item in deduped if item.get("source_label") not in low_quality_source_labels]
+    strategy_ready_seeds = [
+        item
+        for item in deduped
+        if item.get("source_label") not in low_quality_source_labels and item.get("fit_precheck_status") != "reject"
+    ]
     quality_gate = _quality_gate(source_registry, deduped, len(strategy_ready_seeds))
     review_queue = _build_review_queue(source_registry, deduped, duplicate_conflicts)
     review_queue_path = output_root / "review-queue.json"

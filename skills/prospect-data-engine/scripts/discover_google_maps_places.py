@@ -17,6 +17,106 @@ WEBSITE_RE = re.compile(r"^\[.*Website.*\]\((https?://[^)]+)\)$", re.I)
 PLACE_LINK_RE = re.compile(r"^\[\]\((https://www\.google\.com/maps/place/[^)]+)\)$", re.I)
 RATING_RE = re.compile(r"^\d+(?:\.\d+)?$")
 QUERY_ID_SANITIZE_RE = re.compile(r"[^a-z0-9]+")
+STATE_GROUPS = {
+    "ME": "new_england",
+    "NH": "new_england",
+    "VT": "new_england",
+    "MA": "new_england",
+    "RI": "new_england",
+    "CT": "new_england",
+    "NY": "mid_atlantic",
+    "NJ": "mid_atlantic",
+    "PA": "mid_atlantic",
+    "DE": "mid_atlantic",
+    "MD": "mid_atlantic",
+    "VA": "south_atlantic",
+    "NC": "south_atlantic",
+    "SC": "south_atlantic",
+    "GA": "south_atlantic",
+    "FL": "south_atlantic",
+    "WV": "south_atlantic",
+    "AL": "south",
+    "MS": "south",
+    "TN": "south",
+    "KY": "south",
+    "LA": "south",
+    "AR": "south",
+    "OK": "south_central",
+    "TX": "south_central",
+    "OH": "midwest",
+    "MI": "midwest",
+    "IN": "midwest",
+    "IL": "midwest",
+    "WI": "midwest",
+    "MN": "midwest",
+    "IA": "midwest",
+    "MO": "midwest",
+    "ND": "plains",
+    "SD": "plains",
+    "NE": "plains",
+    "KS": "plains",
+    "NM": "mountain",
+    "CO": "mountain",
+    "WY": "mountain",
+    "MT": "mountain",
+    "ID": "mountain",
+    "UT": "mountain",
+    "AZ": "mountain",
+    "NV": "mountain",
+    "WA": "west_coast",
+    "OR": "west_coast",
+    "CA": "west_coast",
+}
+CONTIGUOUS_STATE_NAMES = {
+    "AL": "Alabama",
+    "AZ": "Arizona",
+    "AR": "Arkansas",
+    "CA": "California",
+    "CO": "Colorado",
+    "CT": "Connecticut",
+    "DE": "Delaware",
+    "FL": "Florida",
+    "GA": "Georgia",
+    "ID": "Idaho",
+    "IL": "Illinois",
+    "IN": "Indiana",
+    "IA": "Iowa",
+    "KS": "Kansas",
+    "KY": "Kentucky",
+    "LA": "Louisiana",
+    "ME": "Maine",
+    "MD": "Maryland",
+    "MA": "Massachusetts",
+    "MI": "Michigan",
+    "MN": "Minnesota",
+    "MS": "Mississippi",
+    "MO": "Missouri",
+    "MT": "Montana",
+    "NE": "Nebraska",
+    "NV": "Nevada",
+    "NH": "New Hampshire",
+    "NJ": "New Jersey",
+    "NM": "New Mexico",
+    "NY": "New York",
+    "NC": "North Carolina",
+    "ND": "North Dakota",
+    "OH": "Ohio",
+    "OK": "Oklahoma",
+    "OR": "Oregon",
+    "PA": "Pennsylvania",
+    "RI": "Rhode Island",
+    "SC": "South Carolina",
+    "SD": "South Dakota",
+    "TN": "Tennessee",
+    "TX": "Texas",
+    "UT": "Utah",
+    "VT": "Vermont",
+    "VA": "Virginia",
+    "WA": "Washington",
+    "WV": "West Virginia",
+    "WI": "Wisconsin",
+    "WY": "Wyoming",
+}
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -63,6 +163,24 @@ def _flatten_queries(region_plan: list[dict[str, Any]]) -> list[dict[str, str]]:
                 }
             )
     return flattened
+
+
+def _expand_to_contiguous_48(region_plan: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    existing_states = {str(item.get("state", "")).strip() for item in region_plan}
+    expanded = list(region_plan)
+    for state_code, state_name in CONTIGUOUS_STATE_NAMES.items():
+        if state_code in existing_states:
+            continue
+        expanded.append(
+            {
+                "group": STATE_GROUPS.get(state_code, "nationwide"),
+                "state": state_code,
+                "queries": [
+                    f"interior designer in {state_name}",
+                ],
+            }
+        )
+    return expanded
 
 
 def _select_query_window(items: list[dict[str, str]], start: int, size: int) -> list[dict[str, str]]:
@@ -189,6 +307,8 @@ def main() -> int:
         return 0
 
     region_plan = list(capture.get("region_plan", []) or [])
+    if str(capture.get("coverage_scope", "contiguous_us_48")).strip().lower() == "contiguous_us_48":
+        region_plan = _expand_to_contiguous_48(region_plan)
     flattened_queries = _flatten_queries(region_plan)
     max_queries_per_run = int(capture.get("max_queries_per_run", 8) or 8)
     runtime_state = _read_json(runtime_state_path)

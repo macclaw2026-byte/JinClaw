@@ -52,6 +52,16 @@ def _fit_score(account_type: str, persona_type: str, config: dict) -> float:
     return max(0.0, min(40.0, fit + 6.0))
 
 
+def _fit_precheck_adjustment(status: str) -> float:
+    if status == "approved":
+        return 4.0
+    if status == "review":
+        return -10.0
+    if status == "reject":
+        return -25.0
+    return 0.0
+
+
 def _intent_score(signals: list[str]) -> float:
     count = len(signals)
     base = min(18.0, count * 7.0)
@@ -97,7 +107,9 @@ def main() -> int:
 
     for index, seed in enumerate(seeds, start=1):
         contact = seed.get("contact", {})
-        fit_score = _fit_score(seed.get("account_type", ""), seed.get("persona_type", ""), config)
+        fit_precheck_status = str(seed.get("fit_precheck_status", "") or "")
+        fit_score = _fit_score(seed.get("account_type", ""), seed.get("persona_type", ""), config) + _fit_precheck_adjustment(fit_precheck_status)
+        fit_score = max(0.0, min(40.0, fit_score))
         intent_score = _intent_score(seed.get("signals", []))
         reachability_status, reachability_score = _normalize_reachability(contact.get("reachability_status", ""))
         data_quality_score = _data_quality_score(seed)
@@ -123,6 +135,9 @@ def main() -> int:
             "source_url": seed.get("source_url", ""),
             "source_label": seed.get("source_label", ""),
             "source_family": seed.get("source_family", ""),
+            "fit_precheck_status": fit_precheck_status,
+            "fit_precheck_reasons": seed.get("fit_precheck_reasons", []),
+            "category": seed.get("category", ""),
             "query_id": seed.get("query_id", ""),
             "discovery_query": seed.get("discovery_query", ""),
             "query_family": seed.get("query_family", ""),
@@ -212,6 +227,8 @@ def main() -> int:
             "high_value_count": len([item for item in prospect_records if item["score_tier"] in {"A", "B"}]),
             "email_ready_count": len([item for item in prospect_records if item["reachability_status"] == "email_ready"]),
             "form_ready_count": len([item for item in prospect_records if item["reachability_status"] == "form_ready"]),
+            "fit_review_count": len([item for item in prospect_records if item.get("fit_precheck_status") == "review"]),
+            "fit_reject_count": len([item for item in prospect_records if item.get("fit_precheck_status") == "reject"]),
             "average_total_score": round(sum(item["total_score"] for item in prospect_records) / len(prospect_records), 2)
             if prospect_records
             else 0.0,
