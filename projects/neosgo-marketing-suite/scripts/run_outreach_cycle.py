@@ -12,6 +12,8 @@ import sys
 import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 from urllib.parse import urlparse
 from typing import Any
 
@@ -31,6 +33,7 @@ CAPTCHA_QUEUE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "captcha-queue.json
 CAPTCHA_TEMPLATE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "captcha-decisions.template.json"
 TELEGRAM_REPLY_STATE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "telegram-reply-state.json"
 CONTENT_PATH = PROJECT_ROOT / "config" / "outreach-campaign-content.yaml"
+OUTREACH_ENV_PATH = PROJECT_ROOT / ".env.outreach"
 FORM_ADAPTERS_PATH = PROJECT_ROOT / "config" / "outreach-form-adapters.json"
 MAIL_BATCH_SCRIPT = WORKSPACE_ROOT / "skills" / "neosgo-lead-engine" / "scripts" / "send_outreach_mail_batch.py"
 PLAYWRIGHT_PYTHON = WORKSPACE_ROOT / "tools" / "matrix-venv" / "bin" / "python"
@@ -125,6 +128,23 @@ def _load_content() -> dict[str, Any]:
         "email_defaults": email_defaults,
         "contact_form_defaults": contact_form_defaults,
     }
+
+
+def _load_outreach_env() -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not OUTREACH_ENV_PATH.exists():
+        return values
+    try:
+        lines = OUTREACH_ENV_PATH.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return values
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
 
 
 def _load_form_adapters() -> dict[str, Any]:
@@ -1195,6 +1215,79 @@ def _submit_contact_form(item: dict[str, Any], content: dict[str, Any], adapters
 def _send_one_email(item: dict[str, Any], content: dict[str, Any]) -> dict[str, Any]:
     sender = dict(content.get("sender_identity") or {})
     email_defaults = dict(content.get("email_defaults") or {})
+    env = _load_outreach_env()
+    resend_api_key = str(env.get("RESEND_API_KEY") or "").strip()
+    resend_from_email = str(env.get("RESEND_FROM_EMAIL") or email_defaults.get("from_email") or sender.get("sender_email") or "").strip()
+    resend_from_name = str(env.get("RESEND_FROM_NAME") or email_defaults.get("from_name") or sender.get("display_name") or "Neosgo Lighting").strip()
+    resend_reply_to = str(env.get("RESEND_REPLY_TO") or email_defaults.get("reply_to") or sender.get("reply_to_email") or sender.get("sender_email") or "").strip()
+    if resend_api_key and resend_from_email:
+        payload = {
+            "from": f"{resend_from_name} <{resend_from_email}>",
+            "to": [str(item.get("email") or "").strip()],
+            "subject": str(email_defaults.get("subject") or "").strip(),
+            "text": str(email_defaults.get("body_text") or "").strip(),
+        }
+        if resend_reply_to:
+            payload["reply_to"] = resend_reply_to
+        req = urllib_request.Request(
+            "https://api.resend.com/emails",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {resend_api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "neosgo-outreach/1.0",
+            },
+            method="POST",
+        )
+        try:
+            with urllib_request.urlopen(req, timeout=60) as resp:
+                body = resp.read().decode("utf-8", errors="replace")
+                parsed = json.loads(body or "{}")
+                return {
+                    "provider": "resend",
+                    "attempted": 1,
+                    "sent": 1,
+                    "failed": 0,
+                    "failures": [],
+                    "message_id": parsed.get("id", ""),
+                    "status_code": getattr(resp, "status", 200),
+                    "returncode": 0,
+                }
+        except urllib_error.HTTPError as exc:
+            try:
+                body = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                body = ""
+            return {
+                "provider": "resend",
+                "attempted": 1,
+                "sent": 0,
+                "failed": 1,
+                "failures": [
+                    {
+                        "recipient_email": str(item.get("email") or "").strip(),
+                        "subject": str(email_defaults.get("subject") or "").strip(),
+                        "status_code": exc.code,
+                        "stderr": body or str(exc),
+                    }
+                ],
+                "returncode": 1,
+            }
+        except Exception as exc:
+            return {
+                "provider": "resend",
+                "attempted": 1,
+                "sent": 0,
+                "failed": 1,
+                "failures": [
+                    {
+                        "recipient_email": str(item.get("email") or "").strip(),
+                        "subject": str(email_defaults.get("subject") or "").strip(),
+                        "stderr": str(exc),
+                    }
+                ],
+                "returncode": 1,
+            }
     queue_csv = PROJECT_ROOT / "runtime" / "outreach" / "mail-batch.csv"
     events_csv = PROJECT_ROOT / "runtime" / "outreach" / "mail-events.csv"
     queue_csv.parent.mkdir(parents=True, exist_ok=True)
