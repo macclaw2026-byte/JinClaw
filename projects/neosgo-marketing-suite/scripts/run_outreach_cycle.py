@@ -263,6 +263,7 @@ def _select_next_candidate(state: dict[str, Any]) -> dict[str, Any] | None:
             "email_failed",
             "contact_form_failed",
             "waiting_reply",
+            "review_hold",
             "stopped",
         }:
             continue
@@ -303,10 +304,10 @@ def _suggest_review_action(target: dict[str, Any]) -> str:
     if reason.startswith("submit_click_failed"):
         return "ready_for_form_retry"
     if reason in {"unknown_result", "submission_error"}:
-        return "review_submit_result"
+        return "review_hold"
     if reason == "validation_error":
         return "ready_for_email"
-    return "review_submit_result"
+    return "review_hold"
 
 
 def _write_review_artifacts(state: dict[str, Any]) -> None:

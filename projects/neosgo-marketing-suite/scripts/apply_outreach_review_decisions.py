@@ -54,6 +54,9 @@ def _apply_decision(target: dict[str, Any], decision: str, notes: str) -> dict[s
     elif decision == "ready_for_email":
         updated["status"] = "ready_for_email"
         updated["force_channel"] = "email"
+    elif decision == "review_hold":
+        updated["status"] = "review_hold"
+        updated["force_channel"] = ""
     elif decision == "stopped":
         updated["status"] = "stopped"
         updated["force_channel"] = ""
@@ -72,7 +75,7 @@ def main() -> int:
     targets = dict(state.get("targets") or {})
     template = _read_json(Path(args.template), {"items": []})
 
-    supported = {"form_submitted_confirmed", "ready_for_form_retry", "ready_for_email", "stopped"}
+    supported = {"form_submitted_confirmed", "ready_for_form_retry", "ready_for_email", "review_hold", "stopped"}
     applied = []
     skipped = []
     for item in list(template.get("items") or []):
