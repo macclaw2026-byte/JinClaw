@@ -886,6 +886,35 @@ def _form_submission_script() -> str:
                 locale="en-US",
             )
             page = context.pages[0] if context.pages else context.new_page()
+            response_log = []
+
+            normalized_target_host = ""
+            normalized_target_path = ""
+            try:
+                parsed_target = urlparse(target_url)
+                normalized_target_host = (parsed_target.netloc or "").lower().replace("www.", "")
+                normalized_target_path = (parsed_target.path or "/").rstrip("/") or "/"
+            except Exception:
+                pass
+
+            def on_response(resp):
+                try:
+                    parsed_resp = urlparse(resp.url)
+                    resp_host = (parsed_resp.netloc or "").lower().replace("www.", "")
+                    resp_path = (parsed_resp.path or "/").rstrip("/") or "/"
+                    if normalized_target_host and resp_host != normalized_target_host:
+                        return
+                    if normalized_target_path and resp_path != normalized_target_path:
+                        return
+                except Exception:
+                    return
+                try:
+                    body = resp.text()[:4000]
+                except Exception:
+                    body = ""
+                response_log.append({"url": resp.url, "status": resp.status, "body": body})
+
+            page.on("response", on_response)
             page.goto(target_url, wait_until="domcontentloaded", timeout=45000)
             try:
                 page.wait_for_load_state("networkidle", timeout=10000)
@@ -1018,8 +1047,63 @@ def _form_submission_script() -> str:
                 )
                 raise SystemExit(0)
 
+            response_confirmation = None
+            response_captcha = None
+            for entry in response_log:
+                body = str(entry.get("body") or "")
+                status = int(entry.get("status") or 0)
+                if (
+                    status == 429
+                    or re.search(r"(please verify you are human|recaptcha|captcha)", body, re.I)
+                ):
+                    response_captcha = entry
+                if "GF_AJAX_POSTBACK" in body and re.search(r"(thanks for contacting us|we('|\u2019)?ll be in touch|gform_confirmation_message)", body, re.I):
+                    response_confirmation = entry
+            if response_captcha:
+                context.close()
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "reason": "captcha_required",
+                            "score": score,
+                            "captcha_filled": captcha_filled,
+                            "filled_count": len(filled),
+                            "adapter_checkbox_applied": adapter_checkbox_applied,
+                            "adapter_select_applied": adapter_select_applied,
+                            "target_url": target_url,
+                            "sample_text": str(response_captcha.get("body") or "")[:600],
+                            "errors": ["captcha"],
+                            "detected_via": "response_captcha",
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                raise SystemExit(0)
+            if response_confirmation:
+                context.close()
+                print(
+                    json.dumps(
+                        {
+                            "ok": True,
+                            "reason": "submitted",
+                            "score": score,
+                            "captcha_filled": captcha_filled,
+                            "filled_count": len(filled),
+                            "adapter_checkbox_applied": adapter_checkbox_applied,
+                            "adapter_select_applied": adapter_select_applied,
+                            "target_url": target_url,
+                            "sample_text": str(response_confirmation.get("body") or "")[:600],
+                            "errors": [],
+                            "detected_via": "response_confirmation",
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                raise SystemExit(0)
+
             body_text = page.locator("body").inner_text()
-            success = bool(re.search(r"(thank you|thanks for reaching out|message sent|we('|\u2019)?ll be in touch|we will be in touch|successfully submitted|request has been sent)", body_text, re.I))
+            success = bool(re.search(r"(thank you|thanks for contacting us|thanks for reaching out|message sent|we('|\u2019)?ll be in touch|we will be in touch|successfully submitted|request has been sent|gform_confirmation_message)", body_text, re.I))
             errors = re.findall(r"(required|invalid|error sending your message|please try again later|submission failed|captcha|please complete|please fill|antispam token is invalid)", body_text, re.I)
             antispam_invalid = "antispam token is invalid" in body_text.lower()
             explicit_submission_error = bool(re.search(r"(error sending your message|please try again later|submission failed)", body_text, re.I))
@@ -1030,14 +1114,19 @@ def _form_submission_script() -> str:
                 body_text = str(frame_result.get("text") or "")
             if frame_result and frame_result.get("explicit_submission_error"):
                 explicit_submission_error = True
+            if success:
+                errors = [err for err in errors if str(err).lower() in {"captcha", "required", "antispam token is invalid"}]
+            has_captcha_error = any(str(err).lower() == "captcha" for err in errors)
             context.close()
             print(
                 json.dumps(
                     {
-                        "ok": bool(success and not errors and not explicit_submission_error),
+                        "ok": bool(success and not explicit_submission_error and not any(str(err).lower() in {"captcha", "required", "antispam token is invalid"} for err in errors)),
                         "reason": (
                             "submitted"
-                            if success and not errors and not explicit_submission_error
+                            if success and not explicit_submission_error and not any(str(err).lower() in {"captcha", "required", "antispam token is invalid"} for err in errors)
+                            else "captcha_required"
+                            if has_captcha_error
                             else "antispam_token_invalid"
                             if antispam_invalid
                             else "submission_error"
