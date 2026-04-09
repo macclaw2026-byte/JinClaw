@@ -1,0 +1,25 @@
+{
+  "domains": {
+    "alorahomedesign.com": {
+      "form_selector": "form",
+      "checkbox_rules": [
+        {
+          "group_hint": "What services are you interested in?",
+          "option_label": "To the Trade"
+        }
+      ],
+      "select_rules": [
+        {
+          "label_hint": "How did you hear about us?",
+          "option_label": "Option 1"
+        }
+      ]
+    },
+    "dileonardo.com": {
+      "form_selector": "#gform_1"
+    },
+    "coastaldesignsri.com": {
+      "form_selector": "#form-995274385364109391"
+    }
+  }
+}

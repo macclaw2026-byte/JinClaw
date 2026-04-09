@@ -12,6 +12,7 @@ import sys
 import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 from typing import Any
 
 
@@ -26,9 +27,14 @@ EVENTS_PATH = PROJECT_ROOT / "runtime" / "outreach" / "events.jsonl"
 LATEST_SUMMARY_PATH = PROJECT_ROOT / "runtime" / "outreach" / "latest-summary.json"
 REVIEW_QUEUE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "review-queue.json"
 REVIEW_TEMPLATE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "review-decisions.template.json"
+CAPTCHA_QUEUE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "captcha-queue.json"
+CAPTCHA_TEMPLATE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "captcha-decisions.template.json"
+TELEGRAM_REPLY_STATE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "telegram-reply-state.json"
 CONTENT_PATH = PROJECT_ROOT / "config" / "outreach-campaign-content.yaml"
+FORM_ADAPTERS_PATH = PROJECT_ROOT / "config" / "outreach-form-adapters.json"
 MAIL_BATCH_SCRIPT = WORKSPACE_ROOT / "skills" / "neosgo-lead-engine" / "scripts" / "send_outreach_mail_batch.py"
 PLAYWRIGHT_PYTHON = WORKSPACE_ROOT / "tools" / "matrix-venv" / "bin" / "python"
+TELEGRAM_INGRESS_PATH = WORKSPACE_ROOT / "tools" / "openmoss" / "runtime" / "autonomy" / "ingress" / "telegram.jsonl"
 STATE_PRIORITY = ["RI", "MA", "CT", "NH", "ME", "VT"]
 SUCCESS_TEXT_RE = re.compile(
     r"(thank you|thanks for reaching out|message sent|we('|\u2019)?ll be in touch|we will be in touch|successfully submitted|request has been sent)",
@@ -118,6 +124,37 @@ def _load_content() -> dict[str, Any]:
         "email_defaults": email_defaults,
         "contact_form_defaults": contact_form_defaults,
     }
+
+
+def _load_form_adapters() -> dict[str, Any]:
+    payload = _read_json(FORM_ADAPTERS_PATH, {"domains": {}})
+    return dict(payload or {"domains": {}})
+
+
+def _normalized_domain(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if "://" not in raw:
+        raw = f"https://{raw}"
+    try:
+        host = urlparse(raw).netloc.lower().strip()
+    except Exception:
+        return ""
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def _adapter_for(item: dict[str, Any], adapters: dict[str, Any]) -> dict[str, Any]:
+    domains = dict(adapters.get("domains") or {})
+    for candidate in (
+        _normalized_domain(str(item.get("contact_form_url") or "")),
+        _normalized_domain(str(item.get("website") or "")),
+    ):
+        if candidate and candidate in domains:
+            return dict(domains[candidate] or {})
+    return {}
 
 
 def _send_telegram(chat_id: str, text: str) -> dict[str, Any]:
@@ -262,6 +299,7 @@ def _select_next_candidate(state: dict[str, Any]) -> dict[str, Any] | None:
             "email_sent_local_only",
             "email_failed",
             "contact_form_failed",
+            "captcha_pending_operator",
             "waiting_reply",
             "review_hold",
             "stopped",
@@ -344,6 +382,182 @@ def _write_review_artifacts(state: dict[str, Any]) -> None:
     _write_json(REVIEW_TEMPLATE_PATH, {"generated_at": _now_iso(), "items": template_items})
 
 
+def _captcha_ticket_id(target_key: str) -> str:
+    key = re.sub(r"[^a-zA-Z0-9]+", "-", target_key).strip("-").lower()
+    return f"captcha-{key[:48] or 'unknown'}"
+
+
+def _write_captcha_artifacts(state: dict[str, Any]) -> None:
+    items = []
+    template_items = []
+    for key, target in list((state.get("targets") or {}).items()):
+        if str(target.get("status") or "") != "captcha_pending_operator":
+            continue
+        result = dict(target.get("result") or target.get("contact_form_result") or {})
+        ticket_id = str(target.get("captcha_ticket_id") or _captcha_ticket_id(key))
+        item = {
+            "ticket_id": ticket_id,
+            "review_key": key,
+            "company_name": target.get("company_name"),
+            "state": target.get("state"),
+            "website": target.get("website"),
+            "contact_form_url": target.get("contact_form_url") or target.get("website"),
+            "current_status": target.get("status"),
+            "detected_reason": result.get("reason"),
+            "detected_errors": result.get("errors") or [],
+            "updated_at": target.get("updated_at"),
+            "sample_text_excerpt": str(result.get("sample_text") or "")[:400],
+            "next_step": "等待人工处理验证码或人工确认后通过 Telegram 回复结果",
+        }
+        items.append(item)
+        template_items.append(
+            {
+                **item,
+                "operator_decision": "",
+                "operator_notes": "",
+                "resolved_at": "",
+            }
+        )
+    _write_json(CAPTCHA_QUEUE_PATH, {"generated_at": _now_iso(), "items": items})
+    _write_json(CAPTCHA_TEMPLATE_PATH, {"generated_at": _now_iso(), "items": template_items})
+
+
+def _parse_telegram_reply(text: str) -> dict[str, str] | None:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    patterns = [
+        r"^outreach\s+captcha\s+(?P<ticket>[A-Za-z0-9\-]+)\s+(?P<action>submitted|retry|email|stop)$",
+        r"^验证码\s+(?P<ticket>[A-Za-z0-9\-]+)\s+(?P<action>已提交|重试|改邮件|停止)$",
+    ]
+    for pattern in patterns:
+        match = re.match(pattern, raw, re.I)
+        if not match:
+            continue
+        action = str(match.group("action") or "").strip().lower()
+        mapping = {
+            "submitted": "submitted",
+            "retry": "retry",
+            "email": "email",
+            "stop": "stop",
+            "已提交": "submitted",
+            "重试": "retry",
+            "改邮件": "email",
+            "停止": "stop",
+        }
+        normalized = mapping.get(action)
+        if not normalized:
+            return None
+        return {"ticket_id": str(match.group("ticket") or "").strip(), "action": normalized, "raw_text": raw}
+    return None
+
+
+def _apply_telegram_captcha_reply(state: dict[str, Any], reply: dict[str, str], *, at: str) -> dict[str, Any] | None:
+    ticket = str(reply.get("ticket_id") or "").strip()
+    action = str(reply.get("action") or "").strip()
+    if not ticket or not action:
+        return None
+    for key, target in list((state.get("targets") or {}).items()):
+        if str(target.get("captcha_ticket_id") or "") != ticket:
+            continue
+        updated = dict(target)
+        updated["updated_at"] = at
+        updated["operator_last_reply"] = reply.get("raw_text")
+        updated["operator_resolved_at"] = at
+        if action == "submitted":
+            updated["status"] = "contact_form_submitted"
+        elif action == "retry":
+            updated["status"] = "ready_for_form_retry"
+            updated["force_channel"] = "contact_form"
+        elif action == "email":
+            updated["status"] = "ready_for_email"
+            updated["force_channel"] = "email"
+        elif action == "stop":
+            updated["status"] = "stopped"
+        else:
+            return None
+        state["targets"][key] = updated
+        return {
+            "type": "captcha_reply_applied",
+            "at": at,
+            "key": key,
+            "company_name": updated.get("company_name"),
+            "ticket_id": ticket,
+            "action": action,
+        }
+    return None
+
+
+def _process_telegram_replies(state: dict[str, Any]) -> list[dict[str, Any]]:
+    replies = []
+    ingress_path = TELEGRAM_INGRESS_PATH
+    if not ingress_path.exists():
+        return replies
+    reply_state = _read_json(TELEGRAM_REPLY_STATE_PATH, {"last_line": 0})
+    last_line = int(reply_state.get("last_line") or 0)
+    try:
+        lines = ingress_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return replies
+    new_last_line = last_line
+    for idx, line in enumerate(lines[last_line:], start=last_line + 1):
+        new_last_line = idx
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        parsed = _parse_telegram_reply(str(payload.get("text") or ""))
+        if not parsed:
+            continue
+        event = _apply_telegram_captcha_reply(state, parsed, at=str(payload.get("at") or _now_iso()))
+        if event:
+            replies.append(event)
+    _write_json(TELEGRAM_REPLY_STATE_PATH, {"last_line": new_last_line, "updated_at": _now_iso()})
+    return replies
+
+
+def _refresh_target_routing_from_results(state: dict[str, Any], adapters: dict[str, Any]) -> list[dict[str, Any]]:
+    events = []
+    for key, target in list((state.get("targets") or {}).items()):
+        status = str(target.get("status") or "")
+        if status not in {"contact_form_failed_email_deferred", "contact_form_failed"}:
+            continue
+        result = dict(target.get("contact_form_result") or target.get("result") or {})
+        sample_text = str(result.get("sample_text") or "").lower()
+        errors = [str(error).lower() for error in list(result.get("errors") or [])]
+        adapter = _adapter_for(target, adapters)
+        if any("captcha" in error for error in errors) or "confirm you're human" in sample_text or "captcha validation failed" in sample_text:
+            ticket_id = str(target.get("captcha_ticket_id") or _captcha_ticket_id(key))
+            target["status"] = "captcha_pending_operator"
+            target["captcha_ticket_id"] = ticket_id
+            target["updated_at"] = _now_iso()
+            target["reason"] = "captcha_required_manual_step"
+            events.append(
+                {
+                    "type": "target_rerouted_for_captcha",
+                    "at": _now_iso(),
+                    "key": key,
+                    "company_name": target.get("company_name"),
+                    "ticket_id": ticket_id,
+                }
+            )
+            continue
+        if adapter and str(result.get("reason") or "") == "validation_error":
+            target["status"] = "ready_for_form_retry"
+            target["force_channel"] = "contact_form"
+            target["updated_at"] = _now_iso()
+            target["reason"] = "adapter_available_for_retry"
+            events.append(
+                {
+                    "type": "target_rerouted_for_form_retry",
+                    "at": _now_iso(),
+                    "key": key,
+                    "company_name": target.get("company_name"),
+                }
+            )
+    return events
+
+
 def _form_submission_script() -> str:
     return textwrap.dedent(
         r"""
@@ -352,6 +566,7 @@ def _form_submission_script() -> str:
 
         target_url = sys.argv[1]
         payload = json.loads(sys.argv[2])
+        adapter = dict(payload.get("_adapter") or {})
 
         def field_score(meta):
             text = " ".join([
@@ -373,6 +588,37 @@ def _form_submission_script() -> str:
             return score
 
         def choose_form(page):
+            preferred_selector = str(adapter.get("form_selector") or "").strip()
+            if preferred_selector:
+                try:
+                    preferred = page.locator(preferred_selector).first
+                    if preferred.count() > 0:
+                        try:
+                            preferred.wait_for(timeout=2000)
+                        except Exception:
+                            pass
+                        form_text = ""
+                        try:
+                            form_text = preferred.inner_text().lower()
+                        except Exception:
+                            form_text = ""
+                        fields = []
+                        for sel in ["input", "textarea", "select"]:
+                            for el in preferred.locator(sel).all():
+                                fields.append(
+                                    {
+                                        "tag": sel,
+                                        "type": (el.get_attribute("type") or ""),
+                                        "name": (el.get_attribute("name") or ""),
+                                        "id": (el.get_attribute("id") or ""),
+                                        "placeholder": (el.get_attribute("placeholder") or ""),
+                                        "aria": (el.get_attribute("aria-label") or ""),
+                                        "required": bool(el.get_attribute("required")),
+                                    }
+                                )
+                        return (0, preferred, fields, form_text), 100
+                except Exception:
+                    pass
             best = None
             best_score = -999
             forms = page.locator("form").all()
@@ -417,6 +663,7 @@ def _form_submission_script() -> str:
                 str(meta.get("id") or ""),
                 str(meta.get("placeholder") or ""),
                 str(meta.get("aria") or ""),
+                str(meta.get("label") or ""),
             ]).lower()
             if "first" in text and "name" in text:
                 return payload["first_name"]
@@ -447,6 +694,93 @@ def _form_submission_script() -> str:
             if "message" in text or "comment" in text or "details" in text or "project" in text or "inquiry" in text:
                 return payload["message"]
             return ""
+
+        def visible_text(locator):
+            try:
+                return " ".join((locator.inner_text() or "").split())
+            except Exception:
+                return ""
+
+        def closest_field_text(el):
+            selectors = [
+                "xpath=ancestor::*[self::li or self::fieldset or self::div][1]",
+                "xpath=ancestor::form[1]",
+            ]
+            for selector in selectors:
+                try:
+                    node = el.locator(selector).first
+                    text = visible_text(node)
+                    if text:
+                        return text
+                except Exception:
+                    continue
+            return ""
+
+        def match_rule(rule_text, haystack):
+            return str(rule_text or "").strip().lower() in str(haystack or "").strip().lower()
+
+        def apply_adapter_checkboxes(form):
+            checkbox_rules = list(adapter.get("checkbox_rules") or [])
+            applied = []
+            if not checkbox_rules:
+                return applied
+            for rule in checkbox_rules:
+                group_hint = str(rule.get("group_hint") or "")
+                option_label = str(rule.get("option_label") or "")
+                if not group_hint or not option_label:
+                    continue
+                for box in form.locator("input[type=checkbox]").all():
+                    field_text = closest_field_text(box)
+                    label_text = ""
+                    try:
+                        box_id = box.get_attribute("id") or ""
+                        if box_id:
+                            label_text = visible_text(form.locator(f"label[for='{box_id}']").first)
+                    except Exception:
+                        label_text = ""
+                    if not match_rule(group_hint, field_text):
+                        continue
+                    if not match_rule(option_label, label_text + " " + field_text):
+                        continue
+                    try:
+                        box.check(force=True)
+                        applied.append({"group_hint": group_hint, "option_label": option_label})
+                        break
+                    except Exception:
+                        continue
+            return applied
+
+        def apply_adapter_selects(form):
+            select_rules = list(adapter.get("select_rules") or [])
+            applied = []
+            if not select_rules:
+                return applied
+            for rule in select_rules:
+                label_hint = str(rule.get("label_hint") or "")
+                option_label = str(rule.get("option_label") or "")
+                if not label_hint or not option_label:
+                    continue
+                for el in form.locator("select").all():
+                    field_text = closest_field_text(el)
+                    if not match_rule(label_hint, field_text):
+                        continue
+                    try:
+                        el.select_option(label=option_label)
+                        applied.append({"label_hint": label_hint, "option_label": option_label})
+                        break
+                    except Exception:
+                        try:
+                            options = [o.strip() for o in el.locator("option").all_inner_texts()]
+                            for option in options:
+                                if match_rule(option_label, option):
+                                    el.select_option(label=option)
+                                    applied.append({"label_hint": label_hint, "option_label": option})
+                                    raise StopIteration
+                        except StopIteration:
+                            break
+                        except Exception:
+                            continue
+            return applied
 
         def fill_captcha(form, form_text):
             match = re.search(r"(\d+)\s*([+\-])\s*(\d+)\s*=", form_text or "")
@@ -497,6 +831,7 @@ def _form_submission_script() -> str:
                         "id": el.get_attribute("id") or "",
                         "placeholder": el.get_attribute("placeholder") or "",
                         "aria": el.get_attribute("aria-label") or "",
+                        "label": closest_field_text(el),
                     }
                     value = pick_value(meta)
                     if not value:
@@ -513,6 +848,7 @@ def _form_submission_script() -> str:
                     "id": el.get_attribute("id") or "",
                     "placeholder": el.get_attribute("placeholder") or "",
                     "aria": el.get_attribute("aria-label") or "",
+                    "label": closest_field_text(el),
                 }
                 text = " ".join(meta.values()).lower()
                 choice = None
@@ -534,6 +870,9 @@ def _form_submission_script() -> str:
                             el.select_option(choice)
                         except Exception:
                             pass
+
+            adapter_checkbox_applied = apply_adapter_checkboxes(form)
+            adapter_select_applied = apply_adapter_selects(form)
 
             captcha_filled = fill_captcha(form, form_text)
             pre_text = page.locator("body").inner_text()
@@ -582,6 +921,8 @@ def _form_submission_script() -> str:
                         "score": score,
                         "captcha_filled": captcha_filled,
                         "filled_count": len(filled),
+                        "adapter_checkbox_applied": adapter_checkbox_applied,
+                        "adapter_select_applied": adapter_select_applied,
                         "target_url": target_url,
                         "sample_text": body_text[:600],
                         "errors": errors[:6],
@@ -593,7 +934,7 @@ def _form_submission_script() -> str:
     )
 
 
-def _submit_contact_form(item: dict[str, Any], content: dict[str, Any]) -> dict[str, Any]:
+def _submit_contact_form(item: dict[str, Any], content: dict[str, Any], adapters: dict[str, Any]) -> dict[str, Any]:
     if not PLAYWRIGHT_PYTHON.exists():
         return {"ok": False, "reason": f"playwright_runtime_missing:{PLAYWRIGHT_PYTHON}"}
     sender = dict(content.get("sender_identity") or {})
@@ -613,6 +954,7 @@ def _submit_contact_form(item: dict[str, Any], content: dict[str, Any]) -> dict[
         "state": form_defaults.get("state") or sender.get("state") or "",
         "postal_code": form_defaults.get("postal_code") or sender.get("postal_code") or "",
         "country": form_defaults.get("country") or sender.get("country") or "",
+        "_adapter": _adapter_for(item, adapters),
     }
     target_url = str(item.get("contact_form_url") or item.get("website") or "").strip()
     proc = subprocess.run(
@@ -712,8 +1054,32 @@ def _notify_success(chat_id: str, item: dict[str, Any], channel: str, result: di
     return _send_telegram(chat_id, text)
 
 
+def _notify_captcha_required(chat_id: str, item: dict[str, Any], ticket_id: str, result: dict[str, Any]) -> dict[str, Any]:
+    text = (
+        "NEOSGO 触达需要人工一步确认。\n"
+        f"公司：{item.get('company_name')}\n"
+        f"方式：网站表单\n"
+        f"原因：检测到验证码或人工验证\n"
+        f"表单地址：{result.get('target_url') or item.get('contact_form_url') or item.get('website')}\n"
+        f"票据：{ticket_id}\n"
+        "处理完成后，请直接回复以下任一指令：\n"
+        f"- outreach captcha {ticket_id} submitted\n"
+        f"- outreach captcha {ticket_id} retry\n"
+        f"- outreach captcha {ticket_id} email\n"
+        f"- outreach captcha {ticket_id} stop"
+    )
+    return _send_telegram(chat_id, text)
+
+
 def _should_email_fallback_after_form(result: dict[str, Any]) -> bool:
     reason = str(result.get("reason") or "").strip()
+    if bool(result.get("captcha_required")):
+        return False
+    if any("captcha" in str(error).lower() for error in list(result.get("errors") or [])):
+        return False
+    sample_text = str(result.get("sample_text") or "").lower()
+    if "confirm you're human" in sample_text or "captcha validation failed" in sample_text:
+        return False
     return reason in {"no_contact_form_candidate", "validation_error", "antispam_token_invalid"}
 
 
@@ -727,6 +1093,30 @@ def _email_fallback_after_form_failure(
     form_result: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]:
     min_gap = int((content.get("delivery_rules") or {}).get("min_minutes_between_emails", 5) or 5)
+    sample_text = str(form_result.get("sample_text") or "").lower()
+    captcha_required = bool(form_result.get("captcha_required")) or any("captcha" in str(error).lower() for error in list(form_result.get("errors") or [])) or "confirm you're human" in sample_text
+    if captcha_required:
+        ticket_id = _captcha_ticket_id(_target_key(item))
+        target = _target_status_update(
+            item,
+            "contact_form",
+            "captcha_pending_operator",
+            {
+                "result": form_result,
+                "reason": "captcha_required_manual_step",
+                "captcha_ticket_id": ticket_id,
+            },
+        )
+        event = {
+            "type": "captcha_pending_operator",
+            "at": _now_iso(),
+            "key": _target_key(item),
+            "company_name": item.get("company_name"),
+            "ticket_id": ticket_id,
+            "result": form_result,
+        }
+        telegram = None if no_telegram else _notify_captcha_required(chat_id, item, ticket_id, form_result)
+        return target, event, telegram
     if not _should_email_fallback_after_form(form_result):
         return (
             _target_status_update(
@@ -809,11 +1199,34 @@ def main() -> int:
     args = parser.parse_args()
 
     content = _load_content()
+    adapters = _load_form_adapters()
     state = _load_state()
     delivery_rules = dict(content.get("delivery_rules") or {})
     hold_minutes = int(delivery_rules.get("assume_delivered_after_no_failure_minutes", 10) or 10)
     attempts = []
     failure = None
+
+    reply_events = _process_telegram_replies(state)
+    for event in reply_events:
+        _append_event(event)
+        attempts.append(event)
+
+    reroute_events = _refresh_target_routing_from_results(state, adapters)
+    for event in reroute_events:
+        _append_event(event)
+        attempts.append(event)
+        if event.get("type") == "target_rerouted_for_captcha" and not args.no_telegram:
+            key = str(event.get("key") or "")
+            target = dict((state.get("targets") or {}).get(key) or {})
+            ticket_id = str(event.get("ticket_id") or target.get("captcha_ticket_id") or "")
+            if target and ticket_id:
+                target["telegram_last"] = _notify_captcha_required(
+                    args.chat_id,
+                    target,
+                    ticket_id,
+                    dict(target.get("contact_form_result") or target.get("result") or {}),
+                )
+                state["targets"][key] = target
 
     release_event = _release_pending_email_if_safe(state, hold_minutes=hold_minutes)
     if release_event:
@@ -830,7 +1243,7 @@ def main() -> int:
 
         key = _target_key(item)
         if channel == "contact_form":
-            result = _submit_contact_form(item, content)
+            result = _submit_contact_form(item, content, adapters)
             if result.get("ok"):
                 state["targets"][key] = _target_status_update(
                     item,
@@ -903,6 +1316,7 @@ def main() -> int:
     _write_json(STATE_PATH, state)
     _write_json(LATEST_SUMMARY_PATH, summary)
     _write_review_artifacts(state)
+    _write_captcha_artifacts(state)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0 if failure is None else 1
 

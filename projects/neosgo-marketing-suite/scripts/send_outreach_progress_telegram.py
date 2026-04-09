@@ -55,8 +55,12 @@ def _format_status(value: str) -> str:
         "contact_form_needs_review": "网站表单结果不明确，已转人工复核",
         "contact_form_failed_email_deferred": "网站表单失败，但邮件发送被门禁暂缓",
         "contact_form_submitted": "网站表单已成功提交",
+        "captcha_pending_operator": "网站表单遇到验证码，等待人工一步确认",
         "email_failed": "邮件发送失败，任务已暂停",
         "contact_form_failed": "网站表单失败，且没有进入邮件补发",
+        "ready_for_form_retry": "网站表单已准备好重试",
+        "ready_for_email": "已切换为邮件待发送",
+        "review_hold": "结果模糊，已保守暂停",
     }
     return mapping.get(value or "", value or "未知")
 
