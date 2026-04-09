@@ -1306,14 +1306,16 @@ def _email_fallback_after_form_failure(
     item: dict[str, Any],
     state: dict[str, Any],
     content: dict[str, Any],
+    adapters: dict[str, Any],
     chat_id: str,
     no_telegram: bool,
     form_result: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]:
     min_gap = int((content.get("delivery_rules") or {}).get("min_minutes_between_emails", 5) or 5)
     sample_text = str(form_result.get("sample_text") or "").lower()
+    adapter = _adapter_for(item, adapters)
     captcha_required = bool(form_result.get("captcha_required")) or any("captcha" in str(error).lower() for error in list(form_result.get("errors") or [])) or "confirm you're human" in sample_text
-    if captcha_required:
+    if captcha_required or bool(adapter.get("manual_captcha_handoff")) and str(form_result.get("reason") or "") == "captcha_required":
         ticket_id = _captcha_ticket_id(_target_key(item))
         target = _target_status_update(
             item,
@@ -1335,6 +1337,17 @@ def _email_fallback_after_form_failure(
         }
         telegram = None if no_telegram else _notify_captcha_required(chat_id, item, ticket_id, form_result)
         return target, event, telegram
+    if bool(adapter.get("disable_email_fallback")):
+        return (
+            _target_status_update(
+                item,
+                "contact_form",
+                "review_hold",
+                {"result": form_result, "reason": "domain_policy_disables_email_fallback"},
+            ),
+            {"type": "review_hold", "at": _now_iso(), "key": _target_key(item), "company_name": item.get("company_name"), "result": form_result},
+            None,
+        )
     if not _should_email_fallback_after_form(form_result):
         return (
             _target_status_update(
@@ -1482,6 +1495,7 @@ def main() -> int:
                     item=item,
                     state=state,
                     content=content,
+                    adapters=adapters,
                     chat_id=args.chat_id,
                     no_telegram=args.no_telegram,
                     form_result=result,

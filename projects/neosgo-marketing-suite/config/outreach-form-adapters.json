@@ -16,7 +16,9 @@
       ]
     },
     "dileonardo.com": {
-      "form_selector": "#gform_1"
+      "form_selector": "#gform_1",
+      "manual_captcha_handoff": true,
+      "disable_email_fallback": true
     },
     "coastaldesignsri.com": {
       "form_selector": "#form-995274385364109391"
