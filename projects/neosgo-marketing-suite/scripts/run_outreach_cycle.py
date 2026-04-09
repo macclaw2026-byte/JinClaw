@@ -539,11 +539,15 @@ def _form_submission_script() -> str:
             pre_text = page.locator("body").inner_text()
             submitter = form.locator("button, input[type=submit]").first
             try:
-                submitter.click()
+                submitter.scroll_into_view_if_needed()
+                submitter.click(force=True)
             except Exception as exc:
-                browser.close()
-                print(json.dumps({"ok": False, "reason": f"submit_click_failed:{exc}", "score": score}))
-                raise SystemExit(0)
+                try:
+                    submitter.evaluate("(el) => el.click()")
+                except Exception as js_exc:
+                    browser.close()
+                    print(json.dumps({"ok": False, "reason": f"submit_click_failed:{exc} | js_click_failed:{js_exc}", "score": score}))
+                    raise SystemExit(0)
 
             try:
                 page.wait_for_timeout(5000)
