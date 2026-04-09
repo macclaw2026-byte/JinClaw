@@ -24,6 +24,8 @@ CONTACTS_PATH = PROJECT_ROOT / "data" / "raw-imports" / "discovered-google-maps-
 STATE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "state.json"
 EVENTS_PATH = PROJECT_ROOT / "runtime" / "outreach" / "events.jsonl"
 LATEST_SUMMARY_PATH = PROJECT_ROOT / "runtime" / "outreach" / "latest-summary.json"
+REVIEW_QUEUE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "review-queue.json"
+REVIEW_TEMPLATE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "review-decisions.template.json"
 CONTENT_PATH = PROJECT_ROOT / "config" / "outreach-campaign-content.yaml"
 MAIL_BATCH_SCRIPT = WORKSPACE_ROOT / "skills" / "neosgo-lead-engine" / "scripts" / "send_outreach_mail_batch.py"
 PLAYWRIGHT_PYTHON = WORKSPACE_ROOT / "tools" / "matrix-venv" / "bin" / "python"
@@ -261,6 +263,7 @@ def _select_next_candidate(state: dict[str, Any]) -> dict[str, Any] | None:
             "email_failed",
             "contact_form_failed",
             "waiting_reply",
+            "stopped",
         }:
             continue
         return item
@@ -268,6 +271,12 @@ def _select_next_candidate(state: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _channel_for(item: dict[str, Any], state: dict[str, Any]) -> str:
+    target_state = dict((state.get("targets") or {}).get(_target_key(item)) or {})
+    forced = str(target_state.get("force_channel") or "").strip()
+    if forced == "contact_form" and _is_form_candidate(item):
+        return "contact_form"
+    if forced == "email" and _email_is_usable(item) and _email_send_allowed(state, min_minutes_between_emails=5):
+        return "email"
     if _is_form_candidate(item):
         return "contact_form"
     if _email_is_usable(item) and _email_send_allowed(state, min_minutes_between_emails=5):
@@ -286,6 +295,52 @@ def _target_status_update(item: dict[str, Any], channel: str, status: str, extra
         "updated_at": _now_iso(),
         **(extra or {}),
     }
+
+
+def _suggest_review_action(target: dict[str, Any]) -> str:
+    result = dict(target.get("result") or target.get("contact_form_result") or {})
+    reason = str(result.get("reason") or "").strip()
+    if reason.startswith("submit_click_failed"):
+        return "ready_for_form_retry"
+    if reason in {"unknown_result", "submission_error"}:
+        return "review_submit_result"
+    if reason == "validation_error":
+        return "ready_for_email"
+    return "review_submit_result"
+
+
+def _write_review_artifacts(state: dict[str, Any]) -> None:
+    targets = list((state.get("targets") or {}).items())
+    items = []
+    template_items = []
+    for key, target in targets:
+        if str(target.get("status") or "") != "contact_form_needs_review":
+            continue
+        result = dict(target.get("result") or target.get("contact_form_result") or {})
+        item = {
+            "review_key": key,
+            "company_name": target.get("company_name"),
+            "state": target.get("state"),
+            "website": target.get("website"),
+            "contact_form_url": target.get("contact_form_url") or target.get("website"),
+            "current_status": target.get("status"),
+            "detected_reason": result.get("reason"),
+            "detected_errors": result.get("errors") or [],
+            "updated_at": target.get("updated_at"),
+            "suggested_action": _suggest_review_action(target),
+            "sample_text_excerpt": str(result.get("sample_text") or "")[:400],
+        }
+        items.append(item)
+        template_items.append(
+            {
+                **item,
+                "operator_decision": "",
+                "operator_notes": "",
+                "resolved_at": "",
+            }
+        )
+    _write_json(REVIEW_QUEUE_PATH, {"generated_at": _now_iso(), "items": items})
+    _write_json(REVIEW_TEMPLATE_PATH, {"generated_at": _now_iso(), "items": template_items})
 
 
 def _form_submission_script() -> str:
@@ -842,6 +897,7 @@ def main() -> int:
     summary["failure"] = failure
     _write_json(STATE_PATH, state)
     _write_json(LATEST_SUMMARY_PATH, summary)
+    _write_review_artifacts(state)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0 if failure is None else 1
 

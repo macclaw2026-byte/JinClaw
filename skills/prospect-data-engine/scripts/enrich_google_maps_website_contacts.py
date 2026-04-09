@@ -141,12 +141,26 @@ def _detect_contact_form(page_html_map: dict[str, str]) -> tuple[bool, str, list
     for page, html in page_html_map.items():
         lowered = html.lower()
         signals: list[str] = []
-        if "<form" not in lowered and "hubspot-form" not in lowered and "wpforms" not in lowered and "formspree" not in lowered:
+        if (
+            "<form" not in lowered
+            and "hubspot-form" not in lowered
+            and "wpforms" not in lowered
+            and "formspree" not in lowered
+            and "sqs-block-form" not in lowered
+            and "squarespace-form" not in lowered
+            and "form-block" not in lowered
+        ):
             continue
         if "newsletter" in lowered and "<textarea" not in lowered and not FORM_HINT_RE.search(page):
             continue
         if "<form" in lowered:
             signals.append("html_form_tag")
+        if "sqs-block-form" in lowered:
+            signals.append("squarespace_form_block")
+        if "squarespace-form" in lowered:
+            signals.append("squarespace_form_component")
+        if "form-block" in lowered:
+            signals.append("generic_form_block")
         if "type=\"email\"" in lowered or "type='email'" in lowered:
             signals.append("email_field")
         if "<textarea" in lowered:
@@ -155,6 +169,10 @@ def _detect_contact_form(page_html_map: dict[str, str]) -> tuple[bool, str, list
             signals.append("message_field")
         if "name=\"subject\"" in lowered or "name='subject'" in lowered:
             signals.append("subject_field")
+        if "formsubmitbuttontext" in lowered or "\"submit\":\"submit\"" in lowered or ">send<" in lowered:
+            signals.append("submit_control_hint")
+        if "\"firstname\"" in lowered or "\"lastname\"" in lowered:
+            signals.append("name_fields")
         if "inquiry" in lowered or "enquiry" in lowered or "project details" in lowered:
             signals.append("inquiry_language")
         if "hubspot" in lowered:
@@ -165,7 +183,30 @@ def _detect_contact_form(page_html_map: dict[str, str]) -> tuple[bool, str, list
             signals.append("wpforms")
         if FORM_HINT_RE.search(page):
             signals.append("contact_like_url")
-        if "textarea_field" in signals or "message_field" in signals or "subject_field" in signals or "inquiry_language" in signals or ("contact_like_url" in signals and "email_field" in signals):
+        if (
+            "textarea_field" in signals
+            or "message_field" in signals
+            or "subject_field" in signals
+            or "inquiry_language" in signals
+            or (
+                "contact_like_url" in signals
+                and (
+                    "email_field" in signals
+                    or "squarespace_form_block" in signals
+                    or "squarespace_form_component" in signals
+                    or "generic_form_block" in signals
+                )
+            )
+            or (
+                "submit_control_hint" in signals
+                and (
+                    "squarespace_form_block" in signals
+                    or "squarespace_form_component" in signals
+                    or "generic_form_block" in signals
+                )
+                and ("textarea_field" in signals or "name_fields" in signals or "email_field" in signals)
+            )
+        ):
             return True, page, signals[:6]
     return False, "", []
 
