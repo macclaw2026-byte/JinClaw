@@ -70,6 +70,23 @@ def _load_target_state() -> dict:
     return _read_json(state_path, {})
 
 
+def _is_failure_status(value: str) -> bool:
+    return value in {
+        "email_failed",
+        "contact_form_failed",
+        "contact_form_failed_email_deferred",
+    }
+
+
+def _failure_reason(item: dict) -> str:
+    result = dict(item.get("result") or item.get("contact_form_result") or {})
+    reason = str(result.get("reason") or item.get("reason") or "").strip()
+    errors = [str(error).strip() for error in list(result.get("errors") or []) if str(error).strip()]
+    if errors:
+        return f"{reason} ({'; '.join(errors[:3])})" if reason else "; ".join(errors[:3])
+    return reason or "未知原因"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Send periodic NEOSGO outreach summary to Telegram.")
     parser.add_argument("--chat-id", default=os.environ.get("NEOSGO_OUTREACH_CHAT", DEFAULT_CHAT))
@@ -88,9 +105,21 @@ def main() -> int:
         return 0
 
     counts = dict(latest.get("counts") or {})
-    state = _load_target_state()
-    targets = list((state.get("targets") or {}).values())
+    runtime_state = _load_target_state()
+    targets_by_key = dict(runtime_state.get("targets") or {})
+    targets = list(targets_by_key.values())
     targets.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+    previous_keys = set(str(key) for key in list(state.get("last_target_keys") or []))
+    current_keys = set(str(key) for key in targets_by_key.keys())
+    new_keys = [key for key in targets_by_key.keys() if key not in previous_keys]
+    new_targets = [targets_by_key[key] for key in new_keys]
+    new_form_count = sum(1 for item in new_targets if str(item.get("channel") or "") == "contact_form")
+    new_email_count = sum(1 for item in new_targets if str(item.get("channel") or "") == "email")
+    failed_new_targets = [item for item in new_targets if _is_failure_status(str(item.get("status") or ""))]
+    failure_reason_counts: dict[str, int] = {}
+    for item in failed_new_targets:
+        reason = _failure_reason(item)
+        failure_reason_counts[reason] = failure_reason_counts.get(reason, 0) + 1
     recent_lines = []
     for item in targets[:8]:
         company = str(item.get("company_name") or "未知公司")
@@ -103,8 +132,15 @@ def main() -> int:
         "NEOSGO 触达任务进度汇报\n"
         f"生成时间：{generated_at}\n"
         f"累计已触达公司数：{latest.get('total_touched', 0)}\n"
+        f"较上次汇报新增：{len(new_targets)} 家\n"
+        f"新增中通过网站表单触达：{new_form_count} 家\n"
+        f"新增中通过邮件触达：{new_email_count} 家\n"
+        f"新增中触达失败：{len(failed_new_targets)} 家\n"
         f"当前统计：{counts_text}\n"
     )
+    if failure_reason_counts:
+        reasons_text = "；".join(f"{reason} x{count}" for reason, count in failure_reason_counts.items())
+        text += f"新增失败原因：{reasons_text}\n"
     if latest.get("email_delivery_pending"):
         text += "邮件状态：当前有一封邮件处于观察窗口内；若 10 分钟内没有失败信号，系统会继续下一封。\n"
     if recent_lines:
@@ -122,6 +158,7 @@ def main() -> int:
             {
                 "last_generated_at": generated_at,
                 "last_sent_at": datetime.now().isoformat(),
+                "last_target_keys": sorted(current_keys),
                 "delivery": delivery,
             },
             ensure_ascii=False,
