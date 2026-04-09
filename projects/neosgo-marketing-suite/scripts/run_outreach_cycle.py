@@ -326,6 +326,18 @@ def _select_next_candidate(state: dict[str, Any]) -> dict[str, Any] | None:
             "stopped",
         }:
             continue
+        if target_state:
+            merged = dict(item)
+            for field in (
+                "force_channel",
+                "form_retry_attempted",
+                "captcha_ticket_id",
+                "operator_last_reply",
+                "operator_resolved_at",
+            ):
+                if field in target_state:
+                    merged[field] = target_state[field]
+            return merged
         return item
     return None
 
@@ -345,6 +357,16 @@ def _channel_for(item: dict[str, Any], state: dict[str, Any]) -> str:
 
 
 def _target_status_update(item: dict[str, Any], channel: str, status: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    preserved = {}
+    for field in (
+        "force_channel",
+        "form_retry_attempted",
+        "captcha_ticket_id",
+        "operator_last_reply",
+        "operator_resolved_at",
+    ):
+        if field in item:
+            preserved[field] = item[field]
     return {
         "company_name": item.get("company_name"),
         "state": str(item.get("geo", "")).split("/", 1)[0].strip().upper(),
@@ -353,6 +375,7 @@ def _target_status_update(item: dict[str, Any], channel: str, status: str, extra
         "channel": channel,
         "status": status,
         "updated_at": _now_iso(),
+        **preserved,
         **(extra or {}),
     }
 
@@ -563,11 +586,12 @@ def _refresh_target_routing_from_results(state: dict[str, Any], adapters: dict[s
                 }
             )
             continue
-        if adapter and str(result.get("reason") or "") == "validation_error":
+        if adapter and str(result.get("reason") or "") == "validation_error" and not bool(target.get("form_retry_attempted")):
             target["status"] = "ready_for_form_retry"
             target["force_channel"] = "contact_form"
             target["updated_at"] = _now_iso()
             target["reason"] = "adapter_available_for_retry"
+            target["form_retry_attempted"] = True
             events.append(
                 {
                     "type": "target_rerouted_for_form_retry",
