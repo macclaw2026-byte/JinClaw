@@ -35,6 +35,7 @@ FORM_ADAPTERS_PATH = PROJECT_ROOT / "config" / "outreach-form-adapters.json"
 MAIL_BATCH_SCRIPT = WORKSPACE_ROOT / "skills" / "neosgo-lead-engine" / "scripts" / "send_outreach_mail_batch.py"
 PLAYWRIGHT_PYTHON = WORKSPACE_ROOT / "tools" / "matrix-venv" / "bin" / "python"
 TELEGRAM_INGRESS_PATH = WORKSPACE_ROOT / "tools" / "openmoss" / "runtime" / "autonomy" / "ingress" / "telegram.jsonl"
+PLAYWRIGHT_PROFILE_DIR = PROJECT_ROOT / "runtime" / "outreach" / "playwright-profile"
 STATE_PRIORITY = ["RI", "MA", "CT", "NH", "ME", "VT"]
 SUCCESS_TEXT_RE = re.compile(
     r"(thank you|thanks for reaching out|message sent|we('|\u2019)?ll be in touch|we will be in touch|successfully submitted|request has been sent)",
@@ -561,12 +562,14 @@ def _refresh_target_routing_from_results(state: dict[str, Any], adapters: dict[s
 def _form_submission_script() -> str:
     return textwrap.dedent(
         r"""
+        from pathlib import Path
         from playwright.sync_api import sync_playwright
         import json, re, sys
 
         target_url = sys.argv[1]
         payload = json.loads(sys.argv[2])
         adapter = dict(payload.get("_adapter") or {})
+        profile_dir = payload.get("_profile_dir") or ""
 
         def field_score(meta):
             text = " ".join([
@@ -804,18 +807,96 @@ def _form_submission_script() -> str:
                         continue
             return False
 
+        def human_pause(page, low=250, high=650):
+            try:
+                import random
+                page.wait_for_timeout(random.randint(low, high))
+            except Exception:
+                try:
+                    page.wait_for_timeout(low)
+                except Exception:
+                    pass
+
+        def warm_page(page):
+            try:
+                page.mouse.move(240, 180)
+                human_pause(page, 250, 450)
+                page.mouse.move(520, 340)
+                human_pause(page, 180, 320)
+                page.mouse.wheel(0, 420)
+                human_pause(page, 350, 700)
+                page.mouse.wheel(0, -180)
+                human_pause(page, 250, 450)
+            except Exception:
+                pass
+
+        def human_fill(el, value):
+            try:
+                el.click()
+            except Exception:
+                pass
+            try:
+                el.fill("")
+            except Exception:
+                pass
+            try:
+                el.type(value, delay=35)
+                return True
+            except Exception:
+                try:
+                    el.fill(value)
+                    return True
+                except Exception:
+                    return False
+
+        def extract_frame_result(page, target_frame_name):
+            if not target_frame_name:
+                return None
+            for _ in range(12):
+                try:
+                    page.wait_for_timeout(500)
+                except Exception:
+                    pass
+                for frame in page.frames:
+                    if frame.name != target_frame_name:
+                        continue
+                    try:
+                        html = frame.content()
+                        text = frame.locator("body").inner_text()
+                    except Exception:
+                        continue
+                    success = bool(re.search(r"(thank you|message sent|we('|\u2019)?ll be in touch|gform_confirmation|request has been sent)", text + " " + html, re.I))
+                    errors = re.findall(r"(required|invalid|error sending your message|please try again later|submission failed|captcha|please complete|please fill|antispam token is invalid)", text, re.I)
+                    explicit_submission_error = bool(re.search(r"(error sending your message|please try again later|submission failed)", text, re.I))
+                    return {
+                        "success": success and not explicit_submission_error,
+                        "text": text[:600],
+                        "html_excerpt": html[:600],
+                        "errors": errors[:6],
+                        "explicit_submission_error": explicit_submission_error,
+                    }
+            return None
+
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page(viewport={"width": 1440, "height": 1200})
+            context = p.chromium.launch_persistent_context(
+                str(Path(profile_dir or ".")),
+                headless=True,
+                viewport={"width": 1440, "height": 1200},
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+                locale="en-US",
+            )
+            page = context.pages[0] if context.pages else context.new_page()
             page.goto(target_url, wait_until="domcontentloaded", timeout=45000)
             try:
                 page.wait_for_load_state("networkidle", timeout=10000)
             except Exception:
                 pass
+            human_pause(page, 1200, 2200)
+            warm_page(page)
 
             chosen, score = choose_form(page)
             if not chosen or score < 3:
-                browser.close()
+                context.close()
                 print(json.dumps({"ok": False, "reason": "no_contact_form_candidate", "score": score}))
                 raise SystemExit(0)
 
@@ -837,8 +918,9 @@ def _form_submission_script() -> str:
                     if not value:
                         continue
                     try:
-                        el.fill(value)
-                        filled.append(meta)
+                        if human_fill(el, value):
+                            filled.append(meta)
+                            human_pause(page, 90, 220)
                     except Exception:
                         continue
 
@@ -870,21 +952,37 @@ def _form_submission_script() -> str:
                             el.select_option(choice)
                         except Exception:
                             pass
+                human_pause(page, 80, 160)
 
             adapter_checkbox_applied = apply_adapter_checkboxes(form)
             adapter_select_applied = apply_adapter_selects(form)
 
             captcha_filled = fill_captcha(form, form_text)
+            human_pause(page, 800, 1600)
             pre_text = page.locator("body").inner_text()
+            frame_name = ""
+            try:
+                frame_name = form.get_attribute("target") or ""
+            except Exception:
+                frame_name = ""
             submitter = form.locator("button, input[type=submit]").first
             try:
                 submitter.scroll_into_view_if_needed()
-                submitter.click(force=True)
+                try:
+                    box = submitter.bounding_box()
+                    if box:
+                        page.mouse.move(box["x"] + min(box["width"] / 2, 20), box["y"] + min(box["height"] / 2, 12))
+                        human_pause(page, 200, 420)
+                except Exception:
+                    pass
+                human_pause(page, 250, 600)
+                submitter.click()
             except Exception as exc:
                 try:
+                    human_pause(page, 250, 600)
                     submitter.evaluate("(el) => el.click()")
                 except Exception as js_exc:
-                    browser.close()
+                    context.close()
                     print(json.dumps({"ok": False, "reason": f"submit_click_failed:{exc} | js_click_failed:{js_exc}", "score": score}))
                     raise SystemExit(0)
 
@@ -897,12 +995,42 @@ def _form_submission_script() -> str:
             except Exception:
                 pass
 
+            frame_result = extract_frame_result(page, frame_name)
+            if frame_result and frame_result.get("success"):
+                context.close()
+                print(
+                    json.dumps(
+                        {
+                            "ok": True,
+                            "reason": "submitted",
+                            "score": score,
+                            "captcha_filled": captcha_filled,
+                            "filled_count": len(filled),
+                            "adapter_checkbox_applied": adapter_checkbox_applied,
+                            "adapter_select_applied": adapter_select_applied,
+                            "target_url": target_url,
+                            "sample_text": str(frame_result.get("text") or "")[:600],
+                            "errors": list(frame_result.get("errors") or [])[:6],
+                            "detected_via": "frame_confirmation",
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                raise SystemExit(0)
+
             body_text = page.locator("body").inner_text()
             success = bool(re.search(r"(thank you|thanks for reaching out|message sent|we('|\u2019)?ll be in touch|we will be in touch|successfully submitted|request has been sent)", body_text, re.I))
             errors = re.findall(r"(required|invalid|error sending your message|please try again later|submission failed|captcha|please complete|please fill|antispam token is invalid)", body_text, re.I)
             antispam_invalid = "antispam token is invalid" in body_text.lower()
             explicit_submission_error = bool(re.search(r"(error sending your message|please try again later|submission failed)", body_text, re.I))
-            browser.close()
+            frame_errors = list((frame_result or {}).get("errors") or [])
+            if frame_result and not errors:
+                errors = frame_errors[:6]
+            if frame_result and not body_text.strip():
+                body_text = str(frame_result.get("text") or "")
+            if frame_result and frame_result.get("explicit_submission_error"):
+                explicit_submission_error = True
+            context.close()
             print(
                 json.dumps(
                     {
@@ -955,6 +1083,7 @@ def _submit_contact_form(item: dict[str, Any], content: dict[str, Any], adapters
         "postal_code": form_defaults.get("postal_code") or sender.get("postal_code") or "",
         "country": form_defaults.get("country") or sender.get("country") or "",
         "_adapter": _adapter_for(item, adapters),
+        "_profile_dir": str(PLAYWRIGHT_PROFILE_DIR),
     }
     target_url = str(item.get("contact_form_url") or item.get("website") or "").strip()
     proc = subprocess.run(
