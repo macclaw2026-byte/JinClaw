@@ -45,6 +45,27 @@ def _send(chat_id: str, text: str) -> dict:
     return {"returncode": proc.returncode, "stdout": proc.stdout.strip(), "stderr": proc.stderr.strip()}
 
 
+def _format_channel(value: str) -> str:
+    return "网站表单" if value == "contact_form" else "邮件" if value == "email" else value or "未知"
+
+
+def _format_status(value: str) -> str:
+    mapping = {
+        "email_sent_local_only": "邮件已发出，10 分钟内未见失败会继续下一封",
+        "contact_form_needs_review": "网站表单结果不明确，已转人工复核",
+        "contact_form_failed_email_deferred": "网站表单失败，但邮件发送被门禁暂缓",
+        "contact_form_submitted": "网站表单已成功提交",
+        "email_failed": "邮件发送失败，任务已暂停",
+        "contact_form_failed": "网站表单失败，且没有进入邮件补发",
+    }
+    return mapping.get(value or "", value or "未知")
+
+
+def _load_target_state() -> dict:
+    state_path = PROJECT_ROOT / "runtime" / "outreach" / "state.json"
+    return _read_json(state_path, {})
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Send periodic NEOSGO outreach summary to Telegram.")
     parser.add_argument("--chat-id", default=os.environ.get("NEOSGO_OUTREACH_CHAT", DEFAULT_CHAT))
@@ -63,19 +84,32 @@ def main() -> int:
         return 0
 
     counts = dict(latest.get("counts") or {})
+    state = _load_target_state()
+    targets = list((state.get("targets") or {}).values())
+    targets.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
+    recent_lines = []
+    for item in targets[:8]:
+        company = str(item.get("company_name") or "未知公司")
+        channel = _format_channel(str(item.get("channel") or ""))
+        status = _format_status(str(item.get("status") or ""))
+        recent_lines.append(f"- {company}：通过{channel}触达，当前结果：{status}")
+
+    counts_text = "，".join(f"{key}={value}" for key, value in counts.items()) or "暂无"
     text = (
-        "NEOSGO outreach status update\n"
-        f"Generated: {generated_at}\n"
-        f"Touched: {latest.get('total_touched', 0)}\n"
-        f"Counts: {json.dumps(counts, ensure_ascii=False)}"
+        "NEOSGO 触达任务进度汇报\n"
+        f"生成时间：{generated_at}\n"
+        f"累计已触达公司数：{latest.get('total_touched', 0)}\n"
+        f"当前统计：{counts_text}\n"
     )
-    attempts = list(latest.get("attempts") or [])
-    if attempts:
-        last = attempts[-1]
-        text += f"\nLast action: {last.get('type')} | {last.get('company_name')}"
+    if latest.get("email_delivery_pending"):
+        text += "邮件状态：当前有一封邮件处于观察窗口内；若 10 分钟内没有失败信号，系统会继续下一封。\n"
+    if recent_lines:
+        text += "最近处理的公司：\n" + "\n".join(recent_lines)
     failure = latest.get("failure") or {}
     if failure:
-        text += f"\nFailure: {failure.get('company_name')} | {((failure.get('result') or {}).get('reason') or 'unknown')}"
+        company = failure.get("company_name") or "未知公司"
+        reason = ((failure.get("result") or {}).get("reason") or "unknown")
+        text += f"\n异常：{company} 触达失败，原因：{reason}"
 
     delivery = _send(args.chat_id, text)
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)

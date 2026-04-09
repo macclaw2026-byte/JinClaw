@@ -172,6 +172,30 @@ def _email_send_allowed(state: dict[str, Any], *, min_minutes_between_emails: in
     return elapsed >= max(0, int(min_minutes_between_emails or 0)) * 60
 
 
+def _release_pending_email_if_safe(state: dict[str, Any], *, hold_minutes: int) -> dict[str, Any] | None:
+    if not bool(state.get("email_delivery_pending")):
+        return None
+    last = _parse_iso(str(state.get("last_email_sent_at") or ""))
+    if not last:
+        state["email_delivery_pending"] = False
+        return {
+            "type": "email_delivery_hold_released",
+            "at": _now_iso(),
+            "reason": "missing_last_email_sent_at",
+        }
+    elapsed = (datetime.now(timezone.utc) - last).total_seconds()
+    if elapsed < max(0, int(hold_minutes or 0)) * 60:
+        return None
+    state["email_delivery_pending"] = False
+    return {
+        "type": "email_delivery_hold_released",
+        "at": _now_iso(),
+        "reason": "no_failure_detected_within_hold_window",
+        "hold_minutes": int(hold_minutes or 0),
+        "last_email_sent_at": state.get("last_email_sent_at"),
+    }
+
+
 def _target_key(item: dict[str, Any]) -> str:
     return str(item.get("source_url") or item.get("website") or item.get("company_name") or "").strip()
 
@@ -607,22 +631,23 @@ def _build_summary(state: dict[str, Any]) -> dict[str, Any]:
 
 def _notify_failure(chat_id: str, item: dict[str, Any], channel: str, result: dict[str, Any]) -> dict[str, Any]:
     text = (
-        "NEOSGO outreach paused on failure.\n"
-        f"Company: {item.get('company_name')}\n"
-        f"Channel: {channel}\n"
-        f"Reason: {result.get('reason', 'unknown')}\n"
-        f"Website: {item.get('website') or ''}"
+        "NEOSGO 触达任务已暂停。\n"
+        f"公司：{item.get('company_name')}\n"
+        f"方式：{'网站表单' if channel == 'contact_form' else '邮件'}\n"
+        f"结果：失败\n"
+        f"原因：{result.get('reason', 'unknown')}\n"
+        f"网址：{item.get('website') or ''}"
     )
     return _send_telegram(chat_id, text)
 
 
 def _notify_success(chat_id: str, item: dict[str, Any], channel: str, result: dict[str, Any]) -> dict[str, Any]:
     text = (
-        "NEOSGO outreach progress.\n"
-        f"Company: {item.get('company_name')}\n"
-        f"State: {str(item.get('geo', '')).split('/',1)[0].strip().upper()}\n"
-        f"Channel: {channel}\n"
-        f"Status: {result.get('reason', 'submitted')}"
+        "NEOSGO 触达进展。\n"
+        f"公司：{item.get('company_name')}\n"
+        f"州：{str(item.get('geo', '')).split('/',1)[0].strip().upper()}\n"
+        f"方式：{'网站表单' if channel == 'contact_form' else '邮件'}\n"
+        f"结果：{result.get('reason', 'submitted')}"
     )
     return _send_telegram(chat_id, text)
 
@@ -725,8 +750,15 @@ def main() -> int:
 
     content = _load_content()
     state = _load_state()
+    delivery_rules = dict(content.get("delivery_rules") or {})
+    hold_minutes = int(delivery_rules.get("assume_delivered_after_no_failure_minutes", 10) or 10)
     attempts = []
     failure = None
+
+    release_event = _release_pending_email_if_safe(state, hold_minutes=hold_minutes)
+    if release_event:
+        _append_event(release_event)
+        attempts.append(release_event)
 
     for _ in range(max(1, int(args.max_attempts or 1))):
         item = _select_next_candidate(state)
