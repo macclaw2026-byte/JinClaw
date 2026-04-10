@@ -283,8 +283,30 @@ def _is_form_candidate(item: dict[str, Any]) -> bool:
     return False
 
 
+def _outreach_lane(item: dict[str, Any], adapters: dict[str, Any]) -> str:
+    adapter = _adapter_for(item, adapters)
+    has_form = _is_form_candidate(item)
+    has_email = _email_is_usable(item)
+    manual_captcha = bool(adapter.get("manual_captcha_handoff"))
+    adapted_form = bool(adapter) and not manual_captcha
+    if has_form and not adapted_form and not manual_captcha:
+        return "standard_form"
+    if not has_form and has_email:
+        return "email_only"
+    if has_form and adapted_form:
+        return "adapted_form"
+    if has_form and manual_captcha:
+        return "manual_captcha_form"
+    if has_form:
+        return "form_only"
+    if has_email:
+        return "email_only"
+    return "other"
+
+
 def _load_candidates() -> list[dict[str, Any]]:
     payload = _read_json(CONTACTS_PATH, {"items": []})
+    adapters = _load_form_adapters()
     candidates: list[dict[str, Any]] = []
     for item in payload.get("items", []) or []:
         state = str(item.get("geo", "")).split("/", 1)[0].strip().upper()
@@ -296,14 +318,24 @@ def _load_candidates() -> list[dict[str, Any]]:
             continue
         if not (_is_form_candidate(item) or _email_is_usable(item)):
             continue
-        candidates.append(item)
+        enriched = dict(item)
+        enriched["outreach_lane"] = _outreach_lane(enriched, adapters)
+        candidates.append(enriched)
+
+    lane_order = {
+        "standard_form": 0,
+        "email_only": 1,
+        "adapted_form": 2,
+        "form_only": 3,
+        "manual_captcha_form": 4,
+        "other": 9,
+    }
 
     def sort_key(item: dict[str, Any]) -> tuple[int, int, int, str]:
         state = str(item.get("geo", "")).split("/", 1)[0].strip().upper()
         state_rank = STATE_PRIORITY.index(state) if state in STATE_PRIORITY else 999
-        form_rank = 0 if _is_form_candidate(item) else 1
-        email_rank = 0 if _email_is_usable(item) else 1
-        return (state_rank, form_rank, email_rank, str(item.get("company_name") or ""))
+        lane_rank = lane_order.get(str(item.get("outreach_lane") or "other"), 9)
+        return (state_rank, lane_rank, 0 if _email_is_usable(item) else 1, str(item.get("company_name") or ""))
 
     return sorted(candidates, key=sort_key)
 

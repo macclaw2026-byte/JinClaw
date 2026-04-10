@@ -13,7 +13,7 @@
   <key>RunAtLoad</key>
   <true/>
   <key>StartInterval</key>
-  <integer>3600</integer>
+  <integer>600</integer>
   <key>StandardOutPath</key>
   <string>/Users/mac_claw/.openclaw/workspace/output/neosgo-outreach/cycle.stdout.log</string>
   <key>StandardErrorPath</key>
