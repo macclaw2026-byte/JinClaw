@@ -20,6 +20,8 @@ RAW_IMPORT_PATH = PROJECT_ROOT / "data" / "raw-imports" / "discovered-google-map
 STRATEGY_READY_PATH = PROJECT_ROOT / "output" / "prospect-data-engine" / "strategy-ready-seeds.json"
 CRAWL_STATE_PATH = PROJECT_ROOT / "runtime" / "prospect-data-engine" / "google-maps-crawl-state.json"
 STATE_PATH = PROJECT_ROOT / "runtime" / "prospect-data-engine" / "daily-telegram-state.json"
+OUTREACH_EVENTS_PATH = PROJECT_ROOT / "runtime" / "outreach" / "events.jsonl"
+OUTREACH_STATE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "state.json"
 TZ_NY = ZoneInfo("America/New_York")
 NEW_ENGLAND_STATES = ["RI", "MA", "CT", "NH", "ME", "VT"]
 
@@ -126,6 +128,57 @@ def _phase_lines() -> tuple[str, list[str]]:
     return phase_text, lines
 
 
+def _parse_event_time(raw: str) -> datetime | None:
+    value = str(raw or "").strip()
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(TZ_NY)
+    except ValueError:
+        return None
+
+
+def _today_failure_lines(now_ny: datetime) -> list[str]:
+    if not OUTREACH_EVENTS_PATH.exists():
+        return []
+    outreach_state = _read_json(OUTREACH_STATE_PATH, {"targets": {}})
+    targets = dict(outreach_state.get("targets") or {})
+    lines: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in OUTREACH_EVENTS_PATH.read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
+        try:
+            event = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if str(event.get("type") or "") not in {"email_failed", "contact_form_failed", "contact_form_failed_email_deferred"}:
+            continue
+        event_time = _parse_event_time(str(event.get("at") or ""))
+        if not event_time or event_time.date() != now_ny.date():
+            continue
+        key = str(event.get("key") or "")
+        event_type = str(event.get("type") or "")
+        dedupe_key = (key, event_type)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        target = dict(targets.get(key) or {})
+        website = str(target.get("website") or "").strip()
+        result = dict(event.get("result") or {})
+        reason = str(result.get("reason") or target.get("reason") or "未知原因").strip()
+        form_reason = str(result.get("form_reason") or "").strip()
+        errors = [str(error).strip() for error in list(result.get("errors") or []) if str(error).strip()]
+        detail_parts = [reason] if reason else []
+        if form_reason:
+            detail_parts.append(f"表单原因：{form_reason}")
+        if errors:
+            detail_parts.append(f"错误：{'; '.join(errors[:3])}")
+        detail = "；".join(part for part in detail_parts if part) or "未知原因"
+        lines.append(f"- {event.get('company_name') or '未知公司'} | {website or '无网站'} | {detail}")
+    return lines
+
+
 def _build_text() -> tuple[str, dict]:
     now_ny = datetime.now(TZ_NY)
     reports = _load_reports()
@@ -139,6 +192,7 @@ def _build_text() -> tuple[str, dict]:
     delta = latest_count - yesterday_count if yesterday_latest else 0
 
     phase_text, state_lines = _phase_lines()
+    failure_lines = _today_failure_lines(now_ny)
     text = (
         "NEOSGO 潜在客户采集日报\n"
         f"生成时间（纽约）：{now_ny.strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -148,6 +202,10 @@ def _build_text() -> tuple[str, dict]:
         "新英格兰 6 州当前进度：\n"
         + "\n".join(state_lines)
     )
+    if failure_lines:
+        text += "\n\n今日触达失败公司清单：\n" + "\n".join(failure_lines)
+    else:
+        text += "\n\n今日触达失败公司清单：今天暂无失败记录。"
     metadata = {
         "generated_at_ny": now_ny.isoformat(),
         "latest_count": latest_count,
@@ -155,6 +213,7 @@ def _build_text() -> tuple[str, dict]:
         "delta_vs_yesterday": delta,
         "latest_report": str(latest["path"]) if latest else "",
         "yesterday_report": str(yesterday_latest["path"]) if yesterday_latest else "",
+        "today_failure_count": len(failure_lines),
     }
     return text, metadata
 

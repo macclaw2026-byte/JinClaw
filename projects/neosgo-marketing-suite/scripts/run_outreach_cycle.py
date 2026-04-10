@@ -1406,6 +1406,74 @@ def _notify_captcha_required(chat_id: str, item: dict[str, Any], ticket_id: str,
     return _send_telegram(chat_id, text)
 
 
+def _notify_manual_review_required(chat_id: str, item: dict[str, Any], status: str, result: dict[str, Any]) -> dict[str, Any]:
+    website = item.get("contact_form_url") or item.get("website") or ""
+    reason = str(result.get("reason") or item.get("reason") or "unknown")
+    errors = [str(error).strip() for error in list(result.get("errors") or []) if str(error).strip()]
+    detail = reason
+    if errors:
+        detail = f"{detail} ({'; '.join(errors[:3])})" if detail else "; ".join(errors[:3])
+    action_text = {
+        "contact_form_needs_review": "网站表单结果不够明确，需要你人工看一下是否算成功，或是否应改走邮件。",
+        "review_hold": "系统已保守暂停，避免重复打扰；需要你判断是继续重试、改走邮件，还是停止。",
+    }.get(status, "需要人工判断下一步动作。")
+    text = (
+        "NEOSGO 触达需要人工处理。\n"
+        f"公司：{item.get('company_name')}\n"
+        f"当前状态：{status}\n"
+        f"网址：{website}\n"
+        f"原因：{detail or '未知原因'}\n"
+        f"建议：{action_text}"
+    )
+    return _send_telegram(chat_id, text)
+
+
+def _is_manual_review_status(status: str) -> bool:
+    return status in {"contact_form_needs_review", "review_hold", "captcha_pending_operator"}
+
+
+def _backfill_manual_alerts(state: dict[str, Any], chat_id: str, *, no_telegram: bool) -> list[dict[str, Any]]:
+    if no_telegram:
+        return []
+    events: list[dict[str, Any]] = []
+    for key, target in list((state.get("targets") or {}).items()):
+        status = str(target.get("status") or "")
+        if not _is_manual_review_status(status):
+            continue
+        if target.get("manual_alert_sent_at"):
+            continue
+        if status == "captcha_pending_operator":
+            ticket_id = str(target.get("captcha_ticket_id") or _captcha_ticket_id(key))
+            delivery = _notify_captcha_required(
+                chat_id,
+                target,
+                ticket_id,
+                dict(target.get("contact_form_result") or target.get("result") or {}),
+            )
+            target["captcha_ticket_id"] = ticket_id
+        else:
+            delivery = _notify_manual_review_required(
+                chat_id,
+                target,
+                status,
+                dict(target.get("contact_form_result") or target.get("result") or {}),
+            )
+        target["manual_alert_sent_at"] = _now_iso()
+        target["manual_alert_status"] = status
+        target["manual_alert_delivery"] = delivery
+        state["targets"][key] = target
+        events.append(
+            {
+                "type": "manual_review_alert_sent",
+                "at": _now_iso(),
+                "key": key,
+                "company_name": target.get("company_name"),
+                "status": status,
+            }
+        )
+    return events
+
+
 def _should_email_fallback_after_form(result: dict[str, Any]) -> bool:
     reason = str(result.get("reason") or "").strip()
     if bool(result.get("captcha_required")):
@@ -1463,7 +1531,7 @@ def _email_fallback_after_form_failure(
                 {"result": form_result, "reason": "domain_policy_disables_email_fallback"},
             ),
             {"type": "review_hold", "at": _now_iso(), "key": _target_key(item), "company_name": item.get("company_name"), "result": form_result},
-            None,
+            None if no_telegram else _notify_manual_review_required(chat_id, item, "review_hold", form_result),
         )
     if not _should_email_fallback_after_form(form_result):
         return (
@@ -1474,7 +1542,7 @@ def _email_fallback_after_form_failure(
                 {"result": form_result, "reason": "form_result_not_safe_for_email_fallback"},
             ),
             {"type": "contact_form_needs_review", "at": _now_iso(), "key": _target_key(item), "company_name": item.get("company_name"), "result": form_result},
-            None,
+            None if no_telegram else _notify_manual_review_required(chat_id, item, "contact_form_needs_review", form_result),
         )
     if not _email_is_usable(item):
         return (
@@ -1576,12 +1644,18 @@ def main() -> int:
                 )
                 state["targets"][key] = target
 
+    manual_alert_events = _backfill_manual_alerts(state, args.chat_id, no_telegram=args.no_telegram)
+    for event in manual_alert_events:
+        _append_event(event)
+        attempts.append(event)
+
     release_event = _release_pending_email_if_safe(state, hold_minutes=hold_minutes)
     if release_event:
         _append_event(release_event)
         attempts.append(release_event)
 
-    for _ in range(max(1, int(args.max_attempts or 1))):
+    attempt_limit = max(0, int(args.max_attempts or 0))
+    for _ in range(attempt_limit):
         item = _select_next_candidate(state)
         if not item:
             break
