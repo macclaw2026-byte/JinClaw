@@ -1,0 +1,76 @@
+{
+  "task_name": "amazon_product_selection",
+  "governance": {
+    "constitution_path": "/Users/mac_claw/.openclaw/workspace/JINCLAW_CONSTITUTION.md",
+    "rule_paths": [
+      "/Users/mac_claw/.openclaw/workspace/projects/jinclaw-governance/jinclaw-live-guardrails.md",
+      "/Users/mac_claw/.openclaw/workspace/tools/openmoss/control_center/doctor_coverage_contract.md"
+    ],
+    "process_paths": [
+      "/Users/mac_claw/.openclaw/workspace/compat/gstack/prompts/jinclaw-gstack-lite.md",
+      "/Users/mac_claw/.openclaw/workspace/tools/openmoss/control_center/orchestrator.py",
+      "/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy/task_contract.py",
+      "/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy/preflight_engine.py"
+    ]
+  },
+  "stages": [
+    {
+      "id": "stage_1_sellersprite_export",
+      "title": "Export official SellerSprite candidate sheet",
+      "browser_actions": [
+        "start an OpenClaw-controlled Chrome session with a valid SellerSprite login",
+        "open SellerSprite Product Research",
+        "prefer the saved preset label 中件FBM when it is visible",
+        "otherwise apply the canonical US + 30-Day + FBM medium-parcel query mapping",
+        "click Search Now and wait for results",
+        "click Export on the results page",
+        "open My Exported Data",
+        "wait for the newest Product Research export to reach Completed",
+        "download the official xlsx file",
+        "validate the xlsx artifact"
+      ],
+      "automation_contract": {
+        "runner_script": "/Users/mac_claw/.openclaw/workspace/projects/amazon-product-selection-engine/scripts/run_stage1_sellersprite_official_export.py",
+        "validator_script": "/Users/mac_claw/.openclaw/workspace/projects/amazon-product-selection-engine/scripts/validate_stage1_export.py"
+      },
+      "handoff_contract": {
+        "required_fields": [
+          "file_path",
+          "file_name",
+          "file_format",
+          "header_preview",
+          "row_count_estimate",
+          "validated_at"
+        ]
+      }
+    },
+    {
+      "id": "stage_2_keyword_extraction",
+      "title": "Extract primary keywords",
+      "depends_on": [
+        "stage_1_sellersprite_export"
+      ]
+    },
+    {
+      "id": "stage_3_amazon_keyword_collection",
+      "title": "Collect Amazon keyword metrics",
+      "depends_on": [
+        "stage_2_keyword_extraction"
+      ]
+    },
+    {
+      "id": "stage_4_keyword_aggregation",
+      "title": "Aggregate keyword-level metrics",
+      "depends_on": [
+        "stage_3_amazon_keyword_collection"
+      ]
+    },
+    {
+      "id": "stage_5_final_export",
+      "title": "Export keyword table",
+      "depends_on": [
+        "stage_4_keyword_aggregation"
+      ]
+    }
+  ]
+}
