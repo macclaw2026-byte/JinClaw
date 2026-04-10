@@ -304,6 +304,34 @@ def _outreach_lane(item: dict[str, Any], adapters: dict[str, Any]) -> str:
     return "other"
 
 
+def _compute_domain_policies(state: dict[str, Any]) -> dict[str, str]:
+    domain_stats: dict[str, dict[str, int]] = {}
+    for target in list((state.get("targets") or {}).values()):
+        domain = str(target.get("adapter_domain") or "").strip()
+        if not domain:
+            continue
+        bucket = domain_stats.setdefault(domain, {"success": 0, "failed": 0, "manual": 0})
+        status = str(target.get("status") or "")
+        if status in {"contact_form_submitted", "email_sent_local_only"}:
+            bucket["success"] += 1
+        elif status in {"email_failed", "contact_form_failed", "contact_form_failed_email_deferred"}:
+            bucket["failed"] += 1
+        elif status in {"review_hold", "contact_form_needs_review", "captcha_pending_operator"}:
+            bucket["manual"] += 1
+    policies: dict[str, str] = {}
+    for domain, stats in domain_stats.items():
+        success = int(stats.get("success", 0))
+        failed = int(stats.get("failed", 0))
+        manual = int(stats.get("manual", 0))
+        if success >= 1 and failed == 0 and manual <= 1:
+            policies[domain] = "form_whitelist"
+        elif failed >= 1 and success == 0:
+            policies[domain] = "form_blacklist"
+        else:
+            policies[domain] = "form_gray"
+    return policies
+
+
 def _load_candidates() -> list[dict[str, Any]]:
     payload = _read_json(CONTACTS_PATH, {"items": []})
     adapters = _load_form_adapters()
@@ -380,10 +408,16 @@ def _select_next_candidate(state: dict[str, Any]) -> dict[str, Any] | None:
 def _channel_for(item: dict[str, Any], state: dict[str, Any]) -> str:
     target_state = dict((state.get("targets") or {}).get(_target_key(item)) or {})
     forced = str(target_state.get("force_channel") or "").strip()
+    domain_policies = dict(state.get("domain_form_policies") or {})
+    domain_policy = str(domain_policies.get(str(item.get("adapter_domain") or "").strip()) or "")
     if forced == "contact_form" and _is_form_candidate(item):
         return "contact_form"
     if forced == "email" and _email_is_usable(item) and _email_send_allowed(state, min_minutes_between_emails=5):
         return "email"
+    if domain_policy == "form_blacklist":
+        if _email_is_usable(item) and _email_send_allowed(state, min_minutes_between_emails=5):
+            return "email"
+        return "none"
     if _is_form_candidate(item):
         return "contact_form"
     if _email_is_usable(item) and _email_send_allowed(state, min_minutes_between_emails=5):
@@ -1408,6 +1442,8 @@ def _build_summary(state: dict[str, Any]) -> dict[str, Any]:
     lane_counts: dict[str, int] = {}
     lane_outcomes: dict[str, dict[str, int]] = {}
     adapter_domains: dict[str, dict[str, int]] = {}
+    domain_policy_counts: dict[str, int] = {}
+    domain_form_policies = dict(state.get("domain_form_policies") or {})
     for item in targets:
         status = str(item.get("status") or "unknown")
         counts[status] = counts.get(status, 0) + 1
@@ -1428,6 +1464,8 @@ def _build_summary(state: dict[str, Any]) -> dict[str, Any]:
             bucket["total"] += 1
             if outcome_bucket in bucket:
                 bucket[outcome_bucket] += 1
+            policy = str(domain_form_policies.get(adapter_domain) or "unclassified")
+            domain_policy_counts[policy] = domain_policy_counts.get(policy, 0) + 1
     return {
         "generated_at": _now_iso(),
         "campaign_id": state.get("campaign_id"),
@@ -1436,6 +1474,8 @@ def _build_summary(state: dict[str, Any]) -> dict[str, Any]:
         "lane_counts": lane_counts,
         "lane_outcomes": lane_outcomes,
         "adapter_domain_outcomes": adapter_domains,
+        "domain_form_policies": domain_form_policies,
+        "domain_policy_counts": domain_policy_counts,
         "total_touched": len(targets),
         "last_email_sent_at": state.get("last_email_sent_at", ""),
     }
@@ -1693,6 +1733,7 @@ def main() -> int:
     adapters = _load_form_adapters()
     state = _load_state()
     _backfill_target_metadata(state, adapters)
+    state["domain_form_policies"] = _compute_domain_policies(state)
     delivery_rules = dict(content.get("delivery_rules") or {})
     hold_minutes = int(delivery_rules.get("assume_delivered_after_no_failure_minutes", 10) or 10)
     attempts = []

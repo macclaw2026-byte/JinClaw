@@ -99,6 +99,15 @@ def _lane_label(value: str) -> str:
     }.get(value or "unknown", value or "未知")
 
 
+def _policy_label(value: str) -> str:
+    return {
+        "form_whitelist": "表单白名单",
+        "form_gray": "表单灰名单",
+        "form_blacklist": "表单黑名单",
+        "unclassified": "未分类",
+    }.get(value or "unclassified", value or "未分类")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Send periodic NEOSGO outreach summary to Telegram.")
     parser.add_argument("--chat-id", default=os.environ.get("NEOSGO_OUTREACH_CHAT", DEFAULT_CHAT))
@@ -147,6 +156,10 @@ def main() -> int:
             f"- {_lane_label(lane)}：成功 {int(outcome.get('success', 0))}，人工处理 {int(outcome.get('manual', 0))}，失败 {int(outcome.get('failed', 0))}"
         )
     adapter_domain_outcomes = dict(latest.get("adapter_domain_outcomes") or {})
+    domain_policy_counts = dict(latest.get("domain_policy_counts") or {})
+    policy_lines = []
+    for policy, count in sorted(domain_policy_counts.items()):
+        policy_lines.append(f"- {_policy_label(policy)}：{int(count)}")
     adapter_lines = []
     for domain, outcome in sorted(adapter_domain_outcomes.items()):
         adapter_lines.append(
@@ -169,6 +182,8 @@ def main() -> int:
         text += "车道效果统计：\n" + "\n".join(lane_lines) + "\n"
     if adapter_lines:
         text += "适配站点效果统计：\n" + "\n".join(adapter_lines[:6]) + "\n"
+    if policy_lines:
+        text += "表单域名分层：\n" + "\n".join(policy_lines) + "\n"
     if latest.get("email_delivery_pending"):
         text += "邮件状态：当前有一封邮件处于观察窗口内；若 10 分钟内没有失败信号，系统会继续下一封。\n"
     if recent_lines:
