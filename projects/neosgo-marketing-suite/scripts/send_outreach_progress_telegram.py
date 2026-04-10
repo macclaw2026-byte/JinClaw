@@ -102,7 +102,8 @@ def _lane_label(value: str) -> str:
 def _policy_label(value: str) -> str:
     return {
         "form_whitelist": "表单白名单",
-        "form_gray": "表单灰名单",
+        "form_gray_human_first": "表单灰名单（人工优先）",
+        "form_gray_retry": "表单灰名单（低频重试）",
         "form_blacklist": "表单黑名单",
         "unclassified": "未分类",
     }.get(value or "unclassified", value or "未分类")

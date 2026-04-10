@@ -40,6 +40,7 @@ PLAYWRIGHT_PYTHON = WORKSPACE_ROOT / "tools" / "matrix-venv" / "bin" / "python"
 TELEGRAM_INGRESS_PATH = WORKSPACE_ROOT / "tools" / "openmoss" / "runtime" / "autonomy" / "ingress" / "telegram.jsonl"
 PLAYWRIGHT_PROFILE_DIR = PROJECT_ROOT / "runtime" / "outreach" / "playwright-profile"
 STATE_PRIORITY = ["RI", "MA", "CT", "NH", "ME", "VT"]
+GRAY_RETRY_COOLDOWN_HOURS = 24
 SUCCESS_TEXT_RE = re.compile(
     r"(thank you|thanks for reaching out|message sent|we('|\u2019)?ll be in touch|we will be in touch|successfully submitted|request has been sent)",
     re.I,
@@ -304,13 +305,42 @@ def _outreach_lane(item: dict[str, Any], adapters: dict[str, Any]) -> str:
     return "other"
 
 
+def _is_human_gate_result(result: dict[str, Any]) -> bool:
+    reason = str(result.get("reason") or "").lower()
+    sample_text = str(result.get("sample_text") or "").lower()
+    errors = [str(error).lower() for error in list(result.get("errors") or [])]
+    if "captcha" in reason or "human" in reason or "429" in reason:
+        return True
+    if any("captcha" in error or "human" in error for error in errors):
+        return True
+    return (
+        "confirm you're human" in sample_text
+        or "captcha validation failed" in sample_text
+        or "please verify you are human" in sample_text
+        or "recaptcha" in sample_text
+    )
+
+
+def _is_retryable_form_result(result: dict[str, Any]) -> bool:
+    reason = str(result.get("reason") or "").strip().lower()
+    sample_text = str(result.get("sample_text") or "").lower()
+    errors = [str(error).lower() for error in list(result.get("errors") or [])]
+    if reason.startswith("submit_click_failed"):
+        return True
+    if reason == "unknown_result" and not errors and not _is_human_gate_result(result):
+        return True
+    if reason == "submission_error" and "please try again later" in sample_text and not _is_human_gate_result(result):
+        return True
+    return False
+
+
 def _compute_domain_policies(state: dict[str, Any]) -> dict[str, str]:
     domain_stats: dict[str, dict[str, int]] = {}
     for target in list((state.get("targets") or {}).values()):
         domain = str(target.get("adapter_domain") or "").strip()
         if not domain:
             continue
-        bucket = domain_stats.setdefault(domain, {"success": 0, "failed": 0, "manual": 0})
+        bucket = domain_stats.setdefault(domain, {"success": 0, "failed": 0, "manual": 0, "retryable_manual": 0, "human_manual": 0})
         status = str(target.get("status") or "")
         if status in {"contact_form_submitted", "email_sent_local_only"}:
             bucket["success"] += 1
@@ -318,17 +348,28 @@ def _compute_domain_policies(state: dict[str, Any]) -> dict[str, str]:
             bucket["failed"] += 1
         elif status in {"review_hold", "contact_form_needs_review", "captcha_pending_operator"}:
             bucket["manual"] += 1
+            result = dict(target.get("result") or target.get("contact_form_result") or {})
+            if status == "captcha_pending_operator" or _is_human_gate_result(result):
+                bucket["human_manual"] += 1
+            elif _is_retryable_form_result(result):
+                bucket["retryable_manual"] += 1
+            else:
+                bucket["human_manual"] += 1
     policies: dict[str, str] = {}
     for domain, stats in domain_stats.items():
         success = int(stats.get("success", 0))
         failed = int(stats.get("failed", 0))
         manual = int(stats.get("manual", 0))
+        retryable_manual = int(stats.get("retryable_manual", 0))
+        human_manual = int(stats.get("human_manual", 0))
         if success >= 1 and failed == 0 and manual <= 1:
             policies[domain] = "form_whitelist"
         elif failed >= 1 and success == 0:
             policies[domain] = "form_blacklist"
+        elif retryable_manual >= 1 and human_manual == 0:
+            policies[domain] = "form_gray_retry"
         else:
-            policies[domain] = "form_gray"
+            policies[domain] = "form_gray_human_first"
     return policies
 
 
@@ -400,7 +441,11 @@ def _select_next_candidate(state: dict[str, Any]) -> dict[str, Any] | None:
             ):
                 if field in target_state:
                     merged[field] = target_state[field]
+            if _channel_for(merged, state) == "none":
+                continue
             return merged
+        if _channel_for(item, state) == "none":
+            continue
         return item
     return None
 
@@ -415,6 +460,10 @@ def _channel_for(item: dict[str, Any], state: dict[str, Any]) -> str:
     if forced == "email" and _email_is_usable(item) and _email_send_allowed(state, min_minutes_between_emails=5):
         return "email"
     if domain_policy == "form_blacklist":
+        if _email_is_usable(item) and _email_send_allowed(state, min_minutes_between_emails=5):
+            return "email"
+        return "none"
+    if domain_policy == "form_gray_human_first":
         if _email_is_usable(item) and _email_send_allowed(state, min_minutes_between_emails=5):
             return "email"
         return "none"
@@ -687,6 +736,40 @@ def _backfill_target_metadata(state: dict[str, Any], adapters: dict[str, Any]) -
             if "adapter_domain" not in target:
                 target["adapter_domain"] = _normalized_domain(str(target.get("contact_form_url") or target.get("website") or ""))
         state["targets"][key] = target
+
+
+def _promote_gray_retry_holds(state: dict[str, Any]) -> list[dict[str, Any]]:
+    events = []
+    now = datetime.now(timezone.utc)
+    domain_policies = dict(state.get("domain_form_policies") or {})
+    for key, target in list((state.get("targets") or {}).items()):
+        if str(target.get("status") or "") != "review_hold":
+            continue
+        domain = str(target.get("adapter_domain") or "").strip()
+        if str(domain_policies.get(domain) or "") != "form_gray_retry":
+            continue
+        attempts = int(target.get("gray_retry_attempts") or 0)
+        if attempts >= 1:
+            continue
+        updated_at = _parse_iso(str(target.get("updated_at") or ""))
+        if updated_at and (now - updated_at).total_seconds() < GRAY_RETRY_COOLDOWN_HOURS * 3600:
+            continue
+        target["status"] = "ready_for_form_retry"
+        target["force_channel"] = "contact_form"
+        target["gray_retry_attempts"] = attempts + 1
+        target["gray_retry_promoted_at"] = _now_iso()
+        target["updated_at"] = _now_iso()
+        state["targets"][key] = target
+        events.append(
+            {
+                "type": "gray_retry_promoted",
+                "at": _now_iso(),
+                "key": key,
+                "company_name": target.get("company_name"),
+                "adapter_domain": domain,
+            }
+        )
+    return events
 
 
 def _form_submission_script() -> str:
@@ -1763,6 +1846,11 @@ def main() -> int:
 
     manual_alert_events = _backfill_manual_alerts(state, args.chat_id, no_telegram=args.no_telegram)
     for event in manual_alert_events:
+        _append_event(event)
+        attempts.append(event)
+
+    gray_retry_events = _promote_gray_retry_holds(state)
+    for event in gray_retry_events:
         _append_event(event)
         attempts.append(event)
 
