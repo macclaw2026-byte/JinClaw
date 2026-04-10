@@ -1,0 +1,121 @@
+{
+  "project_id": "amazon-product-selection-engine",
+  "name": "Amazon Product Selection Engine",
+  "owner": "JinClaw",
+  "created_at": "2026-04-10T15:25:38Z",
+  "task_scope": {
+    "platform": "Amazon",
+    "source_tool": "SellerSprite",
+    "marketplace": "US",
+    "time_window": "last_30_days",
+    "fulfillment_mode": "FBM_medium_parcel"
+  },
+  "governance": {
+    "constitution_path": "/Users/mac_claw/.openclaw/workspace/JINCLAW_CONSTITUTION.md",
+    "rule_paths": [
+      "/Users/mac_claw/.openclaw/workspace/projects/jinclaw-governance/jinclaw-live-guardrails.md",
+      "/Users/mac_claw/.openclaw/workspace/tools/openmoss/control_center/doctor_coverage_contract.md"
+    ],
+    "process_paths": [
+      "/Users/mac_claw/.openclaw/workspace/compat/gstack/prompts/jinclaw-gstack-lite.md",
+      "/Users/mac_claw/.openclaw/workspace/tools/openmoss/control_center/orchestrator.py",
+      "/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy/task_contract.py",
+      "/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy/preflight_engine.py"
+    ]
+  },
+  "paths": {
+    "task_state_markdown": "/Users/mac_claw/.openclaw/workspace/tasks/amazon-product-selection-state.md",
+    "execution_plan_markdown": "/Users/mac_claw/.openclaw/workspace/tasks/amazon-product-selection-execution-plan.md",
+    "project_root": "/Users/mac_claw/.openclaw/workspace/projects/amazon-product-selection-engine",
+    "governance_markdown": "/Users/mac_claw/.openclaw/workspace/projects/amazon-product-selection-engine/GOVERNANCE.md",
+    "stage_manifest_json": "/Users/mac_claw/.openclaw/workspace/projects/amazon-product-selection-engine/config/stage-manifest.json",
+    "seller_sprite_exports": "/Users/mac_claw/.openclaw/workspace/data/amazon-product-selection/seller-sprite",
+    "processed_data": "/Users/mac_claw/.openclaw/workspace/data/amazon-product-selection/processed",
+    "final_output": "/Users/mac_claw/.openclaw/workspace/output/amazon-product-selection"
+  },
+  "doctor_coverage": {
+    "component": "amazon-product-selection-engine",
+    "direct_coverage_path": "",
+    "exported_signal_artifact": "execution plan markdown plus local validation output from validate_stage1_export.py",
+    "primary_monitor": "/Users/mac_claw/.openclaw/workspace/projects/amazon-product-selection-engine/scripts/validate_stage1_export.py",
+    "backstop_monitor": "manual PR review until canonical doctor integration lands",
+    "delayed_verification": "validated official SellerSprite xlsx artifact exists locally",
+    "blind_spot": "canonical JinClaw doctor does not yet ingest this project's local runtime state automatically",
+    "retrofit_owner": "amazon-product-selection-engine"
+  },
+  "stages": [
+    {
+      "stage_id": "stage_1_sellersprite_export",
+      "name": "SellerSprite export",
+      "inputs": [
+        "openclaw_browser_session",
+        "marketplace=US",
+        "time_window=last_30_days",
+        "mode=FBM_medium_parcel"
+      ],
+      "outputs": [
+        "official_export_excel",
+        "file_path",
+        "file_format",
+        "header_preview",
+        "row_count_estimate",
+        "validation_report"
+      ],
+      "runner_script": "/Users/mac_claw/.openclaw/workspace/projects/amazon-product-selection-engine/scripts/run_stage1_sellersprite_official_export.py",
+      "validator_script": "/Users/mac_claw/.openclaw/workspace/projects/amazon-product-selection-engine/scripts/validate_stage1_export.py",
+      "acceptance_criteria": [
+        "official SellerSprite Excel exists in the canonical export directory",
+        "file can be opened locally",
+        "header row is readable",
+        "at least one data row exists",
+        "validation report is written to local reports/"
+      ]
+    },
+    {
+      "stage_id": "stage_2_keyword_extraction",
+      "name": "Keyword extraction",
+      "inputs": [
+        "stage_1_validated_export"
+      ],
+      "outputs": [
+        "candidate_products_table",
+        "product_keywords_table"
+      ]
+    },
+    {
+      "stage_id": "stage_3_amazon_keyword_collection",
+      "name": "Amazon keyword collection",
+      "inputs": [
+        "stage_2_keywords"
+      ],
+      "outputs": [
+        "keyword_result_count",
+        "first_page_product_urls",
+        "review_range",
+        "sales_30d_range",
+        "listing_age_window"
+      ]
+    },
+    {
+      "stage_id": "stage_4_keyword_aggregation",
+      "name": "Keyword aggregation",
+      "inputs": [
+        "stage_3_keyword_search_records"
+      ],
+      "outputs": [
+        "keyword_analysis_table",
+        "representative_product_urls"
+      ]
+    },
+    {
+      "stage_id": "stage_5_final_export",
+      "name": "Final export",
+      "inputs": [
+        "stage_4_keyword_analysis"
+      ],
+      "outputs": [
+        "final_keyword_result_table"
+      ]
+    }
+  ]
+}
