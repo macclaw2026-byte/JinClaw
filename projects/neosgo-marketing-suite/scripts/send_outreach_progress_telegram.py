@@ -87,6 +87,18 @@ def _failure_reason(item: dict) -> str:
     return reason or "未知原因"
 
 
+def _lane_label(value: str) -> str:
+    return {
+        "standard_form": "标准表单",
+        "email_only": "纯邮件",
+        "adapted_form": "适配表单",
+        "form_only": "仅表单",
+        "manual_captcha_form": "验证码人工接管表单",
+        "other": "其他",
+        "unknown": "未知",
+    }.get(value or "unknown", value or "未知")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Send periodic NEOSGO outreach summary to Telegram.")
     parser.add_argument("--chat-id", default=os.environ.get("NEOSGO_OUTREACH_CHAT", DEFAULT_CHAT))
@@ -128,6 +140,18 @@ def main() -> int:
         recent_lines.append(f"- {company}：通过{channel}触达，当前结果：{status}")
 
     counts_text = "，".join(f"{key}={value}" for key, value in counts.items()) or "暂无"
+    lane_outcomes = dict(latest.get("lane_outcomes") or {})
+    lane_lines = []
+    for lane, outcome in sorted(lane_outcomes.items()):
+        lane_lines.append(
+            f"- {_lane_label(lane)}：成功 {int(outcome.get('success', 0))}，人工处理 {int(outcome.get('manual', 0))}，失败 {int(outcome.get('failed', 0))}"
+        )
+    adapter_domain_outcomes = dict(latest.get("adapter_domain_outcomes") or {})
+    adapter_lines = []
+    for domain, outcome in sorted(adapter_domain_outcomes.items()):
+        adapter_lines.append(
+            f"- {domain}：共 {int(outcome.get('total', 0))} 次，成功 {int(outcome.get('success', 0))}，人工处理 {int(outcome.get('manual', 0))}，失败 {int(outcome.get('failed', 0))}"
+        )
     text = (
         "NEOSGO 触达任务进度汇报\n"
         f"生成时间：{generated_at}\n"
@@ -141,6 +165,10 @@ def main() -> int:
     if failure_reason_counts:
         reasons_text = "；".join(f"{reason} x{count}" for reason, count in failure_reason_counts.items())
         text += f"新增失败原因：{reasons_text}\n"
+    if lane_lines:
+        text += "车道效果统计：\n" + "\n".join(lane_lines) + "\n"
+    if adapter_lines:
+        text += "适配站点效果统计：\n" + "\n".join(adapter_lines[:6]) + "\n"
     if latest.get("email_delivery_pending"):
         text += "邮件状态：当前有一封邮件处于观察窗口内；若 10 分钟内没有失败信号，系统会继续下一封。\n"
     if recent_lines:

@@ -320,6 +320,7 @@ def _load_candidates() -> list[dict[str, Any]]:
             continue
         enriched = dict(item)
         enriched["outreach_lane"] = _outreach_lane(enriched, adapters)
+        enriched["adapter_domain"] = _normalized_domain(str(enriched.get("contact_form_url") or enriched.get("website") or ""))
         candidates.append(enriched)
 
     lane_order = {
@@ -361,6 +362,8 @@ def _select_next_candidate(state: dict[str, Any]) -> dict[str, Any] | None:
         if target_state:
             merged = dict(item)
             for field in (
+                "outreach_lane",
+                "adapter_domain",
                 "force_channel",
                 "form_retry_attempted",
                 "captcha_ticket_id",
@@ -391,6 +394,8 @@ def _channel_for(item: dict[str, Any], state: dict[str, Any]) -> str:
 def _target_status_update(item: dict[str, Any], channel: str, status: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
     preserved = {}
     for field in (
+        "outreach_lane",
+        "adapter_domain",
         "force_channel",
         "form_retry_attempted",
         "captcha_ticket_id",
@@ -633,6 +638,21 @@ def _refresh_target_routing_from_results(state: dict[str, Any], adapters: dict[s
                 }
             )
     return events
+
+
+def _backfill_target_metadata(state: dict[str, Any], adapters: dict[str, Any]) -> None:
+    candidates = {str(item.get("source_url") or item.get("website") or item.get("company_name") or "").strip(): item for item in _load_candidates()}
+    for key, target in list((state.get("targets") or {}).items()):
+        candidate = dict(candidates.get(key) or {})
+        if candidate:
+            target.setdefault("outreach_lane", candidate.get("outreach_lane") or _outreach_lane(candidate, adapters))
+            target.setdefault("adapter_domain", candidate.get("adapter_domain") or _normalized_domain(str(candidate.get("contact_form_url") or candidate.get("website") or "")))
+        else:
+            if "outreach_lane" not in target:
+                target["outreach_lane"] = "unknown"
+            if "adapter_domain" not in target:
+                target["adapter_domain"] = _normalized_domain(str(target.get("contact_form_url") or target.get("website") or ""))
+        state["targets"][key] = target
 
 
 def _form_submission_script() -> str:
@@ -1385,14 +1405,37 @@ def _send_one_email(item: dict[str, Any], content: dict[str, Any]) -> dict[str, 
 def _build_summary(state: dict[str, Any]) -> dict[str, Any]:
     targets = list((state.get("targets") or {}).values())
     counts: dict[str, int] = {}
+    lane_counts: dict[str, int] = {}
+    lane_outcomes: dict[str, dict[str, int]] = {}
+    adapter_domains: dict[str, dict[str, int]] = {}
     for item in targets:
         status = str(item.get("status") or "unknown")
         counts[status] = counts.get(status, 0) + 1
+        lane = str(item.get("outreach_lane") or "unknown")
+        lane_counts[lane] = lane_counts.get(lane, 0) + 1
+        outcome_bucket = "other"
+        if status in {"contact_form_submitted", "email_sent_local_only"}:
+            outcome_bucket = "success"
+        elif status in {"email_failed", "contact_form_failed", "contact_form_failed_email_deferred"}:
+            outcome_bucket = "failed"
+        elif status in {"review_hold", "contact_form_needs_review", "captcha_pending_operator"}:
+            outcome_bucket = "manual"
+        lane_outcomes.setdefault(lane, {"success": 0, "failed": 0, "manual": 0, "other": 0})
+        lane_outcomes[lane][outcome_bucket] += 1
+        adapter_domain = str(item.get("adapter_domain") or "").strip()
+        if adapter_domain:
+            bucket = adapter_domains.setdefault(adapter_domain, {"total": 0, "success": 0, "failed": 0, "manual": 0})
+            bucket["total"] += 1
+            if outcome_bucket in bucket:
+                bucket[outcome_bucket] += 1
     return {
         "generated_at": _now_iso(),
         "campaign_id": state.get("campaign_id"),
         "email_delivery_pending": bool(state.get("email_delivery_pending")),
         "counts": counts,
+        "lane_counts": lane_counts,
+        "lane_outcomes": lane_outcomes,
+        "adapter_domain_outcomes": adapter_domains,
         "total_touched": len(targets),
         "last_email_sent_at": state.get("last_email_sent_at", ""),
     }
@@ -1649,6 +1692,7 @@ def main() -> int:
     content = _load_content()
     adapters = _load_form_adapters()
     state = _load_state()
+    _backfill_target_metadata(state, adapters)
     delivery_rules = dict(content.get("delivery_rules") or {})
     hold_minutes = int(delivery_rules.get("assume_delivered_after_no_failure_minutes", 10) or 10)
     attempts = []
