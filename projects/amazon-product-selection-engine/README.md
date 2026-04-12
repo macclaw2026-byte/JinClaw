@@ -25,6 +25,7 @@ Project-specific mapping and compliance notes live in `GOVERNANCE.md`.
 
 Only reproducible source assets belong in Git:
 
+- `references/execution-plan.md`
 - `config/project-config.json`
 - `config/stage-manifest.json`
 - `GOVERNANCE.md`
@@ -65,6 +66,10 @@ For this task, browser automation must stay within the global JinClaw budget of 
 - cool down between batches
 - stop immediately on Amazon error pages, robot checks, or suspicious empty-result runs
 - reset the browser session before resuming if the site degrades
+
+Execution-plan reference:
+
+- [references/execution-plan.md](/Users/mac_claw/.openclaw/workspace/projects/amazon-product-selection-engine/references/execution-plan.md)
 
 ## Stage Summary
 

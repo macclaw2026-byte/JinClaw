@@ -16,7 +16,6 @@ WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
 CHECK_ROOTS = [
     WORKSPACE_ROOT / "tools" / "openmoss",
     WORKSPACE_ROOT / "projects",
-    WORKSPACE_ROOT / "tools" / "openmoss" / "runtime",
 ]
 REQUIRED_DOCS = [
     WORKSPACE_ROOT / "JINCLAW_CONSTITUTION.md",
@@ -42,6 +41,10 @@ REQUIRED_DIRECTORY_NOTICES = [
 ]
 TARGET_SUFFIXES = {".py", ".sh", ".md"}
 NOTICE_MARKER = "RULES-FIRST NOTICE:"
+IGNORED_PREFIXES = [
+    WORKSPACE_ROOT / "tools" / "openmoss" / "generated_capabilities",
+    WORKSPACE_ROOT / "tools" / "openmoss" / "runtime",
+]
 
 
 def _iter_target_files() -> list[Path]:
@@ -56,6 +59,8 @@ def _iter_target_files() -> list[Path]:
             if any(part.startswith(".") for part in path.relative_to(root).parts):
                 continue
             if path.suffix.lower() not in TARGET_SUFFIXES:
+                continue
+            if any(path.is_relative_to(prefix) for prefix in IGNORED_PREFIXES):
                 continue
             seen.add(path)
             items.append(path)

@@ -64,6 +64,7 @@ The short version:
 Detailed reference:
 
 - `tools/openmoss/control_center/jinclaw_stability_model.md`
+- `tools/openmoss/control_center/reanimated-completed-task-handling.md`
 
 The OpenClaw runtime remains the execution substrate:
 
@@ -108,6 +109,7 @@ Preferred ownership:
 - doctor-facing system health payload: `tools/openmoss/ops/jinclaw_ops.py`
 - governance statement for this invariant: `JINCLAW_CONSTITUTION.md`
 - future-coverage contract: `tools/openmoss/control_center/doctor_coverage_contract.md`
+- orphaned/reanimated completion reconciliation contract: `tools/openmoss/control_center/reanimated-completed-task-handling.md`
 
 Retrofit rule:
 

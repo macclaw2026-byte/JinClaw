@@ -30,6 +30,10 @@ Useful operational commands:
   `python3 /Users/mac_claw/.openclaw/workspace/skills/marketing-automation-suite/scripts/run_marketing_suite_cycle.py --project-root /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite`
 - Run one full feedback loop:
   `python3 /Users/mac_claw/.openclaw/workspace/skills/marketing-automation-suite/scripts/run_feedback_loop.py --project-root /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite`
+- Refresh lead-engine views and write the latest project-local daily report:
+  `python3 /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/scripts/refresh_lead_engine_daily_report.py`
+- Read the latest lead-engine metrics snapshot:
+  `python3 /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/scripts/read_lead_engine_metrics.py --pretty`
 - Build a feedback template from the latest execution queue:
   `python3 /Users/mac_claw/.openclaw/workspace/skills/outreach-feedback-engine/scripts/build_feedback_event_template.py --execution-queue /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/output/marketing-automation-suite/<cycle_id>/execution-queue.json --output /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/data/feedback-events.template.json`
 - Validate completed feedback rows before merge:
@@ -51,6 +55,11 @@ Google Maps lead capture:
 - Reports:
   - `output/prospect-data-engine/google-maps-discovery-report.json`
   - `output/prospect-data-engine/google-maps-email-enrichment-report.json`
+- Lead-engine daily refresh reference:
+  [references/lead-engine-operations.md](/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/references/lead-engine-operations.md)
+- Lead-engine project-local artifacts:
+  - `output/prospect-data-engine/lead-engine-daily-report-latest.md`
+  - `runtime/prospect-data-engine/lead-engine-metrics-latest.json`
 
 Feedback operations:
 - SOP:

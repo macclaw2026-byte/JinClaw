@@ -34,7 +34,7 @@
   },
   "paths": {
     "task_state_markdown": "/Users/mac_claw/.openclaw/workspace/tasks/amazon-product-selection-state.md",
-    "execution_plan_markdown": "/Users/mac_claw/.openclaw/workspace/tasks/amazon-product-selection-execution-plan.md",
+    "execution_plan_markdown": "/Users/mac_claw/.openclaw/workspace/projects/amazon-product-selection-engine/references/execution-plan.md",
     "project_root": "/Users/mac_claw/.openclaw/workspace/projects/amazon-product-selection-engine",
     "governance_markdown": "/Users/mac_claw/.openclaw/workspace/projects/amazon-product-selection-engine/GOVERNANCE.md",
     "stage_manifest_json": "/Users/mac_claw/.openclaw/workspace/projects/amazon-product-selection-engine/config/stage-manifest.json",

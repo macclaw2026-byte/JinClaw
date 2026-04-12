@@ -95,11 +95,11 @@ Versioned source-of-truth:
 
 - `README.md`
 - `GOVERNANCE.md`
+- `references/execution-plan.md`
 - `config/project-config.json`
 - `config/stage-manifest.json`
 - `scripts/*.py`
 - `tests/*`
-- `tasks/amazon-product-selection-execution-plan.md`
 
 Local-only runtime state:
 
