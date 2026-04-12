@@ -1,4 +1,11 @@
 #!/bin/zsh
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 # 中文说明：
 # - 文件路径：`tools/openmoss/voice/bootstrap_voice_env.sh`
 # - 文件作用：负责`bootstrap_voice_env` 相关的一方系统逻辑。

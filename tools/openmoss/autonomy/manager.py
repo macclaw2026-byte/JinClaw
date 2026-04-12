@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 """
 中文说明：
 - 文件路径：`tools/openmoss/autonomy/manager.py`
@@ -51,6 +57,8 @@ RUNTIME_ROOT = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/
 TASKS_ROOT = RUNTIME_ROOT / "tasks"
 INGRESS_ROOT = RUNTIME_ROOT / "ingress"
 LINKS_ROOT = RUNTIME_ROOT / "links"
+BACKGROUND_AUTONOMY_PROVIDER = "autonomy-runtime"
+BACKGROUND_AUTONOMY_SESSION_KEY = "agent:main:main"
 
 
 def utc_now_iso() -> str:
@@ -607,6 +615,43 @@ def find_link_by_task_id(task_id: str) -> Dict:
             payload["_path"] = str(path)
             return payload
     return {}
+
+
+def ensure_autonomy_root_mission_link(task_id: str) -> Dict:
+    """
+    中文注解：
+    - 功能：为没有显式会话绑定的 root mission 补一条后台自治 link。
+    - 设计意图：
+      1. root mission 是持续运行任务，不应该因为没有手动绑定聊天窗口而永久卡住；
+      2. 这里绑定的是主会话派生出来的 autonomy session，不会污染主聊天焦点；
+      3. 只有明确标记为 root mission 的任务才允许走这个兜底。
+    """
+    existing = find_link_by_task_id(task_id)
+    if existing:
+        return existing
+    contract = load_contract(task_id)
+    metadata = contract.metadata or {}
+    control_center = metadata.get("control_center", {}) or {}
+    intent = control_center.get("intent", {}) or {}
+    source = str(intent.get("source", "")).strip()
+    if not metadata.get("root_mission") and "root_mission" not in source:
+        return {}
+    provider = BACKGROUND_AUTONOMY_PROVIDER
+    conversation_id = f"task-{task_id}"
+    payload = {
+        "provider": provider,
+        "conversation_id": conversation_id,
+        "conversation_type": "service",
+        "task_id": task_id,
+        "lineage_root_task_id": str(metadata.get("root_task_id") or task_id).strip() or task_id,
+        "goal": contract.user_goal,
+        "session_key": BACKGROUND_AUTONOMY_SESSION_KEY,
+        "updated_at": utc_now_iso(),
+        "link_kind": "root_mission_autonomy",
+    }
+    path = write_link(provider, conversation_id, payload)
+    payload["_path"] = path
+    return payload
 
 
 def parse_stage_args(stage_args: List[str]) -> List[StageContract]:

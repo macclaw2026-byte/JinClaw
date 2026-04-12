@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 """
 中文说明：
 - 文件路径：`tools/openmoss/control_center/canonical_active_task.py`
@@ -50,6 +56,37 @@ def _successor_from_state(task_id: str) -> str:
     return str(metadata.get("superseded_by_task_id", "")).strip()
 
 
+def _contract_metadata(task_id: str) -> Dict[str, Any]:
+    contract = _read_json(AUTONOMY_TASKS_ROOT / task_id / "contract.json")
+    metadata = contract.get("metadata", {}) or {}
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _lineage_root_task_id(task_id: str) -> str:
+    metadata = _contract_metadata(task_id)
+    lineage_root = str(metadata.get("lineage_root_task_id", "")).strip()
+    return lineage_root or str(task_id or "").strip()
+
+
+def _predecessor_task_id(task_id: str) -> str:
+    metadata = _contract_metadata(task_id)
+    return str(metadata.get("predecessor_task_id", "")).strip()
+
+
+def _is_same_lineage_successor(current_task_id: str, successor_task_id: str) -> bool:
+    current = str(current_task_id or "").strip()
+    successor = str(successor_task_id or "").strip()
+    if not current or not successor:
+        return False
+    if current == successor:
+        return True
+    if not (AUTONOMY_TASKS_ROOT / successor).exists():
+        return False
+    if _predecessor_task_id(successor) == current:
+        return True
+    return _lineage_root_task_id(successor) == _lineage_root_task_id(current)
+
+
 def resolve_canonical_active_task(task_id: str) -> Dict[str, Any]:
     """
     中文注解：
@@ -64,6 +101,8 @@ def resolve_canonical_active_task(task_id: str) -> Dict[str, Any]:
         successor = _successor_from_state(current)
         if not successor:
             break
+        if not _is_same_lineage_successor(current, successor):
+            break
         current = successor
     return {
         "requested_task_id": str(task_id or "").strip(),
@@ -71,4 +110,3 @@ def resolve_canonical_active_task(task_id: str) -> Dict[str, Any]:
         "lineage": visited,
         "rerooted": bool(visited and current and visited[0] != current),
     }
-

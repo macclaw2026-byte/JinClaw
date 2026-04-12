@@ -126,7 +126,7 @@
           "https://francismillar.com/pages/chandelier-size-guide"
         ]
       },
-      "living-room": {
+    "living-room": {
         "common_competitor_strengths": [
           "ambient-task-accent layering basics",
           "soft lifestyle-oriented inspiration"
@@ -139,6 +139,22 @@
         "reference_urls": [
           "https://www.livingetc.com/advice/layered-lighting",
           "https://www.homesandgardens.com/interior-design/the-library-all-the-lighting-basics-you-need-to-know"
+        ]
+      },
+      "designer-trade": {
+        "common_competitor_strengths": [
+          "strong visual inspiration",
+          "project mood imagery",
+          "broad style trend language"
+        ],
+        "common_competitor_gaps": [
+          "too little guidance on specification decisions and procurement risk",
+          "weak language for defending choices to clients and contractors",
+          "insufficient connection between editorial advice and an actionable sourcing path"
+        ],
+        "reference_urls": [
+          "https://www.architecturaldigest.com/story/layered-lighting-design-tips",
+          "https://www.houseandgarden.co.uk/article/interior-designer-lighting-advice"
         ]
       }
     }
@@ -244,6 +260,7 @@
     "bedroom": "/products?room=bedroom",
     "living-room": "/products?room=living-room",
     "outdoor": "/products?category=outdoor-lighting",
+    "designer-trade": "/trade-program",
     "trade-program": "/trade-program"
   },
   "geo_targets": [
@@ -445,5 +462,235 @@
         }
       ]
     }
-  ]
+  ],
+  "designer_daily_program": {
+    "enabled": true,
+    "state_timezone": "America/Los_Angeles",
+    "article_queue": [
+      {
+        "slug": "how-interior-designers-can-specify-layered-lighting-without-overcomplicating-the-room",
+        "title": "How Interior Designers Can Specify Layered Lighting Without Overcomplicating the Room",
+        "description": "A professional guide for interior designers on building layered lighting plans that stay clear for clients, contractors, and procurement teams.",
+        "intentKeyword": "interior designer layered lighting specification",
+        "quickAnswer": "The strongest designer lighting plans separate ambient, task, and accent responsibilities early, then keep every fixture tied to a specific job in the room.",
+        "seoTitle": "Interior Designer Layered Lighting Specification Guide | Neosgo Lighting",
+        "seoDescription": "A specification-focused article for interior designers on building layered lighting plans that are clear, client-friendly, and easier to procure.",
+        "targetAudience": "Interior designers, design studios, and trade buyers",
+        "funnelStage": "Consideration",
+        "topic_key": "designer-trade",
+        "contentTrack": "designer_daily",
+        "qualityThreshold": 84,
+        "requiredPatterns": [
+          "project",
+          "specification",
+          "client",
+          "procurement",
+          "finish",
+          "next"
+        ],
+        "primaryInternalLinkLabel": "Explore the Trade Program",
+        "customInternalLinks": [
+          {
+            "label": "Browse living room lighting",
+            "href": "/products?room=living-room"
+          }
+        ],
+        "sections": [
+          {
+            "heading": "Where layered lighting plans break down on real projects",
+            "body": "Designers usually run into trouble when the overhead fixture, decorative accent, and task layer are chosen in isolation, then forced into one drawing package at the end."
+          },
+          {
+            "heading": "A specification framework designers can reuse",
+            "body": "Start by defining which fixture carries the visual lead, which layer solves functional light, and which selections are there only to soften contrast. That keeps the schedule aligned with intent."
+          },
+          {
+            "heading": "What to lock before the client presentation",
+            "body": "Before the concept review, clarify fixture role, finish family, dimming expectation, and whether the room can tolerate a stronger decorative focal point without creating visual noise."
+          }
+        ],
+        "faq": []
+      },
+      {
+        "slug": "finish-coordination-for-lighting-how-designers-keep-mixed-metals-intentional",
+        "title": "Finish Coordination for Lighting: How Designers Keep Mixed Metals Intentional",
+        "description": "A practical professional article on how interior designers keep lighting finishes composed across kitchens, bathrooms, and open-plan rooms.",
+        "intentKeyword": "lighting finish coordination for interior designers",
+        "quickAnswer": "Mixed-metal lighting feels intentional when the designer decides which finish leads, which finish supports, and where the eye should notice contrast instead of accidental mismatch.",
+        "seoTitle": "Lighting Finish Coordination for Interior Designers | Neosgo Lighting",
+        "seoDescription": "Learn how interior designers can coordinate lighting finishes across rooms without creating visual drift or client second-guessing.",
+        "targetAudience": "Interior designers, design studios, and trade buyers",
+        "funnelStage": "Consideration",
+        "topic_key": "designer-trade",
+        "contentTrack": "designer_daily",
+        "qualityThreshold": 84,
+        "requiredPatterns": [
+          "finish",
+          "client",
+          "project",
+          "specification",
+          "procurement",
+          "next"
+        ],
+        "primaryInternalLinkLabel": "Explore the Trade Program",
+        "customInternalLinks": [
+          {
+            "label": "Browse pendant lighting",
+            "href": "/products?category=pendant-lights"
+          },
+          {
+            "label": "Browse wall sconces",
+            "href": "/products?category=wall-sconces"
+          }
+        ],
+        "sections": [
+          {
+            "heading": "Why finish drift happens during specification",
+            "body": "Lighting packages often lose discipline when rooms are sourced one by one and each selection is approved locally instead of against a whole-project finish logic."
+          },
+          {
+            "heading": "How designers decide which finish should lead",
+            "body": "The lead finish should be chosen by room architecture, hardware context, and the visual hierarchy of the fixture, not by whichever sample happened to photograph best in isolation."
+          },
+          {
+            "heading": "How to explain mixed metals to clients with confidence",
+            "body": "Clients respond better when the designer explains what the contrast is doing in the room, where repetition is intentional, and which finish is carrying the strongest visual responsibility."
+          }
+        ],
+        "faq": []
+      },
+      {
+        "slug": "lighting-specification-checklist-designers-should-finish-before-quote-approval",
+        "title": "The Lighting Specification Checklist Designers Should Finish Before Quote Approval",
+        "description": "A professional checklist for interior designers who want fewer lighting revisions after quoting and fewer surprises during procurement.",
+        "intentKeyword": "lighting specification checklist before quote approval",
+        "quickAnswer": "Before quote approval, designers should lock fixture role, scale assumptions, finish naming, dimming expectations, install dependencies, and replacement risk for every visible lighting decision.",
+        "seoTitle": "Lighting Specification Checklist Before Quote Approval | Neosgo Lighting",
+        "seoDescription": "A project-ready lighting specification checklist for interior designers who want cleaner approvals and fewer procurement surprises.",
+        "targetAudience": "Interior designers, design studios, and trade buyers",
+        "funnelStage": "Decision",
+        "topic_key": "designer-trade",
+        "contentTrack": "designer_daily",
+        "qualityThreshold": 86,
+        "requiredPatterns": [
+          "checklist",
+          "project",
+          "client",
+          "procurement",
+          "lead time",
+          "next"
+        ],
+        "primaryInternalLinkLabel": "Explore the Trade Program",
+        "customInternalLinks": [
+          {
+            "label": "Browse chandeliers",
+            "href": "/products?category=chandeliers"
+          }
+        ],
+        "sections": [
+          {
+            "heading": "The approvals designers should not leave vague",
+            "body": "The most expensive revisions usually happen when size, finish, mounting assumptions, and dimming expectations are implied rather than explicitly confirmed before quoting."
+          },
+          {
+            "heading": "What procurement needs from the designer",
+            "body": "A clean package should explain fixture role, room placement, finish intent, acceptable substitutes, and any lead-time sensitivity so the buyer is not forced to interpret design intent under pressure."
+          },
+          {
+            "heading": "How the checklist protects client trust",
+            "body": "A stronger checklist reduces late-stage substitutions, avoids change-order language, and helps the client feel the lighting package was considered as carefully as the furniture and finishes."
+          }
+        ],
+        "faq": []
+      },
+      {
+        "slug": "how-designers-can-present-lighting-scale-decisions-to-clients-with-more-confidence",
+        "title": "How Designers Can Present Lighting Scale Decisions to Clients With More Confidence",
+        "description": "A practical trade-facing article on how interior designers explain fixture scale, visual weight, and proportion to clients before a lighting decision gets watered down.",
+        "intentKeyword": "how interior designers present lighting scale decisions",
+        "quickAnswer": "Clients understand lighting scale faster when the designer explains what the fixture needs to do visually in the room, not just what diameter or width formula it follows.",
+        "seoTitle": "How Designers Present Lighting Scale Decisions to Clients | Neosgo Lighting",
+        "seoDescription": "A professional guide for interior designers on explaining lighting scale and visual weight to clients with more clarity and less backtracking.",
+        "targetAudience": "Interior designers, design studios, and trade buyers",
+        "funnelStage": "Consideration",
+        "topic_key": "designer-trade",
+        "contentTrack": "designer_daily",
+        "qualityThreshold": 84,
+        "requiredPatterns": [
+          "client",
+          "project",
+          "scale",
+          "specification",
+          "finish",
+          "next"
+        ],
+        "primaryInternalLinkLabel": "Explore the Trade Program",
+        "customInternalLinks": [
+          {
+            "label": "Browse dining room lighting",
+            "href": "/products?room=dining-room"
+          }
+        ],
+        "sections": [
+          {
+            "heading": "Why scale conversations often go sideways",
+            "body": "Clients often react to a fixture as an isolated object. Designers get better approvals when they explain the fixture as part of the room composition, ceiling height, furnishing mass, and sightline strategy."
+          },
+          {
+            "heading": "A better way to frame visual weight",
+            "body": "Instead of defending a measurement alone, describe whether the fixture should feel quiet, balanced, or intentionally assertive in the room and what happens if the scale is reduced too far."
+          },
+          {
+            "heading": "What to show before final approval",
+            "body": "Pair the lighting recommendation with room context, adjacent finishes, and a clear explanation of what the client would lose if the fixture becomes too small, too busy, or too visually light."
+          }
+        ],
+        "faq": []
+      },
+      {
+        "slug": "how-interior-designers-can-reduce-lighting-reselection-with-a-better-trade-sourcing-flow",
+        "title": "How Interior Designers Can Reduce Lighting Reselection With a Better Trade Sourcing Flow",
+        "description": "A professional article on how designers can reduce lighting reselection by aligning specification logic, vendor questions, and trade sourcing steps earlier in the project.",
+        "intentKeyword": "trade lighting sourcing flow for interior designers",
+        "quickAnswer": "Lighting reselection drops when designers narrow the visual logic first, ask better vendor questions earlier, and keep the sourcing path aligned with the approved design story.",
+        "seoTitle": "Trade Lighting Sourcing Flow for Interior Designers | Neosgo Lighting",
+        "seoDescription": "Learn how interior designers can reduce lighting reselection with a cleaner trade sourcing flow and better procurement checkpoints.",
+        "targetAudience": "Interior designers, design studios, and trade buyers",
+        "funnelStage": "Decision",
+        "topic_key": "designer-trade",
+        "contentTrack": "designer_daily",
+        "qualityThreshold": 86,
+        "requiredPatterns": [
+          "trade",
+          "procurement",
+          "client",
+          "project",
+          "lead time",
+          "next"
+        ],
+        "primaryInternalLinkLabel": "Explore the Trade Program",
+        "customInternalLinks": [
+          {
+            "label": "Browse all products",
+            "href": "/products"
+          }
+        ],
+        "sections": [
+          {
+            "heading": "Why lighting reselection becomes expensive",
+            "body": "Reselection usually comes from vague approval language, weak finish discipline, or unanswered procurement questions that should have been resolved before the client believed the package was settled."
+          },
+          {
+            "heading": "What designers should confirm before sourcing deepens",
+            "body": "Confirm what is fixed versus flexible, which finish families are acceptable, what lead-time risk is tolerable, and what substitutions would still preserve the approved visual story."
+          },
+          {
+            "heading": "How a better trade flow shortens the project",
+            "body": "A cleaner sourcing path helps designers protect approvals, reduces avoidable back-and-forth with procurement, and makes it easier to keep the client focused on final fit instead of option sprawl."
+          }
+        ],
+        "faq": []
+      }
+    ]
+  }
 }

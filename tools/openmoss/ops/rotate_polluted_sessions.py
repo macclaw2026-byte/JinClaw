@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 """轮换被历史 bridge / 内部执行流污染的活跃会话。
 
 这个脚本只处理当前主链仍会引用的会话键，做法是：

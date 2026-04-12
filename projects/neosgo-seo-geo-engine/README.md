@@ -1,3 +1,12 @@
+<!--
+RULES-FIRST NOTICE:
+Before modifying this file, first read:
+- `JINCLAW_CONSTITUTION.md`
+- `AI_OPTIMIZATION_FRAMEWORK.md`
+Follow the constitution and framework:
+brain-first, one-doctor, fail-closed, evidence-over-narration,
+validate locally, then use the required PR workflow.
+-->
 # Neosgo SEO + GEO Marketing Engine
 
 This project automates admin-side SEO and GEO operations for Neosgo through the
@@ -12,6 +21,7 @@ Primary goals:
 - do one market-research pass before deciding what to create next
 - create or update draft Design Notes through the admin API
 - create or update GEO variants for priority markets
+- optionally run a separate interior-designer daily article queue for trade-facing professional content
 - produce one daily operating report to chat at 9:00 AM New York time
 
 Default safety mode:
@@ -36,6 +46,14 @@ Execution order:
 Optional feedback drop folder:
 
 - `/Users/mac_claw/.openclaw/workspace/projects/neosgo-seo-geo-engine/runtime/feedback`
+
+Interior designer daily article program:
+
+- configured under `designer_daily_program` in `config/strategy.json`
+- default is `enabled: false` so no new trade article auto-publishes until explicitly turned on
+- publishes base Design Notes only; it intentionally does **not** auto-create GEO variants for trade/editorial pieces
+- queue items can define stronger `requiredPatterns`, `qualityThreshold`, and `customInternalLinks`
+- recommended rollout: enable only after reviewing the first queued articles in draft/staging or after a one-time manual check
 
 Accepted snapshot fields:
 

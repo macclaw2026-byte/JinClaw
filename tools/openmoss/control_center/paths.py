@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 """
 中文说明：
 - 文件路径：`tools/openmoss/control_center/paths.py`
@@ -19,6 +25,7 @@ CONTROL_CENTER_ROOT = OPENMOSS_ROOT / "control_center"
 AUTONOMY_ROOT = OPENMOSS_ROOT / "autonomy"
 BRIDGE_ROOT = OPENMOSS_ROOT / "bridge"
 RUNTIME_ROOT = OPENMOSS_ROOT / "runtime"
+AUTONOMY_RUNTIME_ROOT = RUNTIME_ROOT / "autonomy"
 CONTROL_CENTER_RUNTIME_ROOT = RUNTIME_ROOT / "control_center"
 APPROVALS_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "approvals"
 MISSIONS_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "missions"
@@ -47,14 +54,23 @@ BRAIN_RECEIPTS_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "brain_receipts"
 BROWSER_SIGNALS_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "browser_signals"
 BROWSER_CHANNELS_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "browser_channels"
 TASK_STATUS_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "task_status"
+TASK_BOARD_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "task_board"
+TASK_BOARD_DASHBOARD_PATH = TASK_BOARD_ROOT / "dashboard.html"
+TASK_RETENTION_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "task_retention"
 CONTRACT_QUARANTINE_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "contract_quarantine"
 CONTROL_PLANE_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "control_plane"
 PROCESS_REGISTRY_PATH = CONTROL_PLANE_ROOT / "process_registry.json"
+RUNTIME_JOBS_REGISTRY_PATH = CONTROL_PLANE_ROOT / "runtime_jobs_registry.json"
+PROCESS_INCIDENTS_PATH = CONTROL_PLANE_ROOT / "process_incidents.json"
 TASK_REGISTRY_PATH = CONTROL_PLANE_ROOT / "task_registry.json"
+CONVERSATION_REGISTRY_PATH = CONTROL_PLANE_ROOT / "conversation_registry.json"
+TASK_ALIAS_REGISTRY_PATH = CONTROL_PLANE_ROOT / "task_alias_registry.json"
 WAITING_REGISTRY_PATH = CONTROL_PLANE_ROOT / "waiting_registry.json"
 DOCTOR_QUEUE_PATH = CONTROL_PLANE_ROOT / "doctor_queue.json"
 ALERTS_PATH = CONTROL_PLANE_ROOT / "alerts.json"
 SYSTEM_SNAPSHOT_PATH = CONTROL_PLANE_ROOT / "system_snapshot.json"
+ARCHIVED_TASK_REGISTRY_PATH = CONTROL_PLANE_ROOT / "archived_task_registry.json"
+TASK_RETENTION_LAST_RUN_PATH = TASK_RETENTION_ROOT / "last_run.json"
 DOCTOR_LAST_RUN_PATH = CONTROL_CENTER_RUNTIME_ROOT / "doctor" / "last_run.json"
 CRAWLER_CAPABILITY_PROFILE_PATH = CONTROL_PLANE_ROOT / "crawler_capability_profile.json"
 CRAWLER_CAPABILITY_HISTORY_PATH = CONTROL_PLANE_ROOT / "crawler_capability_history.json"
@@ -73,5 +89,10 @@ SKILLS_ROOT = WORKSPACE_ROOT / "skills"
 TOOLS_ROOT = WORKSPACE_ROOT / "tools"
 DATA_ROOT = WORKSPACE_ROOT / "data"
 OUTPUT_ROOT = WORKSPACE_ROOT / "output"
+AUTONOMY_ARCHIVE_ROOT = AUTONOMY_RUNTIME_ROOT / "archive"
+AUTONOMY_ARCHIVE_TASKS_ROOT = AUTONOMY_ARCHIVE_ROOT / "tasks"
+AUTONOMY_ARCHIVE_LINKS_ROOT = AUTONOMY_ARCHIVE_ROOT / "links"
+AUTONOMY_ARCHIVE_STATUS_ROOT = AUTONOMY_ARCHIVE_ROOT / "task_status"
+AUTONOMY_ARCHIVE_MANIFESTS_ROOT = AUTONOMY_ARCHIVE_ROOT / "manifests"
 OPENCLAW_ROOT = Path("/Users/mac_claw/.openclaw")
 OPENCLAW_SESSIONS_ROOT = OPENCLAW_ROOT / "agents/main/sessions"

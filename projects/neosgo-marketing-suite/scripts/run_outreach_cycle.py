@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 from __future__ import annotations
 
 import argparse
@@ -56,6 +62,14 @@ def _subprocess_env() -> dict[str, str]:
     env = os.environ.copy()
     env["PATH"] = f"{DEFAULT_PATH}:{env.get('PATH', '')}".strip(":")
     return env
+
+
+def _subprocess_output_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
 
 
 def _now_iso() -> str:
@@ -325,6 +339,8 @@ def _is_retryable_form_result(result: dict[str, Any]) -> bool:
     reason = str(result.get("reason") or "").strip().lower()
     sample_text = str(result.get("sample_text") or "").lower()
     errors = [str(error).lower() for error in list(result.get("errors") or [])]
+    if reason.endswith("_timeout"):
+        return True
     if reason.startswith("submit_click_failed"):
         return True
     if reason == "unknown_result" and not errors and not _is_human_gate_result(result):
@@ -438,6 +454,12 @@ def _select_next_candidate(state: dict[str, Any]) -> dict[str, Any] | None:
                 "captcha_ticket_id",
                 "operator_last_reply",
                 "operator_resolved_at",
+                "manual_alert_sent_at",
+                "manual_alert_status",
+                "manual_alert_delivery",
+                "manual_alert_signature",
+                "manual_alert_last_notified_at",
+                "manual_alert_notify_count",
             ):
                 if field in target_state:
                     merged[field] = target_state[field]
@@ -457,8 +479,12 @@ def _channel_for(item: dict[str, Any], state: dict[str, Any]) -> str:
     domain_policy = str(domain_policies.get(str(item.get("adapter_domain") or "").strip()) or "")
     if forced == "contact_form" and _is_form_candidate(item):
         return "contact_form"
-    if forced == "email" and _email_is_usable(item) and _email_send_allowed(state, min_minutes_between_emails=5):
-        return "email"
+    if forced == "email":
+        if _email_is_usable(item) and _email_send_allowed(state, min_minutes_between_emails=5):
+            return "email"
+        return "none"
+    if _is_form_candidate(item):
+        return "contact_form"
     if domain_policy == "form_blacklist":
         if _email_is_usable(item) and _email_send_allowed(state, min_minutes_between_emails=5):
             return "email"
@@ -467,8 +493,6 @@ def _channel_for(item: dict[str, Any], state: dict[str, Any]) -> str:
         if _email_is_usable(item) and _email_send_allowed(state, min_minutes_between_emails=5):
             return "email"
         return "none"
-    if _is_form_candidate(item):
-        return "contact_form"
     if _email_is_usable(item) and _email_send_allowed(state, min_minutes_between_emails=5):
         return "email"
     return "none"
@@ -484,6 +508,12 @@ def _target_status_update(item: dict[str, Any], channel: str, status: str, extra
         "captcha_ticket_id",
         "operator_last_reply",
         "operator_resolved_at",
+        "manual_alert_sent_at",
+        "manual_alert_status",
+        "manual_alert_delivery",
+        "manual_alert_signature",
+        "manual_alert_last_notified_at",
+        "manual_alert_notify_count",
     ):
         if field in item:
             preserved[field] = item[field]
@@ -720,6 +750,19 @@ def _refresh_target_routing_from_results(state: dict[str, Any], adapters: dict[s
                     "company_name": target.get("company_name"),
                 }
             )
+            continue
+        if _is_retryable_form_result(result):
+            target["status"] = "contact_form_needs_review"
+            target["updated_at"] = _now_iso()
+            target["reason"] = "retryable_form_result"
+            events.append(
+                {
+                    "type": "target_rerouted_for_manual_review",
+                    "at": _now_iso(),
+                    "key": key,
+                    "company_name": target.get("company_name"),
+                }
+            )
     return events
 
 
@@ -736,6 +779,74 @@ def _backfill_target_metadata(state: dict[str, Any], adapters: dict[str, Any]) -
             if "adapter_domain" not in target:
                 target["adapter_domain"] = _normalized_domain(str(target.get("contact_form_url") or target.get("website") or ""))
         state["targets"][key] = target
+
+
+def _clear_manual_alert_tracking(target: dict[str, Any]) -> None:
+    for field in (
+        "manual_alert_sent_at",
+        "manual_alert_status",
+        "manual_alert_delivery",
+        "manual_alert_signature",
+        "manual_alert_last_notified_at",
+        "manual_alert_notify_count",
+    ):
+        target.pop(field, None)
+
+
+def _backfill_manual_alert_tracking(state: dict[str, Any]) -> None:
+    for key, target in list((state.get("targets") or {}).items()):
+        status = str(target.get("status") or "")
+        if not _is_manual_review_status(status):
+            continue
+        notified_at = str(target.get("manual_alert_last_notified_at") or target.get("manual_alert_sent_at") or "").strip()
+        previous_status = str(target.get("manual_alert_status") or "").strip()
+        previous_signature = str(target.get("manual_alert_signature") or "").strip()
+        if not notified_at and not previous_status and not previous_signature:
+            continue
+        if not target.get("manual_alert_status"):
+            target["manual_alert_status"] = status
+        if not target.get("manual_alert_signature"):
+            target["manual_alert_signature"] = _manual_alert_signature(status, target)
+        if notified_at and not target.get("manual_alert_sent_at"):
+            target["manual_alert_sent_at"] = notified_at
+        if notified_at and not target.get("manual_alert_last_notified_at"):
+            target["manual_alert_last_notified_at"] = notified_at
+        if not target.get("manual_alert_notify_count"):
+            target["manual_alert_notify_count"] = 1
+        state["targets"][key] = target
+
+
+def _reroute_pending_targets_to_email(state: dict[str, Any]) -> list[dict[str, Any]]:
+    events = []
+    candidates = {_target_key(item): item for item in _load_candidates()}
+    for key, target in list((state.get("targets") or {}).items()):
+        status = str(target.get("status") or "")
+        if status not in {"contact_form_needs_review", "review_hold", "captcha_pending_operator", "contact_form_failed_email_deferred"}:
+            continue
+        candidate = dict(candidates.get(key) or {})
+        if not candidate or not _email_is_usable(candidate):
+            continue
+        updated = dict(target)
+        updated["channel"] = "email"
+        updated["status"] = "ready_for_email"
+        updated["force_channel"] = "email"
+        updated["updated_at"] = _now_iso()
+        updated["reason"] = "email_fallback_after_form_result"
+        updated.pop("captcha_ticket_id", None)
+        updated.pop("operator_last_reply", None)
+        updated.pop("operator_resolved_at", None)
+        _clear_manual_alert_tracking(updated)
+        state["targets"][key] = updated
+        events.append(
+            {
+                "type": "target_rerouted_for_email",
+                "at": _now_iso(),
+                "key": key,
+                "company_name": target.get("company_name"),
+                "from_status": status,
+            }
+        )
+    return events
 
 
 def _promote_gray_retry_holds(state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1388,14 +1499,27 @@ def _submit_contact_form(item: dict[str, Any], content: dict[str, Any], adapters
         "_profile_dir": str(PLAYWRIGHT_PROFILE_DIR),
     }
     target_url = str(item.get("contact_form_url") or item.get("website") or "").strip()
-    proc = subprocess.run(
-        [str(PLAYWRIGHT_PYTHON), "-c", _form_submission_script(), target_url, json.dumps(payload, ensure_ascii=False)],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        env=_subprocess_env(),
-        check=False,
-    )
+    timeout_seconds = 180
+    try:
+        proc = subprocess.run(
+            [str(PLAYWRIGHT_PYTHON), "-c", _form_submission_script(), target_url, json.dumps(payload, ensure_ascii=False)],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            env=_subprocess_env(),
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        sample_text = (_subprocess_output_text(exc.stderr) or _subprocess_output_text(exc.stdout))[:600]
+        return {
+            "ok": False,
+            "reason": "contact_form_timeout",
+            "target_url": target_url,
+            "timeout_seconds": timeout_seconds,
+            "sample_text": sample_text,
+            "errors": [f"subprocess_timeout_after_{timeout_seconds}s"],
+            "returncode": 124,
+        }
     raw = proc.stdout.strip() or proc.stderr.strip()
     try:
         result = json.loads(raw) if raw else {}
@@ -1503,14 +1627,34 @@ def _send_one_email(item: dict[str, Any], content: dict[str, Any]) -> dict[str, 
                 "sender_email": email_defaults.get("from_email") or sender.get("sender_email") or "",
             }
         )
-    proc = subprocess.run(
-        ["python3", str(MAIL_BATCH_SCRIPT), "--csv", str(queue_csv), "--events-csv", str(events_csv), "--sleep-seconds", "0"],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        env=_subprocess_env(),
-        check=False,
-    )
+    timeout_seconds = 180
+    try:
+        proc = subprocess.run(
+            ["python3", str(MAIL_BATCH_SCRIPT), "--csv", str(queue_csv), "--events-csv", str(events_csv), "--sleep-seconds", "0"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            env=_subprocess_env(),
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stderr = (_subprocess_output_text(exc.stderr) or _subprocess_output_text(exc.stdout)).strip()
+        return {
+            "provider": "mail_batch",
+            "attempted": 1,
+            "sent": 0,
+            "failed": 1,
+            "failures": [
+                {
+                    "recipient_email": str(item.get("email") or "").strip(),
+                    "subject": str(email_defaults.get("subject") or "").strip(),
+                    "stderr": stderr or f"subprocess_timeout_after_{timeout_seconds}s",
+                    "reason": "email_send_timeout",
+                    "timeout_seconds": timeout_seconds,
+                }
+            ],
+            "returncode": 124,
+        }
     try:
         payload = json.loads(proc.stdout.strip() or "{}")
     except json.JSONDecodeError:
@@ -1566,12 +1710,13 @@ def _build_summary(state: dict[str, Any]) -> dict[str, Any]:
 
 def _notify_failure(chat_id: str, item: dict[str, Any], channel: str, result: dict[str, Any]) -> dict[str, Any]:
     text = (
-        "NEOSGO 触达任务已暂停。\n"
+        "NEOSGO 触达需要人工处理。\n"
         f"公司：{item.get('company_name')}\n"
         f"方式：{'网站表单' if channel == 'contact_form' else '邮件'}\n"
         f"结果：失败\n"
         f"原因：{result.get('reason', 'unknown')}\n"
-        f"网址：{item.get('website') or ''}"
+        f"网址：{item.get('website') or ''}\n"
+        "建议：这条自动触达没有成功发出，请你人工跟进。"
     )
     return _send_telegram(chat_id, text)
 
@@ -1630,6 +1775,28 @@ def _is_manual_review_status(status: str) -> bool:
     return status in {"contact_form_needs_review", "review_hold", "captcha_pending_operator"}
 
 
+def _manual_alert_signature(status: str, target: dict[str, Any]) -> str:
+    result = dict(target.get("contact_form_result") or target.get("result") or {})
+    reason = str(result.get("reason") or target.get("reason") or "unknown").strip().lower()
+    errors = [str(error).strip().lower() for error in list(result.get("errors") or []) if str(error).strip()]
+    primary_error = errors[0] if errors else ""
+    website = str(target.get("contact_form_url") or target.get("website") or "").strip().lower()
+    company = str(target.get("company_name") or "").strip().lower()
+    return "|".join([company, website, status.strip().lower(), reason, primary_error])
+
+
+def _should_send_manual_alert(target: dict[str, Any], status: str) -> bool:
+    signature = _manual_alert_signature(status, target)
+    previous_signature = str(target.get("manual_alert_signature") or "")
+    if not previous_signature:
+        previous_status = str(target.get("manual_alert_status") or "").strip()
+        previous_notified_at = str(target.get("manual_alert_last_notified_at") or target.get("manual_alert_sent_at") or "").strip()
+        if previous_status == status and previous_notified_at:
+            return False
+        return True
+    return signature != previous_signature
+
+
 def _backfill_manual_alerts(state: dict[str, Any], chat_id: str, *, no_telegram: bool) -> list[dict[str, Any]]:
     if no_telegram:
         return []
@@ -1638,7 +1805,13 @@ def _backfill_manual_alerts(state: dict[str, Any], chat_id: str, *, no_telegram:
         status = str(target.get("status") or "")
         if not _is_manual_review_status(status):
             continue
-        if target.get("manual_alert_sent_at"):
+        signature = _manual_alert_signature(status, target)
+        if not _should_send_manual_alert(target, status):
+            target["manual_alert_status"] = status
+            target["manual_alert_signature"] = signature
+            target["manual_alert_last_notified_at"] = str(target.get("manual_alert_last_notified_at") or target.get("manual_alert_sent_at") or _now_iso())
+            target["manual_alert_notify_count"] = max(1, int(target.get("manual_alert_notify_count") or 0))
+            state["targets"][key] = target
             continue
         if status == "captcha_pending_operator":
             ticket_id = str(target.get("captcha_ticket_id") or _captcha_ticket_id(key))
@@ -1656,32 +1829,29 @@ def _backfill_manual_alerts(state: dict[str, Any], chat_id: str, *, no_telegram:
                 status,
                 dict(target.get("contact_form_result") or target.get("result") or {}),
             )
-        target["manual_alert_sent_at"] = _now_iso()
+        now = _now_iso()
+        target["manual_alert_sent_at"] = now
+        target["manual_alert_last_notified_at"] = now
         target["manual_alert_status"] = status
+        target["manual_alert_signature"] = signature
+        target["manual_alert_notify_count"] = int(target.get("manual_alert_notify_count") or 0) + 1
         target["manual_alert_delivery"] = delivery
         state["targets"][key] = target
         events.append(
             {
                 "type": "manual_review_alert_sent",
-                "at": _now_iso(),
+                "at": now,
                 "key": key,
                 "company_name": target.get("company_name"),
                 "status": status,
+                "signature": signature,
             }
         )
     return events
 
 
 def _should_email_fallback_after_form(result: dict[str, Any]) -> bool:
-    reason = str(result.get("reason") or "").strip()
-    if bool(result.get("captcha_required")):
-        return False
-    if any("captcha" in str(error).lower() for error in list(result.get("errors") or [])):
-        return False
-    sample_text = str(result.get("sample_text") or "").lower()
-    if "confirm you're human" in sample_text or "captcha validation failed" in sample_text:
-        return False
-    return reason in {"no_contact_form_candidate", "validation_error", "antispam_token_invalid"}
+    return not bool(result.get("ok"))
 
 
 def _email_fallback_after_form_failure(
@@ -1695,114 +1865,151 @@ def _email_fallback_after_form_failure(
     form_result: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]:
     min_gap = int((content.get("delivery_rules") or {}).get("min_minutes_between_emails", 5) or 5)
-    sample_text = str(form_result.get("sample_text") or "").lower()
-    adapter = _adapter_for(item, adapters)
-    captcha_required = bool(form_result.get("captcha_required")) or any("captcha" in str(error).lower() for error in list(form_result.get("errors") or [])) or "confirm you're human" in sample_text
-    if captcha_required or bool(adapter.get("manual_captcha_handoff")) and str(form_result.get("reason") or "") == "captcha_required":
-        ticket_id = _captcha_ticket_id(_target_key(item))
-        target = _target_status_update(
-            item,
-            "contact_form",
-            "captcha_pending_operator",
-            {
+    contact_form_url = item.get("contact_form_url") or item.get("website")
+    if _email_is_usable(item) and _should_email_fallback_after_form(form_result):
+        if not _email_send_allowed(state, min_minutes_between_emails=min_gap):
+            target = _target_status_update(
+                item,
+                "email",
+                "ready_for_email",
+                {
+                    "result": form_result,
+                    "reason": "email_guard_active_after_form_failure",
+                    "force_channel": "email",
+                    "fallback_from": "contact_form",
+                    "contact_form_url": contact_form_url,
+                    "contact_form_result": form_result,
+                },
+            )
+            event = {
+                "type": "ready_for_email",
+                "at": _now_iso(),
+                "key": _target_key(item),
+                "company_name": item.get("company_name"),
                 "result": form_result,
-                "reason": "captcha_required_manual_step",
-                "captcha_ticket_id": ticket_id,
-            },
-        )
-        event = {
-            "type": "captcha_pending_operator",
-            "at": _now_iso(),
-            "key": _target_key(item),
-            "company_name": item.get("company_name"),
-            "ticket_id": ticket_id,
-            "result": form_result,
-        }
-        telegram = None if no_telegram else _notify_captcha_required(chat_id, item, ticket_id, form_result)
-        return target, event, telegram
-    if bool(adapter.get("disable_email_fallback")):
-        return (
-            _target_status_update(
-                item,
-                "contact_form",
-                "review_hold",
-                {"result": form_result, "reason": "domain_policy_disables_email_fallback"},
-            ),
-            {"type": "review_hold", "at": _now_iso(), "key": _target_key(item), "company_name": item.get("company_name"), "result": form_result},
-            None if no_telegram else _notify_manual_review_required(chat_id, item, "review_hold", form_result),
-        )
-    if not _should_email_fallback_after_form(form_result):
-        return (
-            _target_status_update(
-                item,
-                "contact_form",
-                "contact_form_needs_review",
-                {"result": form_result, "reason": "form_result_not_safe_for_email_fallback"},
-            ),
-            {"type": "contact_form_needs_review", "at": _now_iso(), "key": _target_key(item), "company_name": item.get("company_name"), "result": form_result},
-            None if no_telegram else _notify_manual_review_required(chat_id, item, "contact_form_needs_review", form_result),
-        )
-    if not _email_is_usable(item):
-        return (
-            _target_status_update(
-                item,
-                "contact_form",
-                "contact_form_failed",
-                {"result": {"reason": "form_failed_no_email_fallback", "form_reason": form_result.get("reason")}},
-            ),
-            {"type": "contact_form_failed", "at": _now_iso(), "key": _target_key(item), "company_name": item.get("company_name"), "result": {"reason": "form_failed_no_email_fallback", "form_reason": form_result.get("reason")}},
-            None,
-        )
-    if not _email_send_allowed(state, min_minutes_between_emails=min_gap):
-        return (
-            _target_status_update(
-                item,
-                "contact_form",
-                "contact_form_failed_email_deferred",
-                {"result": form_result, "reason": "email_guard_active"},
-            ),
-            {"type": "contact_form_failed_email_deferred", "at": _now_iso(), "key": _target_key(item), "company_name": item.get("company_name"), "result": form_result},
-            None,
-        )
+                "fallback_from": "contact_form",
+            }
+            return target, event, None
 
-    email_result = _send_one_email(item, content)
-    sent_ok = int(email_result.get("sent", 0)) == 1 and int(email_result.get("failed", 0)) == 0
-    if sent_ok:
-        state["email_delivery_pending"] = True
-        state["last_email_sent_at"] = _now_iso()
+        email_result = _send_one_email(item, content)
+        sent_ok = int(email_result.get("sent", 0)) == 1 and int(email_result.get("failed", 0)) == 0
+        if sent_ok:
+            state["email_delivery_pending"] = True
+            state["last_email_sent_at"] = _now_iso()
+            target = _target_status_update(
+                item,
+                "email",
+                "email_sent_local_only",
+                {
+                    "result": email_result,
+                    "fallback_from": "contact_form",
+                    "contact_form_url": contact_form_url,
+                    "contact_form_result": form_result,
+                },
+            )
+            event = {
+                "type": "email_sent_local_only",
+                "at": _now_iso(),
+                "key": _target_key(item),
+                "company_name": item.get("company_name"),
+                "result": email_result,
+                "fallback_from": "contact_form",
+            }
+            telegram = None if no_telegram else _notify_success(chat_id, item, "email", {"reason": "email_sent_local_only_after_form_failure"})
+            return target, event, telegram
+
         target = _target_status_update(
             item,
             "email",
-            "email_sent_local_only",
-            {"result": email_result, "fallback_from": "contact_form"},
+            "email_failed",
+            {
+                "result": email_result,
+                "fallback_from": "contact_form",
+                "contact_form_url": contact_form_url,
+                "contact_form_result": form_result,
+            },
         )
         event = {
-            "type": "email_sent_local_only",
+            "type": "email_failed",
             "at": _now_iso(),
             "key": _target_key(item),
             "company_name": item.get("company_name"),
             "result": email_result,
             "fallback_from": "contact_form",
         }
-        telegram = None if no_telegram else _notify_success(chat_id, item, "email", {"reason": "email_sent_local_only_after_form_failure"})
+        telegram = None if no_telegram else _notify_failure(chat_id, item, "email", {"reason": "email_send_failed_after_form_failure"})
         return target, event, telegram
 
-    target = _target_status_update(
-        item,
-        "email",
-        "email_failed",
-        {"result": email_result, "fallback_from": "contact_form"},
+    if not _email_is_usable(item):
+        if _is_retryable_form_result(form_result):
+            return (
+                _target_status_update(
+                    item,
+                    "contact_form",
+                    "contact_form_needs_review",
+                    {
+                        "result": {
+                            "reason": "retryable_form_result_without_email_fallback",
+                            "form_reason": form_result.get("reason"),
+                            "errors": list(form_result.get("errors") or []),
+                        },
+                        "contact_form_url": contact_form_url,
+                        "contact_form_result": form_result,
+                    },
+                ),
+                {
+                    "type": "contact_form_needs_review",
+                    "at": _now_iso(),
+                    "key": _target_key(item),
+                    "company_name": item.get("company_name"),
+                    "result": {"reason": "retryable_form_result_without_email_fallback", "form_reason": form_result.get("reason")},
+                },
+                None,
+            )
+        return (
+            _target_status_update(
+                item,
+                "contact_form",
+                "contact_form_failed",
+                {
+                    "result": {
+                        "reason": "form_failed_no_usable_email_fallback",
+                        "form_reason": form_result.get("reason"),
+                        "errors": list(form_result.get("errors") or []),
+                    },
+                    "contact_form_url": contact_form_url,
+                    "contact_form_result": form_result,
+                },
+            ),
+            {
+                "type": "contact_form_failed",
+                "at": _now_iso(),
+                "key": _target_key(item),
+                "company_name": item.get("company_name"),
+                "result": {"reason": "form_failed_no_usable_email_fallback", "form_reason": form_result.get("reason")},
+            },
+            None,
+        )
+    return (
+        _target_status_update(
+            item,
+            "contact_form",
+            "contact_form_failed",
+            {
+                "result": {"reason": "form_failed_without_email_fallback", "form_reason": form_result.get("reason")},
+                "contact_form_url": contact_form_url,
+                "contact_form_result": form_result,
+            },
+        ),
+        {
+            "type": "contact_form_failed",
+            "at": _now_iso(),
+            "key": _target_key(item),
+            "company_name": item.get("company_name"),
+            "result": {"reason": "form_failed_without_email_fallback", "form_reason": form_result.get("reason")},
+        },
+        None,
     )
-    event = {
-        "type": "email_failed",
-        "at": _now_iso(),
-        "key": _target_key(item),
-        "company_name": item.get("company_name"),
-        "result": email_result,
-        "fallback_from": "contact_form",
-    }
-    telegram = None if no_telegram else _notify_failure(chat_id, item, "email", {"reason": "email_send_failed_after_form_failure"})
-    return target, event, telegram
 
 
 def main() -> int:
@@ -1816,6 +2023,7 @@ def main() -> int:
     adapters = _load_form_adapters()
     state = _load_state()
     _backfill_target_metadata(state, adapters)
+    _backfill_manual_alert_tracking(state)
     state["domain_form_policies"] = _compute_domain_policies(state)
     delivery_rules = dict(content.get("delivery_rules") or {})
     hold_minutes = int(delivery_rules.get("assume_delivered_after_no_failure_minutes", 10) or 10)
@@ -1843,6 +2051,11 @@ def main() -> int:
                     dict(target.get("contact_form_result") or target.get("result") or {}),
                 )
                 state["targets"][key] = target
+
+    email_reroute_events = _reroute_pending_targets_to_email(state)
+    for event in email_reroute_events:
+        _append_event(event)
+        attempts.append(event)
 
     manual_alert_events = _backfill_manual_alerts(state, args.chat_id, no_telegram=args.no_telegram)
     for event in manual_alert_events:

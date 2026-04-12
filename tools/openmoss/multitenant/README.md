@@ -1,3 +1,12 @@
+<!--
+RULES-FIRST NOTICE:
+Before modifying this file, first read:
+- `JINCLAW_CONSTITUTION.md`
+- `AI_OPTIMIZATION_FRAMEWORK.md`
+Follow the constitution and framework:
+brain-first, one-doctor, fail-closed, evidence-over-narration,
+validate locally, then use the required PR workflow.
+-->
 # OpenMOSS Multi-Tenant Runtime
 
 这个目录用于把 `OurClaw` 的 per-user workspace isolation 思路接到当前 OpenClaw 工程里。

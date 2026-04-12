@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 """
 中文说明：
 - 文件路径：`tools/openmoss/control_center/progress_evidence.py`
@@ -26,6 +32,8 @@ AUTONOMY_TASKS_ROOT = OPENMOSS_ROOT / "runtime/autonomy/tasks"
 LINKS_ROOT = OPENMOSS_ROOT / "runtime/autonomy/links"
 SESSIONS_ROOT = Path("/Users/mac_claw/.openclaw/agents/main/sessions")
 SESSIONS_INDEX_PATH = SESSIONS_ROOT / "sessions.json"
+TASK_SUMMARIES_ROOT = OPENMOSS_ROOT / "runtime/control_center/tasks"
+GOVERNANCE_PIPELINES_ROOT = OPENMOSS_ROOT / "runtime/control_center/governance/memory/pipelines"
 STATUS_QUERY_PATTERNS = (
     "进展",
     "进度",
@@ -96,6 +104,29 @@ def _read_json(path: Path, default: Any) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return default
+
+
+def _task_summary(task_id: str) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：读取 control-center task summary，补充“长期任务记忆”视角。
+    - 设计意图：有些 ghost / reanimated task 会重新生成 runtime state，但 summary 仍明确标记为 completed。
+      这类矛盾需要在 progress evidence 层被识别出来，避免医生和 supervisor 一直把它当作新鲜运行态。
+    """
+    return _read_json(TASK_SUMMARIES_ROOT / task_id / "summary.json", {})
+
+
+def _governance_task_summary(task_id: str) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：从 governance pipeline memory 中提取 task_summary。
+    - 设计意图：某些任务的 canonical completion 状态只保存在 governance memory 里，而不是 runtime/control_center/tasks。
+      对 ghost / reanimated task 的判定，必须优先读到真正持久化的那份摘要。
+    """
+    payload = _read_json(GOVERNANCE_PIPELINES_ROOT / f"{task_id}.json", {})
+    layers = payload.get("layers", {}) or {}
+    task_layer = layers.get("task", {}) or {}
+    return task_layer.get("task_summary", {}) or {}
 
 
 def _seconds_since(iso_text: str) -> float:
@@ -427,6 +458,9 @@ def _goal_conformance_signal(task_id: str, contract: Dict[str, Any]) -> Dict[str
     links = _conversation_links_for_task(task_id)
     best_mismatch: Dict[str, Any] = {}
     for link in links:
+        conversation_type = str(link.get("conversation_type", "")).strip().lower()
+        if conversation_type == "service" or str(link.get("link_kind", "")).strip() == "root_mission_autonomy":
+            continue
         session_key = str(link.get("session_key", "")).strip()
         latest_from_session = _latest_external_user_message(session_key) if session_key else {}
         candidates: List[Dict[str, Any]] = []
@@ -477,7 +511,7 @@ def _goal_conformance_signal(task_id: str, contract: Dict[str, Any]) -> Dict[str
                 "latest_user_at": str(candidate.get("timestamp", "")).strip(),
                 "provider": str(link.get("provider", "")).strip(),
                 "conversation_id": str(link.get("conversation_id", "")).strip(),
-                "conversation_type": str(link.get("conversation_type", "")).strip() or "direct",
+                "conversation_type": conversation_type or "direct",
                 "session_key": session_key,
                 "source": str(candidate.get("source", "")).strip(),
             }
@@ -515,6 +549,26 @@ def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> 
     event_types = [str(item.get("type", "")) for item in events if str(item.get("type", "")).strip()]
     run_liveness = build_run_liveness(task_id)
     goal_conformance = _goal_conformance_signal(task_id, contract)
+    task_summary = _task_summary(task_id)
+    governance_task_summary = _governance_task_summary(task_id)
+    if not task_summary and governance_task_summary:
+        task_summary = governance_task_summary
+    summary_status = str(task_summary.get("status", "")).strip()
+    summary_completed_stages = list(task_summary.get("completed_stages", []) or [])
+    summary_verification_ok = task_summary.get("verification_ok") is True
+    summary_says_completed = (
+        summary_status == "completed"
+        or (
+            summary_verification_ok
+            and all(stage in summary_completed_stages for stage in ["understand", "plan", "execute", "verify", "learn"])
+        )
+    )
+    completion_guards = run_liveness.get("completion_guards", {}) or {}
+    reanimated_completed = bool(
+        summary_says_completed
+        and int(completion_guards.get("present_count", 0) or 0) > 0
+        and status in {"planning", "running", "recovering", "waiting_external", "verifying"}
+    )
 
     evidence = {
         "task_id": task_id,
@@ -531,6 +585,11 @@ def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> 
         "user_visible_result_confirmed": business_outcome.get("user_visible_result_confirmed") is True,
         "milestone_stats": milestone_stats,
         "run_liveness": run_liveness,
+        "task_summary": {
+            "status": summary_status,
+            "completed_stages": summary_completed_stages,
+            "verification_ok": summary_verification_ok,
+        },
         "goal_conformance": goal_conformance,
         "progress_state": "healthy",
         "needs_intervention": False,
@@ -540,6 +599,21 @@ def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> 
     if status in {"completed", "failed"}:
         evidence["progress_state"] = "terminal"
         evidence["reason"] = status
+        return evidence
+
+    if run_liveness.get("orphaned_completed") is True:
+        evidence["progress_state"] = "orphaned_completed_task"
+        evidence["needs_intervention"] = False
+        evidence["reason"] = str(
+            run_liveness.get("orphaned_completed_reason")
+            or "completed_workspace_guards_with_missing_runtime_state"
+        )
+        return evidence
+
+    if reanimated_completed:
+        evidence["progress_state"] = "reanimated_completed_task"
+        evidence["needs_intervention"] = True
+        evidence["reason"] = "completed_summary_and_workspace_guards_conflict_with_live_runtime_state"
         return evidence
 
     if goal_conformance.get("ok") is False:

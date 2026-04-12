@@ -1,3 +1,12 @@
+<!--
+RULES-FIRST NOTICE:
+Before modifying this file, first read:
+- `JINCLAW_CONSTITUTION.md`
+- `AI_OPTIMIZATION_FRAMEWORK.md`
+Follow the constitution and framework:
+brain-first, one-doctor, fail-closed, evidence-over-narration,
+validate locally, then use the required PR workflow.
+-->
 # Telegram Task Routing For NEOSGO Seller
 
 为了避免以后任务越来越多时，Telegram 指令错误落到旧 followup 或不相关项目，建议把 `NEOSGO seller` 固定成一个 canonical task family。

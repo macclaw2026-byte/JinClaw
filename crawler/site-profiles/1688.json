@@ -1,21 +1,21 @@
 {
   "site": "1688",
-  "last_evaluated": "2026-04-05",
+  "last_evaluated": "2026-04-12",
   "mode": "anonymous_truth_check_only",
   "confidence": "low",
   "tested_tools": [
+    "crawl4ai-cli",
     "curl-cffi",
-    "playwright",
     "scrapy-cffi"
   ],
   "preferred_tool_order": [
+    "crawl4ai-cli",
     "curl-cffi",
-    "playwright",
     "scrapy-cffi"
   ],
   "blocked_tools": [
+    "crawl4ai-cli",
     "curl-cffi",
-    "playwright",
     "scrapy-cffi"
   ],
   "usable_tools": [],
@@ -25,21 +25,20 @@
   "fallback_policy": "Start with the first preferred tool; if blocked/weak, step through the remaining preferred tools in order. Trigger full all-tools re-evaluation when the top path degrades materially.",
   "known_failure_modes": [
     {
-      "tool": "curl-cffi",
+      "tool": "crawl4ai-cli",
       "status": "blocked",
       "reasons": [
-        "captcha",
-        "punish",
-        "x5secdata"
+        "登录",
+        "密码登录",
+        "短信登录",
+        "请按住滑块"
       ]
     },
     {
-      "tool": "playwright",
+      "tool": "curl-cffi",
       "status": "blocked",
       "reasons": [
-        "captcha",
-        "punish",
-        "nocaptcha"
+        "x5secdata"
       ]
     },
     {

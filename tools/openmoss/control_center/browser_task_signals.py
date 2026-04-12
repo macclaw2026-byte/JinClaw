@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 """
 中文说明：
 - 文件路径：`tools/openmoss/control_center/browser_task_signals.py`
@@ -17,7 +23,7 @@ import urllib.parse
 from pathlib import Path
 from typing import Dict, Iterable, List
 
-from browser_channel_recovery import browser_control_get, browser_control_post, load_gateway_token, recover_browser_channel
+from browser_channel_recovery import browser_control_get, browser_control_post, get_relay_profile_name, load_gateway_token, recover_browser_channel
 from paths import BROWSER_SIGNALS_ROOT, OPENCLAW_SESSIONS_ROOT
 
 
@@ -357,6 +363,7 @@ def _collect_live_browser_probe(task_id: str, lines: List[str], preferred_url: s
     }
     if not token:
         return payload
+    relay_profile = get_relay_profile_name(expected_domains=["seller.neosgo.com"], preferred_url=preferred_url, timeout=15)
 
     def _requests_path(current_target_id: str) -> str:
         """
@@ -365,7 +372,7 @@ def _collect_live_browser_probe(task_id: str, lines: List[str], preferred_url: s
         - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
         - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
         """
-        return f"/requests?{urllib.parse.urlencode({'profile': 'chrome-relay', 'targetId': current_target_id})}"
+        return f"/requests?{urllib.parse.urlencode({'profile': relay_profile, 'targetId': current_target_id})}"
 
     def _evaluate_body(current_target_id: str) -> Dict[str, object]:
         """
@@ -375,7 +382,7 @@ def _collect_live_browser_probe(task_id: str, lines: List[str], preferred_url: s
         - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
         """
         return {
-            "profile": "chrome-relay",
+            "profile": relay_profile,
             "targetId": current_target_id,
             "kind": "evaluate",
             "fn": r"""() => {
@@ -423,7 +430,7 @@ def _collect_live_browser_probe(task_id: str, lines: List[str], preferred_url: s
         - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
         """
         return {
-            "profile": "chrome-relay",
+            "profile": relay_profile,
             "targetId": current_target_id,
             "kind": "evaluate",
             "fn": r"""async () => {
@@ -459,7 +466,7 @@ def _collect_live_browser_probe(task_id: str, lines: List[str], preferred_url: s
         - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
         """
         return {
-            "profile": "chrome-relay",
+            "profile": relay_profile,
             "targetId": current_target_id,
             "kind": "evaluate",
             "fn": r"""() => {

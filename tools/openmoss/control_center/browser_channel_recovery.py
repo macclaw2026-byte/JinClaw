@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 """
 中文说明：
 - 文件路径：`tools/openmoss/control_center/browser_channel_recovery.py`
 - 文件作用：负责控制中心中与 `browser_channel_recovery` 相关的编排、分析或决策逻辑。
-- 顶层函数：_write_json、_resolve_openclaw_bin、_openclaw_browser_json、_open_relay_tab、list_relay_tabs、prune_relay_tabs、_url_matches_target、_select_best_matching_tab、load_gateway_token、browser_control_get、browser_control_post、_normalize_expected_domains、get_current_relay_context、recover_browser_channel、navigate_relay_to_url。
+- 顶层函数：_write_json、_resolve_openclaw_bin、_openclaw_browser_json、_available_browser_profiles、get_relay_profile_name、_open_relay_tab、list_relay_tabs、prune_relay_tabs、_url_matches_target、_select_best_matching_tab、load_gateway_token、browser_control_get、browser_control_post、browser_control_delete、_normalize_expected_domains、get_current_relay_context、recover_browser_channel、navigate_relay_to_url。
 - 顶层类：无顶层类。
 - 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
 """
@@ -21,6 +27,10 @@ from pathlib import Path
 from typing import Dict, Iterable, List
 
 from paths import BROWSER_CHANNELS_ROOT, OPENCLAW_ROOT
+
+
+GLOBAL_BROWSER_TAB_BUDGET = 3
+DEFAULT_RELAY_PROFILE = "chrome-relay"
 
 
 def _write_json(path: Path, payload: Dict[str, object]) -> None:
@@ -51,8 +61,27 @@ def _openclaw_browser_json(*args: str, timeout: int = 20) -> Dict[str, object]:
     - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
     """
+    subcommand = ""
+    remaining: list[str] = []
+    profile_args: list[str] = []
+    args_list = list(args)
+    if args_list:
+        subcommand = args_list.pop(0)
+    index = 0
+    while index < len(args_list):
+        item = args_list[index]
+        if item == "--browser-profile" and index + 1 < len(args_list):
+            profile_args.extend([item, args_list[index + 1]])
+            index += 2
+            continue
+        remaining.append(item)
+        index += 1
+    command = [_resolve_openclaw_bin(), "browser", "--json", *profile_args]
+    if subcommand:
+        command.append(subcommand)
+    command.extend(remaining)
     proc = subprocess.run(
-        [_resolve_openclaw_bin(), "browser", *args, "--json"],
+        command,
         capture_output=True,
         text=True,
         check=False,
@@ -63,6 +92,29 @@ def _openclaw_browser_json(*args: str, timeout: int = 20) -> Dict[str, object]:
     return json.loads(proc.stdout or "{}")
 
 
+def _available_browser_profiles(timeout: int = 15) -> List[Dict[str, object]]:
+    try:
+        payload = _openclaw_browser_json("profiles", timeout=timeout)
+    except Exception:
+        return []
+    profiles = payload.get("profiles", [])
+    if not isinstance(profiles, list):
+        return []
+    return [profile for profile in profiles if isinstance(profile, dict)]
+
+
+def get_relay_profile_name(expected_domains: Iterable[str] | None = None, preferred_url: str = "", timeout: int = 15) -> str:
+    profiles = _available_browser_profiles(timeout=timeout)
+    names = {str(item.get("name", "")).strip() for item in profiles}
+    preferred_text = " ".join([*(expected_domains or []), preferred_url]).lower()
+    prefers_existing_session = "seller.neosgo.com" in preferred_text
+    fallback_order = (DEFAULT_RELAY_PROFILE, "user", "openclaw") if prefers_existing_session else (DEFAULT_RELAY_PROFILE, "openclaw", "user")
+    for candidate in fallback_order:
+        if candidate in names:
+            return candidate
+    return DEFAULT_RELAY_PROFILE
+
+
 def _open_relay_tab(url: str, timeout: int = 20) -> Dict[str, object]:
     """
     中文注解：
@@ -70,7 +122,7 @@ def _open_relay_tab(url: str, timeout: int = 20) -> Dict[str, object]:
     - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
     """
-    return _openclaw_browser_json("open", "--browser-profile", "chrome-relay", url, timeout=timeout)
+    return _openclaw_browser_json("open", "--browser-profile", get_relay_profile_name(preferred_url=url, timeout=timeout), url, timeout=timeout)
 
 
 def list_relay_tabs(profile: str = "chrome-relay", timeout: int = 15) -> List[Dict[str, object]]:
@@ -80,7 +132,8 @@ def list_relay_tabs(profile: str = "chrome-relay", timeout: int = 15) -> List[Di
     - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
     """
-    payload = _openclaw_browser_json("tabs", "--browser-profile", profile, timeout=timeout)
+    resolved_profile = str(profile or "").strip() or get_relay_profile_name(timeout=timeout)
+    payload = _openclaw_browser_json("tabs", "--browser-profile", resolved_profile, timeout=timeout)
     tabs = payload.get("tabs", [])
     if not isinstance(tabs, list):
         return []
@@ -94,7 +147,7 @@ def prune_relay_tabs(
     preferred_url: str = "",
     last_known_url: str = "",
     expected_domains: Iterable[str] | None = None,
-    max_tabs: int = 1,
+    max_tabs: int = GLOBAL_BROWSER_TAB_BUDGET,
 ) -> Dict[str, object]:
     """
     中文注解：
@@ -103,7 +156,8 @@ def prune_relay_tabs(
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
     """
     expected = _normalize_expected_domains(expected_domains, last_known_url or preferred_url)
-    tabs = list_relay_tabs("chrome-relay", timeout=15)
+    relay_profile = get_relay_profile_name(expected_domains=expected_domains, preferred_url=preferred_url or last_known_url, timeout=15)
+    tabs = list_relay_tabs(relay_profile, timeout=15)
     relevant_tabs: List[Dict[str, object]] = []
     for tab in tabs:
         tab_url = str(tab.get("url", "")).strip().lower()
@@ -145,12 +199,12 @@ def prune_relay_tabs(
         if not target_id or target_id in keep_ids:
             continue
         try:
-            _openclaw_browser_json("close", "--browser-profile", "chrome-relay", target_id, timeout=15)
+            _openclaw_browser_json("close", "--browser-profile", relay_profile, target_id, timeout=15)
             closed_target_ids.append(target_id)
         except Exception as exc:  # pragma: no cover - best-effort cleanup
             close_errors.append({"target_id": target_id, "error": str(exc)})
 
-    remaining_tabs = list_relay_tabs("chrome-relay", timeout=15)
+    remaining_tabs = list_relay_tabs(relay_profile, timeout=15)
     result = {
         "task_id": task_id,
         "ok": not close_errors,
@@ -267,6 +321,16 @@ def browser_control_post(token: str, path: str, body: Dict[str, object], timeout
         return json.loads(resp.read().decode(errors="ignore"))
 
 
+def browser_control_delete(token: str, path: str, timeout: int = 20) -> Dict[str, object]:
+    req = urllib.request.Request(
+        f"http://127.0.0.1:18791{path}",
+        headers={"Authorization": f"Bearer {token}"},
+        method="DELETE",
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode(errors="ignore"))
+
+
 def _normalize_expected_domains(expected_domains: Iterable[str] | None, last_known_url: str) -> List[str]:
     """
     中文注解：
@@ -306,9 +370,10 @@ def get_current_relay_context(expected_domains: Iterable[str] | None = None, las
             "expected_domains": expected,
             "last_known_url": last_known_url,
         }
+    relay_profile = get_relay_profile_name(expected_domains=expected, preferred_url=preferred_url or last_known_url, timeout=15)
 
     body = {
-        "profile": "chrome-relay",
+        "profile": relay_profile,
         "kind": "evaluate",
         "fn": """() => ({
   href: location.href,
@@ -320,7 +385,7 @@ def get_current_relay_context(expected_domains: Iterable[str] | None = None, las
         response = browser_control_post(token, "/act", body, timeout=15)
     except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
         try:
-            tabs = _openclaw_browser_json("tabs", "--browser-profile", "chrome-relay", timeout=15).get("tabs", [])
+            tabs = _openclaw_browser_json("tabs", "--browser-profile", relay_profile, timeout=15).get("tabs", [])
         except Exception as cli_exc:  # pragma: no cover - fallback path
             return {
                 "ok": False,
@@ -358,6 +423,7 @@ def get_current_relay_context(expected_domains: Iterable[str] | None = None, las
             "preferred_url": preferred_url,
             "fallback": "openclaw_browser_cli",
             "tabs_count": len(tabs),
+            "profile": relay_profile,
         }
 
     result = response.get("result", {}) if isinstance(response, dict) else {}
@@ -385,10 +451,11 @@ def get_current_relay_context(expected_domains: Iterable[str] | None = None, las
         "matched_domain": matched_domain,
         "last_known_url": last_known_url,
         "preferred_url": preferred_url,
+        "profile": relay_profile,
     }
     if preferred_url and not _url_matches_target(page_url, preferred_url):
         try:
-            tabs = _openclaw_browser_json("tabs", "--browser-profile", "chrome-relay", timeout=15).get("tabs", [])
+            tabs = _openclaw_browser_json("tabs", "--browser-profile", relay_profile, timeout=15).get("tabs", [])
         except Exception:  # pragma: no cover - fallback path
             return result
         matched_tab = _select_best_matching_tab(
@@ -417,6 +484,7 @@ def get_current_relay_context(expected_domains: Iterable[str] | None = None, las
                     "matched_domain": matched_domain,
                     "fallback": "openclaw_browser_cli",
                     "tabs_count": len(tabs),
+                    "profile": relay_profile,
                 }
             )
     return result
@@ -473,7 +541,7 @@ def recover_browser_channel(task_id: str, expected_domains: Iterable[str] | None
             preferred_url=preferred_url,
             last_known_url=last_known_url,
             expected_domains=expected_domains,
-            max_tabs=1,
+            max_tabs=GLOBAL_BROWSER_TAB_BUDGET,
         )
         result["tab_pruning"] = prune_result
     _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
@@ -499,6 +567,7 @@ def navigate_relay_to_url(task_id: str, url: str, expected_domains: Iterable[str
         }
         _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
         return result
+    relay_profile = get_relay_profile_name(timeout=15)
 
     context = recover_browser_channel(task_id, expected_domains=expected, last_known_url=url, preferred_url=url)
     target_id = str(context.get("target_id", "")).strip()
@@ -553,7 +622,7 @@ def navigate_relay_to_url(task_id: str, url: str, expected_domains: Iterable[str
             token,
             "/act",
             {
-                "profile": "chrome-relay",
+                "profile": relay_profile,
                 "targetId": target_id,
                 "kind": "evaluate",
                 "fn": f"() => {{ window.location.href = {json.dumps(url)}; return {{ href: location.href }}; }}",
@@ -563,13 +632,13 @@ def navigate_relay_to_url(task_id: str, url: str, expected_domains: Iterable[str
     except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
         try:
             subprocess.run(
-                [_resolve_openclaw_bin(), "browser", "--browser-profile", "chrome-relay", "focus", target_id],
+                [_resolve_openclaw_bin(), "browser", "--json", "--browser-profile", relay_profile, "focus", target_id],
                 capture_output=True,
                 text=True,
                 check=False,
                 timeout=15,
             )
-            _openclaw_browser_json("navigate", "--browser-profile", "chrome-relay", "--target-id", target_id, url, timeout=20)
+            _openclaw_browser_json("navigate", "--browser-profile", relay_profile, "--target-id", target_id, url, timeout=20)
         except Exception as cli_exc:
             result = {
                 "task_id": task_id,
@@ -605,7 +674,7 @@ def navigate_relay_to_url(task_id: str, url: str, expected_domains: Iterable[str
                 preferred_url=url,
                 last_known_url=url,
                 expected_domains=expected,
-                max_tabs=1,
+                max_tabs=GLOBAL_BROWSER_TAB_BUDGET,
             )
             _write_json(BROWSER_CHANNELS_ROOT / f"{task_id}.json", result)
             return result

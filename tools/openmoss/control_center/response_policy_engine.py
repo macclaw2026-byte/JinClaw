@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 """
 中文说明：
 - 文件路径：`tools/openmoss/control_center/response_policy_engine.py`
@@ -113,6 +119,20 @@ def build_route_receipt_text(route: Dict[str, Any]) -> str:
     task_id = str(route.get("task_id", "")).strip()
     prompt_error = route.get("prompt_error", {}) or {}
     prompt_error_message = str(prompt_error.get("error", "")).strip()
+    selection_updated = bool(route.get("selection_updated"))
+    selected_task_group_alias = str(route.get("selected_task_group_alias", "")).strip()
+    selected_task_alias = str(route.get("selected_task_alias", "")).strip()
+    selection_label = selected_task_alias or selected_task_group_alias or task_id
+    selection_prefix = f"已切换到任务 {selection_label}。 " if selection_updated and selection_label else ""
+    if mode == "heartbeat_probe":
+        snapshot = route.get("authoritative_task_status", {}) or {}
+        status = str(snapshot.get("status", "")).strip()
+        if not snapshot or not task_id or status in {"completed", "failed"}:
+            return "HEARTBEAT_OK"
+        summary = str(snapshot.get("authoritative_summary", "")).strip() or f"任务 {task_id} 仍在推进中。"
+        return summary + _milestone_fragment(snapshot) + _governance_fragment(snapshot)
+    if mode == "explicit_task_not_found":
+        return f"没有找到任务 {task_id or 'unknown'}。请先在任务面板确认任务 ID，然后再用 `[task:任务ID]` 或 `任务: 任务ID` 指定。"
     if mode == "task_completed_notice":
         snapshot = route.get("authoritative_task_status", {}) or {}
         summary = str(snapshot.get("authoritative_summary", "")).strip()
@@ -141,8 +161,8 @@ def build_route_receipt_text(route: Dict[str, Any]) -> str:
         if requested_task_id and canonical_task_id and requested_task_id != canonical_task_id:
             summary = f"你询问的原任务 {requested_task_id} 已经切换到当前活跃任务 {canonical_task_id}。{summary}"
         if prompt_error_message:
-            return f"主回复链刚刚发生异常（{prompt_error_message}），我已自动降级到权威状态回复。{summary}"
-        return summary
+            return f"{selection_prefix}主回复链刚刚发生异常（{prompt_error_message}），我已自动降级到权威状态回复。{summary}"
+        return selection_prefix + summary
     if mode in {"create_new_root_task", "create_or_attach"}:
         return f"已识别为新任务，任务 ID: {task_id}。我会先进入 understand 阶段，梳理目标、约束、交付物和执行条件，然后持续推进。"
     if mode in {"create_successor_task", "branch_from_active_task", "append_to_active_successor_task"}:
@@ -162,7 +182,7 @@ def build_route_receipt_text(route: Dict[str, Any]) -> str:
             stage = str(snapshot.get("current_stage", "")).strip() or "none"
             next_action = str(snapshot.get("next_action", "")).strip() or "none"
             suffix = f" 当前 root mission 状态是 {status or 'unknown'} / {stage}，下一步是 {next_action}；我会直接接着往下做。"
-        return f"已把这条新指令并入当前 root mission {task_id}，接下来会按既定目标继续推进。{suffix}"
+        return selection_prefix + f"已把这条新指令并入当前 root mission {task_id}，接下来会按既定目标继续推进。{suffix}"
     if mode == "append_to_existing_task":
         snapshot = route.get("authoritative_task_status", {}) or {}
         suffix = ""
@@ -171,7 +191,7 @@ def build_route_receipt_text(route: Dict[str, Any]) -> str:
             stage = str(snapshot.get("current_stage", "")).strip() or "none"
             next_action = str(snapshot.get("next_action", "")).strip() or "none"
             suffix = f" 当前主任务状态是 {status or 'unknown'} / {stage}，下一步是 {next_action}；我会先恢复连续执行，再推进你刚才这条要求。"
-        return f"已把这条新指令挂到当前任务 {task_id}，接下来会继续按现有任务链推进。{suffix}"
+        return selection_prefix + f"已把这条新指令挂到当前任务 {task_id}，接下来会继续按现有任务链推进。{suffix}"
     if mode == "doctor_diagnostic":
         snapshot = route.get("authoritative_task_status", {}) or {}
         summary = str(snapshot.get("authoritative_summary", "")).strip() or f"系统医生已接管任务 {task_id} 并开始诊断。"

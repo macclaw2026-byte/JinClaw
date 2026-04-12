@@ -46,6 +46,11 @@ JinClaw is a safety-first autonomous system built on top of OpenClaw. This docum
 6. Merge by squash.
 7. Re-verify runtime health after merge if the change affects live services.
 
+Before modifying core JinClaw/OpenClaw files, read:
+
+- `JINCLAW_CONSTITUTION.md`
+- `AI_OPTIMIZATION_FRAMEWORK.md`
+
 ## Local Validation Minimums
 
 Every meaningful change should verify, at minimum, the parts it touches:
@@ -53,6 +58,7 @@ Every meaningful change should verify, at minimum, the parts it touches:
 - Python syntax or script validity
 - `jinclaw-doctor`
 - `jinclaw-upgrade-check`
+- `python3 tools/openmoss/ops/check_rules_first_notice.py`
 - targeted autonomy/control-center smoke validation for affected behavior
 
 ## Runtime Integrity Rules

@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 """
 中文说明：
 - 文件路径：`tools/openmoss/control_center/mission_supervisor.py`
@@ -65,7 +71,20 @@ def _apply_repair(task_id: str, evidence: Dict[str, Any]) -> Dict[str, Any]:
     reason = str(evidence.get("reason", "unknown"))
     repaired = False
     new_next_action = str(state.next_action)
-    if evidence.get("progress_state") in {"idle_without_execution", "stalled_waiting_external", "stalled_verification"}:
+    if evidence.get("progress_state") == "reanimated_completed_task":
+        state.status = "completed"
+        state.blockers = []
+        state.metadata.pop("active_execution", None)
+        state.metadata.pop("waiting_external", None)
+        state.metadata.pop("last_dispatched_marker", None)
+        state.metadata.pop("last_dispatch_at", None)
+        state.next_action = ""
+        state.last_update_at = _utc_now_iso()
+        save_state(state)
+        log_event(task_id, "mission_supervisor_closed_reanimated_completed_task", reason=reason)
+        repaired = True
+        new_next_action = state.next_action
+    elif evidence.get("progress_state") in {"idle_without_execution", "stalled_waiting_external", "stalled_verification"}:
         state.status = "planning"
         state.blockers = []
         state.metadata.pop("active_execution", None)

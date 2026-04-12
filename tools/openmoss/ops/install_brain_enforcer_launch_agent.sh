@@ -1,4 +1,11 @@
 #!/bin/zsh
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 # 中文说明：
 # - 文件路径：`tools/openmoss/ops/install_brain_enforcer_launch_agent.sh`
 # - 文件作用：负责运维脚本中与 `install_brain_enforcer_launch_agent` 相关的诊断、启动或修复逻辑。

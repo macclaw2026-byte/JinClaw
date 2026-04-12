@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 """
 中文说明：
 - 文件路径：`tools/openmoss/autonomy/runtime_service.py`
@@ -26,7 +32,7 @@ from pathlib import Path
 from action_executor import dispatch_stage, poll_active_execution
 from learning_engine import get_error_recurrence
 from learning_engine import update_task_summary
-from manager import TASKS_ROOT, advance_execute_subtask, apply_hook_effects, apply_recovery, build_args, checkpoint_task, complete_stage_internal, contract_path, find_link_by_task_id, infer_link_session_key, load_contract, load_state, log_event, run_once, save_contract, save_state, state_path, verify_task, write_business_outcome, write_link
+from manager import TASKS_ROOT, advance_execute_subtask, apply_hook_effects, apply_recovery, build_args, checkpoint_task, complete_stage_internal, contract_path, ensure_autonomy_root_mission_link, find_link_by_task_id, infer_link_session_key, load_contract, load_state, log_event, run_once, save_contract, save_state, state_path, verify_task, write_business_outcome, write_link
 from promotion_engine import promote_recurring_errors
 from verifier_registry import run_verifier
 
@@ -101,6 +107,29 @@ def _preflight_block_details(state) -> dict:
     }
 
 
+def _clear_blocked_runtime_metadata(state) -> None:
+    metadata = getattr(state, "metadata", {}) or {}
+    metadata.pop("blocked_runtime_state", None)
+    metadata.pop("project_crawler_gate", None)
+    state.metadata = metadata
+
+
+def _sync_blocked_runtime_metadata(state, *, governance_attention: dict | None = None) -> None:
+    metadata = getattr(state, "metadata", {}) or {}
+    if str(getattr(state, "status", "")).strip() != "blocked":
+        _clear_blocked_runtime_metadata(state)
+        return
+    attention = governance_attention or metadata.get("last_governance_attention", {}) or {}
+    metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
+        next_action=getattr(state, "next_action", ""),
+        blockers=list(getattr(state, "blockers", []) or []),
+        governance_attention=attention,
+    )
+    if str(getattr(state, "next_action", "")).strip() != "await_project_crawler_remediation":
+        metadata.pop("project_crawler_gate", None)
+    state.metadata = metadata
+
+
 def _preferred_browser_url(state) -> str:
     """
     中文注解：
@@ -126,6 +155,7 @@ def _mark_binding_required(task_id: str, reason: str) -> None:
     state.status = "blocked"
     state.blockers = [reason]
     state.next_action = "bind_session_link"
+    _sync_blocked_runtime_metadata(state)
     state.last_update_at = utc_now_iso()
     save_state(state)
     log_event(task_id, "binding_required", reason=reason)
@@ -156,6 +186,7 @@ def _recover_direct_session_link(task_id: str) -> dict | None:
     state.blockers = []
     state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
     state.metadata.pop("superseded_by_task_id", None)
+    _clear_blocked_runtime_metadata(state)
     state.last_update_at = utc_now_iso()
     save_state(state)
     log_event(
@@ -205,6 +236,7 @@ def _inherit_lineage_session_link(task_id: str) -> dict | None:
         state.blockers = []
         state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
         state.metadata.pop("superseded_by_task_id", None)
+        _clear_blocked_runtime_metadata(state)
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(
@@ -221,6 +253,39 @@ def _inherit_lineage_session_link(task_id: str) -> dict | None:
             "conversation_id": conversation_id,
         }
     return None
+
+
+def _recover_background_session_link(task_id: str) -> dict | None:
+    """
+    中文注解：
+    - 功能：为 root mission 自动补一条后台自治会话绑定，并把任务拉回 planning。
+    - 设计意图：持续运行型业务任务不应该因为当前没有聊天面板焦点而永久 blocked。
+    """
+    link = ensure_autonomy_root_mission_link(task_id)
+    if not link:
+        return None
+    state = load_state(task_id)
+    state.status = "planning"
+    state.blockers = []
+    state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+    state.metadata.pop("superseded_by_task_id", None)
+    _clear_blocked_runtime_metadata(state)
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    log_event(
+        task_id,
+        "session_link_bound_to_background_autonomy",
+        provider=str(link.get("provider", "")).strip(),
+        conversation_id=str(link.get("conversation_id", "")).strip(),
+        session_key=str(link.get("session_key", "")).strip(),
+    )
+    return {
+        "task_id": task_id,
+        "provider": str(link.get("provider", "")).strip(),
+        "conversation_id": str(link.get("conversation_id", "")).strip(),
+        "session_key": str(link.get("session_key", "")).strip(),
+        "link_kind": str(link.get("link_kind", "")).strip(),
+    }
 
 
 def _purge_stale_successor_business_outcome(task_id: str) -> dict | None:
@@ -853,11 +918,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "recommended_project_actions": list(project_gate.get("recommended_project_actions", []) or []),
             "attention_sites": list(project_gate.get("attention_sites", []) or []),
         }
-        state.metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
-            next_action=state.next_action,
-            blockers=state.blockers,
-            governance_attention=governance_attention,
-        )
+        _sync_blocked_runtime_metadata(state, governance_attention=governance_attention)
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(
@@ -879,11 +940,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
     if action == "await_or_request_approval":
         state.status = "blocked"
         state.next_action = "await_approval_or_contract_fix"
-        state.metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
-            next_action=state.next_action,
-            blockers=state.blockers,
-            governance_attention=governance_attention,
-        )
+        _sync_blocked_runtime_metadata(state, governance_attention=governance_attention)
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(task_id, "control_center_waiting_for_approval", pending=decision.get("pending_approvals", []))
@@ -899,11 +956,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
     if action == "bind_session_link":
         state.status = "blocked"
         state.next_action = "bind_session_link"
-        state.metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
-            next_action=state.next_action,
-            blockers=state.blockers,
-            governance_attention=governance_attention,
-        )
+        _sync_blocked_runtime_metadata(state, governance_attention=governance_attention)
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(task_id, "control_center_binding_required")
@@ -920,11 +973,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
         state.status = "blocked"
         state.next_action = "prove_necessity_before_switching"
         state.blockers = ["higher-risk plan not yet justified"]
-        state.metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
-            next_action=state.next_action,
-            blockers=state.blockers,
-            governance_attention=governance_attention,
-        )
+        _sync_blocked_runtime_metadata(state, governance_attention=governance_attention)
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(task_id, "control_center_requires_necessity_proof", necessity=mission_cycle.get("necessity_proof", {}))
@@ -941,11 +990,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
         state.status = "blocked"
         state.next_action = "request_authorized_session"
         state.blockers = ["authorized session is required before compliant continuation"]
-        state.metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
-            next_action=state.next_action,
-            blockers=state.blockers,
-            governance_attention=governance_attention,
-        )
+        _sync_blocked_runtime_metadata(state, governance_attention=governance_attention)
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(task_id, "control_center_requires_authorized_session", session_plan=mission_cycle.get("authorized_session", {}))
@@ -961,12 +1006,8 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
     if action == "await_relay_attach_checkpoint":
         state.status = "blocked"
         state.next_action = "await_relay_attach_checkpoint"
-        state.blockers = ["chrome-relay has no attached tabs; re-attach the relay badge on the target seller.neosgo tab before continuation"]
-        state.metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
-            next_action=state.next_action,
-            blockers=state.blockers,
-            governance_attention=governance_attention,
-        )
+        state.blockers = ["the host browser relay has no attached tabs; re-attach the working seller.neosgo tab before continuation"]
+        _sync_blocked_runtime_metadata(state, governance_attention=governance_attention)
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(task_id, "control_center_requires_relay_attach_checkpoint")
@@ -983,11 +1024,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
         state.status = "blocked"
         state.next_action = "await_human_verification_checkpoint"
         state.blockers = ["human verification checkpoint must be completed before continuation"]
-        state.metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
-            next_action=state.next_action,
-            blockers=state.blockers,
-            governance_attention=governance_attention,
-        )
+        _sync_blocked_runtime_metadata(state, governance_attention=governance_attention)
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(task_id, "control_center_requires_human_checkpoint", checkpoint=mission_cycle.get("human_checkpoint", {}))
@@ -1040,11 +1077,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             "repair_form_validation_then_retry_submit": "invalid form fields must be repaired before submit can succeed",
         }
         state.blockers = [blocker_map[action]]
-        state.metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
-            next_action=state.next_action,
-            blockers=state.blockers,
-            governance_attention=governance_attention,
-        )
+        _sync_blocked_runtime_metadata(state, governance_attention=governance_attention)
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(task_id, "control_center_targeted_debug_required", action=action, diagnosis=mission_cycle.get("browser_signals", {}).get("diagnosis", ""))
@@ -1061,6 +1094,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
         state.current_stage = "verify"
         state.next_action = "verify_done_definition"
         state.blockers = []
+        _clear_blocked_runtime_metadata(state)
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(task_id, "control_center_finalize_business_outcome")
@@ -1077,6 +1111,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             state.status = "planning"
             state.blockers = []
             state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+            _clear_blocked_runtime_metadata(state)
             state.last_update_at = utc_now_iso()
             save_state(state)
             log_event(task_id, "control_center_continued_current_plan")
@@ -1102,19 +1137,20 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
             preferred_url=_preferred_browser_url(state) or "https://seller.neosgo.com/seller/products",
             last_known_url=str(browser_signals.get("page_url", "")).strip(),
             expected_domains=["seller.neosgo.com"],
-            max_tabs=1,
+            max_tabs=3,
         )
         state.status = "planning"
         state.current_stage = "execute"
         state.blockers = []
         state.next_action = "start_stage:execute"
+        _clear_blocked_runtime_metadata(state)
         if draft_rows:
             state.metadata["batch_focus"] = {
                 "next_draft": draft_rows[0],
                 "remaining_visible_drafts": browser_signals.get("draft_visible_count"),
                 "listing_status_counts": browser_signals.get("listing_status_counts", {}),
                 "single_tab_mode": True,
-                "tab_budget": 1,
+                "tab_budget": 3,
                 "working_target_id": keep_target_id,
                 "expected_listings_url": "https://seller.neosgo.com/seller/products",
             }
@@ -1151,7 +1187,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
         batch_focus["force_listings_overview"] = True
         batch_focus["expected_listings_url"] = expected_listings_url
         batch_focus["single_tab_mode"] = True
-        batch_focus["tab_budget"] = 1
+        batch_focus["tab_budget"] = 3
         batch_focus["last_probe_page_url"] = browser_signals.get("page_url", "")
         batch_focus["last_listings_page_url"] = browser_signals.get("listings_page_url", "")
         state.metadata["batch_focus"] = batch_focus
@@ -1187,6 +1223,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
         state.current_stage = "execute"
         state.blockers = []
         state.next_action = "start_stage:execute"
+        _clear_blocked_runtime_metadata(state)
         state.metadata.pop("active_execution", None)
         state.metadata.pop("last_dispatched_marker", None)
         state.metadata.pop("last_dispatch_at", None)
@@ -1232,6 +1269,7 @@ def _apply_control_center_decision(task_id: str, state, mission_cycle: dict) -> 
         state.current_stage = target_stage
         state.blockers = []
         state.next_action = f"start_stage:{target_stage}"
+        _clear_blocked_runtime_metadata(state)
         state.last_update_at = utc_now_iso()
         save_state(state)
         log_event(task_id, "control_center_auto_advance_stage", stage=target_stage, reason=decision.get("reason", ""))
@@ -1487,15 +1525,20 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
     if state.status == "blocked" and state.next_action == "bind_session_link":
         direct_link = _recover_direct_session_link(task_id)
         inherited_link = None
+        background_link = None
         if direct_link:
             state = load_state(task_id)
             log_event(task_id, "binding_auto_recovered_from_direct_link", link=direct_link)
         else:
             inherited_link = _inherit_lineage_session_link(task_id)
-        if direct_link or inherited_link:
+            if not inherited_link:
+                background_link = _recover_background_session_link(task_id)
+        if direct_link or inherited_link or background_link:
             state = load_state(task_id)
             if inherited_link:
                 log_event(task_id, "binding_auto_recovered_from_lineage", link=inherited_link)
+            if background_link:
+                log_event(task_id, "binding_auto_recovered_from_background_autonomy", link=background_link)
         else:
             return {
                 "task_id": task_id,
@@ -1511,6 +1554,7 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
             state.status = "planning"
             state.blockers = []
             state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+            _clear_blocked_runtime_metadata(state)
             state.last_update_at = utc_now_iso()
             save_state(state)
             log_event(task_id, "runtime_failure_auto_recovered")
@@ -1524,12 +1568,8 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
             }
 
     if state.status == "blocked":
-        blocked_runtime_state = classify_blocked_runtime_state(
-            next_action=state.next_action,
-            blockers=state.blockers,
-            governance_attention=state.metadata.get("last_governance_attention", {}) or {},
-        )
-        state.metadata["blocked_runtime_state"] = blocked_runtime_state
+        _sync_blocked_runtime_metadata(state)
+        blocked_runtime_state = state.metadata.get("blocked_runtime_state", {}) or {}
         state.last_update_at = utc_now_iso()
         save_state(state)
         if state.next_action == "await_project_crawler_remediation":
@@ -1582,11 +1622,7 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
             if statuses & {"approval_required", "approval_pending"}:
                 state.status = "blocked"
                 state.next_action = "await_approval_or_contract_fix"
-                state.metadata["blocked_runtime_state"] = classify_blocked_runtime_state(
-                    next_action=state.next_action,
-                    blockers=state.blockers,
-                    governance_attention=state.metadata.get("last_governance_attention", {}) or {},
-                )
+                _sync_blocked_runtime_metadata(state)
                 state.last_update_at = utc_now_iso()
                 save_state(state)
                 log_event(task_id, "preflight_block_requires_review", next_action=state.next_action, pending_ids=details["pending_ids"])

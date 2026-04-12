@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 """
 中文说明：
 - 文件路径：`tools/openmoss/autonomy/promotion_engine.py`
@@ -218,7 +224,12 @@ def promote_recurring_errors(min_count: int = 2) -> dict:
     """
     recurrence = _read_json(RECURRENCE, {"errors": {}})
     promoted = _read_json(PROMOTED_RULES, {"rules": []})
-    existing_keys = {rule["error_key"] for rule in promoted["rules"]}
+    rules = list(promoted.get("rules", []) or [])
+    existing_keys = {
+        str(rule.get("error_key", "")).strip()
+        for rule in rules
+        if str(rule.get("error_key", "")).strip()
+    }
     added = []
     for key, item in recurrence.get("errors", {}).items():
         if item.get("count", 0) < min_count or key in existing_keys:
@@ -235,10 +246,11 @@ def promote_recurring_errors(min_count: int = 2) -> dict:
             "promotion_type": "durable_runtime_rule",
             "source": "error_recurrence",
         }
-        promoted["rules"].append(rule)
+        rules.append(rule)
         added.append(rule)
+    promoted["rules"] = rules
     _write_json(PROMOTED_RULES, promoted)
-    return {"added": added, "total_rules": len(promoted["rules"])}
+    return {"added": added, "total_rules": len(rules)}
 
 
 if __name__ == "__main__":

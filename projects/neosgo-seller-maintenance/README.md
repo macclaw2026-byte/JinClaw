@@ -1,3 +1,12 @@
+<!--
+RULES-FIRST NOTICE:
+Before modifying this file, first read:
+- `JINCLAW_CONSTITUTION.md`
+- `AI_OPTIMIZATION_FRAMEWORK.md`
+Follow the constitution and framework:
+brain-first, one-doctor, fail-closed, evidence-over-narration,
+validate locally, then use the required PR workflow.
+-->
 # NEOSGO Seller Maintenance
 
 这条工作流是 `NEOSGO seller + GIGA` 的唯一主流程，替代之前散落在 `seller-neosgo*` 各种 followup 里的历史任务。
@@ -47,6 +56,14 @@ python3 /Users/mac_claw/.openclaw/workspace/tools/openmoss/ops/run_neosgo_seller
   `/Users/mac_claw/.openclaw/workspace/output/neosgo-seller-maintenance/`
 - 最新 state：
   `/Users/mac_claw/.openclaw/workspace/data/neosgo-seller-maintenance-state.json`
+
+## Legacy Task Retirement Tracking
+
+截至 2026-04-12，legacy `seller-neosgo*` 任务链的 retirement 审计文件位于：
+
+- `projects/neosgo-seller-maintenance/references/legacy-seller-neosgo-retirement-audit-2026-04-12.md`
+
+这份清单用于明确哪些历史 task-status 记录仍残留在 active task space，直到它们被正式归档/退休为止。
 
 ## Why This Replaces The Old Task Chain
 

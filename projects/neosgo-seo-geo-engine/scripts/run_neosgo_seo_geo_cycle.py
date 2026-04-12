@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 import argparse
 import csv
 import json
@@ -45,6 +52,22 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(float(value))
     except Exception:
         return default
+
+
+def _normalize_signature_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        return f"{value:.6f}"
+    if isinstance(value, int):
+        return f"{float(value):.6f}"
+    text = str(value).strip()
+    if not text:
+        return ""
+    try:
+        return f"{float(text):.6f}"
+    except Exception:
+        return text
 
 
 def _slugify_geo(target: dict[str, Any]) -> str:
@@ -157,6 +180,21 @@ def _topic_family_from_item(item: dict[str, Any]) -> str:
     return str(item.get("topic_key") or item.get("slug") or "general").strip()
 
 
+def _is_designer_daily_item(item: dict[str, Any]) -> bool:
+    track = str(item.get("contentTrack") or "").strip().lower()
+    audience = str(item.get("targetAudience") or "").strip().lower()
+    return track == "designer_daily" or "interior designer" in audience
+
+
+def _local_calendar_date(tz_name: str) -> str:
+    try:
+        from zoneinfo import ZoneInfo
+
+        return str(datetime.now(ZoneInfo(tz_name)).date())
+    except Exception:
+        return str(datetime.now().date())
+
+
 def _load_feedback_rows(config: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
     ingestion = config.get("feedback_ingestion") or {}
     issues: list[str] = []
@@ -203,7 +241,20 @@ def _load_feedback_rows(config: dict[str, Any]) -> tuple[list[dict[str, Any]], l
                             rows.append(item)
             except Exception as exc:
                 issues.append(f"feedback_load_failed:{path}:{exc}")
-    return rows, issues
+    accepted_fields = [str(field).strip() for field in (ingestion.get("accepted_fields") or []) if str(field).strip()]
+    signature_fields = accepted_fields + ["geoSlug", "query", "page", "country", "topic_key", "topicFamily"]
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    for row in rows:
+        signature: list[tuple[str, str]] = []
+        for field in signature_fields:
+            signature.append((field, _normalize_signature_value(row.get(field))))
+        key = tuple(signature)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped, issues
 
 
 def _infer_topic_from_query(query: str, config: dict[str, Any]) -> str:
@@ -263,11 +314,23 @@ def _summarize_feedback(rows: list[dict[str, Any]], backlog: list[dict[str, Any]
         "samples": 0,
         "top_queries": defaultdict(float),
     })
+    unmatched_pages: dict[str, dict[str, Any]] = defaultdict(lambda: {
+        "clicks": 0.0,
+        "impressions": 0.0,
+        "samples": 0,
+    })
     slug_to_topic = {str(item.get("slug")): _topic_family_from_item(item) for item in backlog}
+    matched_slug_rows = 0
+    unmatched_slug_rows = 0
     for row in rows:
         slug = str(row.get("slug") or "").strip()
         query = str(row.get("query") or "").strip()
+        page = str(row.get("page") or "").strip()
         query_topic = _infer_topic_from_query(query, config)
+        if slug and slug in slug_to_topic:
+            matched_slug_rows += 1
+        else:
+            unmatched_slug_rows += 1
         topic = slug_to_topic.get(slug) or str(row.get("topic_key") or row.get("topicFamily") or "").strip() or query_topic or "general"
         clicks = _safe_float(row.get("clicks"))
         impressions = _safe_float(row.get("impressions"))
@@ -297,6 +360,11 @@ def _summarize_feedback(rows: list[dict[str, Any]], backlog: list[dict[str, Any]
             target_query_topic["impressions"] += impressions
             target_query_topic["samples"] += 1
             target_query_topic["top_queries"][query] += clicks if clicks > 0 else max(impressions * 0.05, 0.01)
+        if page and (not slug or slug not in slug_to_topic):
+            unmatched_page = unmatched_pages[page]
+            unmatched_page["clicks"] += clicks
+            unmatched_page["impressions"] += impressions
+            unmatched_page["samples"] += 1
     top_topics = sorted(
         (
             {
@@ -327,12 +395,28 @@ def _summarize_feedback(rows: list[dict[str, Any]], backlog: list[dict[str, Any]
         key=lambda item: (item["clicks"], item["impressions"], item["samples"]),
         reverse=True,
     )
+    top_unmatched_pages = sorted(
+        (
+            {
+                "page": page,
+                "clicks": round(value["clicks"], 2),
+                "impressions": round(value["impressions"], 2),
+                "samples": value["samples"],
+            }
+            for page, value in unmatched_pages.items()
+        ),
+        key=lambda item: (item["clicks"], item["impressions"], item["samples"], item["page"]),
+        reverse=True,
+    )
     return {
         "row_count": len(rows),
+        "matched_slug_rows": matched_slug_rows,
+        "unmatched_slug_rows": unmatched_slug_rows,
         "slug_metrics": by_slug,
         "topic_metrics": by_topic,
         "top_topics": top_topics[:10],
         "top_query_topics": top_query_topics[:10],
+        "top_unmatched_pages": top_unmatched_pages[:10],
     }
 
 
@@ -592,11 +676,31 @@ def _compose_research_brief(
     audience = str(backlog_item.get("targetAudience") or "Homeowners and trade buyers")
     intent_keyword = str(backlog_item.get("intentKeyword") or "")
     primary_focus = adaptive_profile.get("primary_focus_topic")
+    if _is_designer_daily_item(backlog_item):
+        return {
+            "topic": topic,
+            "audience": audience,
+            "intent_keyword": intent_keyword,
+            "reader_problem": f'The reader is an interior designer who needs a confident, specification-ready answer to "{intent_keyword}" without creating client confusion or procurement drift.',
+            "content_promise": f"Give a reusable professional framework for {backlog_item.get('title')}, not a generic inspiration article.",
+            "commercial_bridge": commerce_angles[:4],
+            "research_signals": research_row.get("signals") or backlog_item.get("tradeSignals") or [],
+            "competitor_strengths": competitor_topic.get("common_competitor_strengths") or [],
+            "competitor_gaps": competitor_topic.get("common_competitor_gaps") or [],
+            "competitor_reference_urls": competitor_topic.get("reference_urls") or [],
+            "angle": "trade_advisory_brief",
+            "must_answer": [
+                "What decision is the designer actually trying to make on a live project?",
+                "What specification or coordination mistakes create downstream friction?",
+                "What should be locked before the client presentation or quote review?",
+                "What is the clearest next step inside Neosgo for a trade buyer?",
+            ],
+        }
     return {
         "topic": topic,
         "audience": audience,
         "intent_keyword": intent_keyword,
-        "reader_problem": f"The reader wants a confident answer to `{intent_keyword}` without making an expensive lighting mistake.",
+        "reader_problem": f'The reader wants a confident answer to "{intent_keyword}" without making an expensive lighting mistake.',
         "content_promise": f"Give a clear decision framework for {backlog_item.get('title')}, not just surface tips.",
         "commercial_bridge": commerce_angles[:3],
         "research_signals": research_row.get("signals") or [],
@@ -620,7 +724,11 @@ def _build_seo_packaging(backlog_item: dict[str, Any], research_brief: dict[str,
     quick_answer = str(backlog_item.get("quickAnswer") or "").strip()
     topic_queries = research_brief.get("competitor_gaps") or []
 
-    if topic == "pendant":
+    if _is_designer_daily_item(backlog_item):
+        seo_title = str(backlog_item.get("seoTitle") or title or "").strip()
+        seo_description = str(backlog_item.get("seoDescription") or backlog_item.get("description") or "").strip()
+        quick = quick_answer
+    elif topic == "pendant":
         seo_title = "Kitchen Island Pendant Spacing: Size, Height & Layout Guide"
         seo_description = "A clear guide to island pendant size, spacing, and hanging height, with the mistakes that make a kitchen feel crowded or under-scaled."
         quick = "For most kitchen islands, the right pendant layout comes from balancing fixture width, island length, and visual breathing room, not from using a spacing formula alone."
@@ -651,6 +759,8 @@ def _build_seo_packaging(backlog_item: dict[str, Any], research_brief: dict[str,
     packaging_notes: list[str] = []
     if topic_queries:
         packaging_notes.append("Uses problem-aware phrasing drawn from recurring SERP weak spots.")
+    if _is_designer_daily_item(backlog_item):
+        packaging_notes.append("Targets trade readers with specification-ready, client-safe language instead of retail-style inspiration copy.")
     packaging_notes.append("Prioritizes decision clarity and stronger click intent over generic category wording.")
     return {
         "seoTitle": seo_title,
@@ -682,14 +792,22 @@ def _editorial_quality_gate(backlog_item: dict[str, Any], research_brief: dict[s
     readability_and_flow = 18 if len(quick_answer.split()) >= 8 and len(sections) >= 3 else 10
     brand_linkage = 20 if topic_key in internal_link_map else 10
 
-    required_patterns = framework.get("required_section_patterns") or []
+    required_patterns = backlog_item.get("requiredPatterns") or framework.get("required_section_patterns") or []
     matched_patterns = sum(1 for pattern in required_patterns if _contains_pattern(section_text, pattern))
     if required_patterns:
         professional_depth += min(6, matched_patterns)
         readability_and_flow += min(4, matched_patterns // 2)
 
+    if _is_designer_daily_item(backlog_item):
+        designer_markers = ("project", "specification", "client", "procurement", "lead time", "finish", "trade")
+        matched_markers = sum(1 for marker in designer_markers if _contains_pattern(section_text, marker))
+        decision_utility += min(6, matched_markers)
+        professional_depth += min(8, matched_markers)
+        if any("/trade-program" == str(link.get("href") or "").strip() for link in (backlog_item.get("internalLinks") or [])):
+            brand_linkage = max(brand_linkage, 20)
+
     total = min(100, intent_alignment + decision_utility + professional_depth + readability_and_flow + brand_linkage)
-    threshold = _safe_int(((framework.get("quality_gate") or {}).get("minimum_score")), 78)
+    threshold = _safe_int(backlog_item.get("qualityThreshold") or ((framework.get("quality_gate") or {}).get("minimum_score")), 78)
     return {
         "score": total,
         "passed": total >= threshold,
@@ -714,6 +832,43 @@ def _ensure_editorial_sections(backlog_item: dict[str, Any], research_brief: dic
     existing = [dict(item) for item in (backlog_item.get("sections") or []) if isinstance(item, dict)]
     headings = " ".join(str(item.get("heading") or "") for item in existing).lower()
     additions: list[dict[str, Any]] = []
+    if _is_designer_daily_item(backlog_item):
+        if "real project" not in headings and "project" not in headings:
+            additions.append(
+                {
+                    "heading": "Why this matters on a real project",
+                    "body": f"{research_brief.get('reader_problem')} The goal is to protect design clarity, quoting accuracy, and client confidence at the same time.",
+                }
+            )
+        if "specification" not in headings and "spec" not in headings:
+            additions.append(
+                {
+                    "heading": "Specification checkpoints to lock early",
+                    "body": "Clarify fixture role, intended visual weight, finish direction, mounting assumptions, and replacement risk before the selection reaches a client-facing schedule.",
+                }
+            )
+        if "client" not in headings:
+            additions.append(
+                {
+                    "heading": "How to discuss the choice with clients",
+                    "body": "Frame the recommendation around room function, visual proportion, finish compatibility, and the tradeoffs the client is avoiding by making the decision now instead of during procurement.",
+                }
+            )
+        if "procurement" not in headings and "vendor" not in headings:
+            additions.append(
+                {
+                    "heading": "Procurement and coordination notes",
+                    "body": "Before final approval, confirm finish naming, dimensional assumptions, lead-time sensitivity, replacement options, and any installation dependencies that could create avoidable change orders.",
+                }
+            )
+        if "next" not in headings:
+            additions.append(
+                {
+                    "heading": "What to do next",
+                    "body": "Use the article to narrow the specification logic first, then move into the Neosgo trade program and catalog to compare viable options with fewer reselection loops.",
+                }
+            )
+        return existing + additions
     if "why" not in headings:
         additions.append(
             {
@@ -794,13 +949,28 @@ def _ensure_related_guides_section(backlog_item: dict[str, Any], config: dict[st
 def _build_note_internal_links(backlog_item: dict[str, Any], config: dict[str, Any]) -> list[dict[str, str]]:
     topic_key = str(backlog_item.get("topic_key") or "").strip()
     links = config.get("internal_link_map") or {}
-    internal_links = []
+    internal_links = [
+        {"label": str(item.get("label") or "").strip(), "href": str(item.get("href") or "").strip()}
+        for item in (backlog_item.get("customInternalLinks") or [])
+        if isinstance(item, dict) and str(item.get("label") or "").strip() and str(item.get("href") or "").strip()
+    ]
     if topic_key and topic_key in links:
-        internal_links.append({"label": "Browse related collection", "href": links[topic_key]})
+        default_label = str(backlog_item.get("primaryInternalLinkLabel") or "").strip()
+        if not default_label:
+            default_label = "Explore the Trade Program" if _is_designer_daily_item(backlog_item) else "Browse related collection"
+        internal_links.append({"label": default_label, "href": links[topic_key]})
     if "trade-program" in links:
         internal_links.append({"label": "Explore the Trade Program", "href": links["trade-program"]})
     internal_links.extend(_related_note_links(backlog_item, config))
-    return internal_links
+    deduped: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for item in internal_links:
+        key = (item["label"], item["href"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped[:4]
 
 
 def _note_payload(backlog_item: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
@@ -819,6 +989,28 @@ def _note_payload(backlog_item: dict[str, Any], config: dict[str, Any]) -> dict[
         "faq": backlog_item["faq"],
         "internalLinks": internal_links,
     }
+
+
+def _prepare_item_for_publish(
+    item: dict[str, Any],
+    config: dict[str, Any],
+    market_research: dict[str, Any],
+    adaptive_profile: dict[str, Any],
+) -> dict[str, Any]:
+    brief = _compose_research_brief(item, config, market_research, adaptive_profile)
+    enriched = dict(item)
+    enriched["sections"] = _ensure_editorial_sections(item, brief)
+    enriched["sections"] = _ensure_related_guides_section(enriched, config)
+    seo_packaging = _build_seo_packaging(enriched, brief, config)
+    enriched["quickAnswer"] = seo_packaging["quickAnswer"]
+    enriched["seoTitle"] = seo_packaging["seoTitle"]
+    enriched["seoDescription"] = seo_packaging["seoDescription"]
+    enriched["internalLinks"] = _build_note_internal_links(enriched, config)
+    review = _editorial_quality_gate(enriched, brief, config)
+    enriched["_research_brief"] = brief
+    enriched["_seo_packaging"] = seo_packaging
+    enriched["_editorial_review"] = review
+    return enriched
 
 
 def _note_seo_patch_needed(note: dict[str, Any], backlog_item: dict[str, Any]) -> dict[str, Any]:
@@ -1072,6 +1264,31 @@ def _public_geo_url(config: dict[str, Any], note_slug: str, geo_slug: str) -> st
     return f"{base}/notes/{note_slug}/geo/{geo_slug}"
 
 
+def _pick_designer_daily_candidate(
+    program: dict[str, Any],
+    notes_by_slug: dict[str, dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any], int, int]:
+    queue = [dict(item) for item in (program.get("article_queue") or []) if isinstance(item, dict)]
+    remaining = 0
+    published = 0
+    candidate: dict[str, Any] = {}
+    existing_note: dict[str, Any] = {}
+    for item in queue:
+        slug = str(item.get("slug") or "").strip()
+        if not slug:
+            continue
+        note = notes_by_slug.get(slug) or {}
+        status = str(note.get("status") or "").upper()
+        if status == "PUBLISHED":
+            published += 1
+            continue
+        remaining += 1
+        if not candidate:
+            candidate = item
+            existing_note = note
+    return candidate, existing_note, len(queue), remaining
+
+
 def run_cycle() -> dict[str, Any]:
     config = _load_json(CONFIG_PATH, {})
     state = _load_json(STATE_PATH, {"runs": [], "adaptive_profile": {}, "last_market_research": {}, "feedback_history": []})
@@ -1112,6 +1329,7 @@ def run_cycle() -> dict[str, Any]:
         "seo_packaging_reviews": [],
         "geo_seo_packaging_reviews": [],
         "editorial_reviews": [],
+        "designer_daily_program": {},
         "summary": {},
         "writes": [],
         "gaps": [],
@@ -1162,19 +1380,10 @@ def run_cycle() -> dict[str, Any]:
             ranked_backlog = _rank_backlog(backlog, result["adaptive_profile"], result["historical_feedback"], inventory_summary)
             enhanced_backlog: list[dict[str, Any]] = []
             for item in ranked_backlog:
-                brief = _compose_research_brief(item, config, result["market_research"], result["adaptive_profile"])
-                seo_packaging = _build_seo_packaging(item, brief, config)
-                review = _editorial_quality_gate(item, brief, config)
-                enriched = dict(item)
-                enriched["sections"] = _ensure_editorial_sections(item, brief)
-                enriched["sections"] = _ensure_related_guides_section(enriched, config)
-                enriched["quickAnswer"] = seo_packaging["quickAnswer"]
-                enriched["seoTitle"] = seo_packaging["seoTitle"]
-                enriched["seoDescription"] = seo_packaging["seoDescription"]
-                enriched["internalLinks"] = _build_note_internal_links(enriched, config)
-                enriched["_research_brief"] = brief
-                enriched["_seo_packaging"] = seo_packaging
-                enriched["_editorial_review"] = review
+                enriched = _prepare_item_for_publish(item, config, result["market_research"], result["adaptive_profile"])
+                brief = enriched["_research_brief"]
+                seo_packaging = enriched["_seo_packaging"]
+                review = enriched["_editorial_review"]
                 enhanced_backlog.append(enriched)
                 result["research_briefs"].append({"slug": item.get("slug"), **brief})
                 result["seo_packaging_reviews"].append(
@@ -1419,6 +1628,124 @@ def run_cycle() -> dict[str, Any]:
                                     "public_url": _public_geo_url(config, slug, matched_slug),
                                 }
                             )
+            designer_program = dict(config.get("designer_daily_program") or {})
+            designer_status: dict[str, Any] = {
+                "enabled": bool(designer_program.get("enabled")),
+            }
+            if designer_status["enabled"]:
+                timezone_name = str(designer_program.get("state_timezone") or "America/Los_Angeles")
+                today_local = _local_calendar_date(timezone_name)
+                program_state = dict(state.get("designer_daily_program") or {})
+                candidate, existing_note, queue_total, remaining_queue = _pick_designer_daily_candidate(designer_program, notes_by_slug)
+                designer_status.update(
+                    {
+                        "timezone": timezone_name,
+                        "today_local": today_local,
+                        "queue_total": queue_total,
+                        "remaining_queue": remaining_queue,
+                        "already_published_today": program_state.get("last_published_date") == today_local,
+                    }
+                )
+                if designer_status["already_published_today"]:
+                    designer_status["skipped_reason"] = "already_published_today"
+                elif not candidate:
+                    designer_status["skipped_reason"] = "queue_exhausted"
+                else:
+                    prepared = _prepare_item_for_publish(candidate, config, result["market_research"], result["adaptive_profile"])
+                    brief = prepared["_research_brief"]
+                    seo_packaging = prepared["_seo_packaging"]
+                    review = prepared["_editorial_review"]
+                    slug = str(prepared.get("slug") or "").strip()
+                    result["research_briefs"].append({"slug": slug, **brief})
+                    result["seo_packaging_reviews"].append(
+                        {
+                            "slug": slug,
+                            "seoTitle": seo_packaging.get("seoTitle"),
+                            "seoDescription": seo_packaging.get("seoDescription"),
+                            "quickAnswer": seo_packaging.get("quickAnswer"),
+                            "packagingRationale": seo_packaging.get("packagingRationale"),
+                        }
+                    )
+                    result["editorial_reviews"].append({"slug": slug, **review})
+                    designer_status.update(
+                        {
+                            "selected_slug": slug,
+                            "editorial_score": review.get("score"),
+                            "quality_passed": review.get("passed"),
+                        }
+                    )
+                    if not review.get("passed"):
+                        designer_status["skipped_reason"] = "quality_gate_failed"
+                    else:
+                        note = existing_note if existing_note else {}
+                        note_id = str(note.get("id") or "").strip()
+                        if not note:
+                            payload = _note_payload(prepared, config)
+                            write = client.create_design_note(payload)
+                            resolved = write if isinstance(write, dict) and write.get("id") else _lookup_note_by_slug(client, slug)
+                            note = resolved if isinstance(resolved, dict) and resolved else (write if isinstance(write, dict) else {})
+                            note_id = str((note or {}).get("id") or "").strip()
+                            result["writes"].append(
+                                {
+                                    "kind": "designer_daily_note_create",
+                                    "slug": slug,
+                                    "topic": _topic_family_from_item(prepared),
+                                    "editorial_score": review.get("score"),
+                                    "status": (note or write or {}).get("status", "DRAFT"),
+                                    "id": (note or write or {}).get("id"),
+                                    "public_url": _public_note_url(config, slug),
+                                }
+                            )
+                        if note and note_id:
+                            seo_patch = _note_seo_patch_needed(note, prepared)
+                            if seo_patch:
+                                updated_note = client.update_design_note(note_id, seo_patch)
+                                for key, value in seo_patch.items():
+                                    note[key] = value
+                                result["writes"].append(
+                                    {
+                                        "kind": "designer_daily_note_refresh",
+                                        "note_id": note_id,
+                                        "slug": slug,
+                                        "status": updated_note.get("status", note.get("status")),
+                                        "patched_fields": sorted(seo_patch.keys()),
+                                        "public_url": _public_note_url(config, slug),
+                                    }
+                                )
+                            publish_result: dict[str, Any] = {}
+                            final_status = note.get("status", "DRAFT")
+                            if config.get("publish_allowed") and _should_publish_note(note):
+                                publish_result = client.publish_design_note(note_id)
+                                note["status"] = publish_result.get("status", note.get("status"))
+                                note["publishedAt"] = publish_result.get("publishedAt", note.get("publishedAt"))
+                                final_status = note.get("status", final_status)
+                                result["writes"].append(
+                                    {
+                                        "kind": "designer_daily_note_publish",
+                                        "note_id": note_id,
+                                        "slug": slug,
+                                        "status": final_status,
+                                        "published": True,
+                                        "publish_result": publish_result,
+                                        "public_url": _public_note_url(config, slug),
+                                    }
+                                )
+                            notes_by_slug[slug] = note
+                            designer_status.update(
+                                {
+                                    "status": final_status,
+                                    "published": final_status == "PUBLISHED",
+                                    "public_url": _public_note_url(config, slug),
+                                }
+                            )
+                            state["designer_daily_program"] = {
+                                **program_state,
+                                "timezone": timezone_name,
+                                "last_selected_date": today_local,
+                                "last_selected_slug": slug,
+                                "last_published_date": today_local if final_status == "PUBLISHED" else program_state.get("last_published_date"),
+                            }
+            result["designer_daily_program"] = designer_status
             result["summary"] = {
                 "existing_note_count": inventory_summary.get("existing_note_count", 0),
                 "backlog_note_count": len(backlog),
@@ -1431,6 +1758,8 @@ def run_cycle() -> dict[str, Any]:
                 "geo_priority_order": [target.get("state") for target in geo_targets],
                 "primary_focus_topic": result["adaptive_profile"].get("primary_focus_topic"),
                 "research_lead_topic": result["adaptive_profile"].get("research_lead_topic"),
+                "designer_queue_remaining": (result.get("designer_daily_program") or {}).get("remaining_queue", 0),
+                "designer_selected_slug": (result.get("designer_daily_program") or {}).get("selected_slug"),
             }
         except MarketingApiError as exc:
             result["blocked"] = True
@@ -1464,12 +1793,16 @@ def run_cycle() -> dict[str, Any]:
             f"- Published note backfills: {(result.get('summary') or {}).get('published_note_backfills', 0)}",
             f"- Published GEO backfills: {(result.get('summary') or {}).get('published_variant_backfills', 0)}",
             f"- Remaining gaps: {(result.get('summary') or {}).get('gap_count', 0)}",
+            f"- Designer queue remaining: {(result.get('summary') or {}).get('designer_queue_remaining', 0)}",
+            f"- Designer selection: {(result.get('summary') or {}).get('designer_selected_slug') or 'none'}",
             f"- Geo priority order: {', '.join((result.get('summary') or {}).get('geo_priority_order', []))}",
         ]
     )
     md_lines.extend(["", "## Historical feedback distillation"])
     hist = result.get("historical_feedback") or {}
     md_lines.append(f"- Feedback rows loaded: {hist.get('row_count', 0)}")
+    md_lines.append(f"- Matched note/GEO rows: {hist.get('matched_slug_rows', 0)}")
+    md_lines.append(f"- Unmatched rows: {hist.get('unmatched_slug_rows', 0)}")
     for item in hist.get("top_topics", [])[:5]:
         md_lines.append(f"- Topic `{item['topic']}` | clicks={item['clicks']} | query_clicks={item.get('query_clicks', 0)} | feedback={item['avg_feedback_score']} | conversion={item['avg_conversion_rate']}")
     if hist.get("top_query_topics"):
@@ -1477,6 +1810,12 @@ def run_cycle() -> dict[str, Any]:
         for item in hist.get("top_query_topics", [])[:5]:
             md_lines.append(
                 f"  - `{item['topic']}` | query_clicks={item['clicks']} | query_impressions={item['impressions']} | top_queries={', '.join(item.get('top_queries') or [])}"
+            )
+    if hist.get("top_unmatched_pages"):
+        md_lines.append("- Unmatched pages seen in feedback:")
+        for item in hist.get("top_unmatched_pages", [])[:5]:
+            md_lines.append(
+                f"  - `{item['page']}` | clicks={item['clicks']} | impressions={item['impressions']} | samples={item['samples']}"
             )
 
     md_lines.extend(["", "## Google Search Console sync"])
@@ -1561,6 +1900,23 @@ def run_cycle() -> dict[str, Any]:
     else:
         md_lines.append("- No editorial reviews computed.")
 
+    md_lines.extend(["", "## Interior Designer Daily Article"])
+    designer_program = result.get("designer_daily_program") or {}
+    md_lines.append(f"- Enabled: {designer_program.get('enabled', False)}")
+    if designer_program.get("enabled"):
+        md_lines.append(f"- Timezone: {designer_program.get('timezone')}")
+        md_lines.append(f"- Today local: {designer_program.get('today_local')}")
+        md_lines.append(f"- Queue total: {designer_program.get('queue_total', 0)}")
+        md_lines.append(f"- Remaining queue: {designer_program.get('remaining_queue', 0)}")
+        md_lines.append(f"- Already published today: {designer_program.get('already_published_today', False)}")
+        md_lines.append(f"- Selected slug: {designer_program.get('selected_slug') or 'none'}")
+        md_lines.append(f"- Quality score: {designer_program.get('editorial_score', 'n/a')}")
+        md_lines.append(f"- Quality passed: {designer_program.get('quality_passed', False)}")
+        md_lines.append(f"- Status: {designer_program.get('status') or 'not_run'}")
+        md_lines.append(f"- Public URL: {designer_program.get('public_url') or 'n/a'}")
+        if designer_program.get("skipped_reason"):
+            md_lines.append(f"- Skipped reason: {designer_program.get('skipped_reason')}")
+
     md_lines.extend(["", "## Writes"])
     if result["writes"]:
         for item in result["writes"]:
@@ -1599,8 +1955,20 @@ def run_cycle() -> dict[str, Any]:
     state["last_iteration_plan"] = result.get("iteration_plan") or {}
     state["last_feedback_summary"] = {
         "row_count": hist.get("row_count", 0),
+        "matched_slug_rows": hist.get("matched_slug_rows", 0),
+        "unmatched_slug_rows": hist.get("unmatched_slug_rows", 0),
         "top_topics": hist.get("top_topics", [])[:5],
+        "top_unmatched_pages": hist.get("top_unmatched_pages", [])[:5],
     }
+    if result.get("designer_daily_program"):
+        state["designer_daily_program"] = {
+            **dict(state.get("designer_daily_program") or {}),
+            **{
+                key: value
+                for key, value in (result.get("designer_daily_program") or {}).items()
+                if key in {"enabled", "timezone", "last_selected_date", "last_selected_slug", "last_published_date"}
+            },
+        }
     state["last_updated_at"] = result["generated_at"]
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")

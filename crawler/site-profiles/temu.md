@@ -1,24 +1,27 @@
 # Temu Site Profile
 
-- Last evaluated: 2026-04-05
-- Confidence: low
+- Last evaluated: 2026-04-12
+- Confidence: medium
 - Recommended mode: anonymous_public_crawl
 
 ## Preferred tool order
-1. curl-cffi
-2. playwright
+1. crawl4ai-cli
+2. curl-cffi
 3. scrapy-cffi
 
 ## Recommended default
-- Primary: none
-- Extraction decision: blocked_or_insufficient_evidence
+- Primary: crawl4ai-cli
+- Extraction decision: best_single_tool_output
 
 ## Task-ready fields from current best result
-- No task-ready fields survived arbitration in the current anonymous run
+- title: (empty)
+- price: (empty)
+- promo: (empty)
+- link: (empty)
 
 ## Known behavior
+- crawl4ai-cli: status=partial, arbitration_score=25, field_completeness=0.0, false_positive_reasons=['none']
 - curl-cffi: status=blocked, arbitration_score=0, field_completeness=0.0, false_positive_reasons=['login']
-- playwright: status=blocked, arbitration_score=0, field_completeness=0.0, false_positive_reasons=['login']
 - scrapy-cffi: status=blocked, arbitration_score=0, field_completeness=0.0, false_positive_reasons=['none']
 
 ## Repeat-run policy

@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 """
 中文说明：
 - 文件路径：`tools/openmoss/control_center/brain_router.py`
 - 文件作用：负责把聊天入口收到的自然语言指令，翻译成“应该挂到哪个任务、是否要切根、是否只返回状态”的路由结果。
-- 顶层函数：_is_internal_runtime_request_text、_write_json、_strip_transport_wrapper、_looks_actionable、_looks_like_status_query、_looks_like_followup_goal、_safe_load_contract、_safe_load_state、_task_predecessor、_lineage_root_task_id、_task_created_at、_lineage_task_ids、_find_active_lineage_task、_next_successor_task_id、_mark_task_superseded、_clear_task_superseded、_resolve_linked_active_task_id、_normalize_goal_text、_should_branch_from_active_task、_build_task、_task_matches_root_mission_profile、route_instruction、main。
+- 顶层函数：_is_internal_runtime_request_text、_write_json、_strip_transport_wrapper、_looks_actionable、_looks_like_status_query、_looks_like_followup_goal、_detect_canonical_project_task、_extract_explicit_task_selector、_is_heartbeat_probe、_safe_load_contract、_safe_load_state、_task_predecessor、_lineage_root_task_id、_task_created_at、_lineage_task_ids、_find_active_lineage_task、_next_successor_task_id、_mark_task_superseded、_clear_task_superseded、_resolve_linked_active_task_id、_normalize_goal_text、_should_branch_from_active_task、_build_task、_task_matches_root_mission_profile、route_instruction、main。
 - 顶层类：无顶层类。
 - 主流程定位：
   1. 先清洗聊天文本，去掉 transport wrapper 和运行时提示包装。
@@ -30,6 +36,7 @@ from mission_profiles import detect_root_mission_profile
 from orchestrator import build_control_center_package
 from paths import BRAIN_ROUTES_ROOT
 from task_status_snapshot import build_task_status_snapshot
+from task_alias_registry import resolve_task_selector
 
 AUTONOMY_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy")
 import sys
@@ -162,6 +169,17 @@ PROJECT_TASK_ALIASES = (
     },
 )
 
+EXPLICIT_TASK_PATTERNS = (
+    re.compile(r"^\[\s*(?:task|任务)\s*[:：]\s*([A-Za-z0-9._-]+)\s*\]\s*(.*)$", re.IGNORECASE | re.DOTALL),
+    re.compile(r"^(?:切换到任务|切到任务|聚焦任务|当前任务|任务|task)\s*[:：=#]?\s*([A-Za-z0-9._-]+)(?:\s*[|｜]\s*|\s+)?(.*)$", re.IGNORECASE | re.DOTALL),
+)
+
+HEARTBEAT_PATTERNS = (
+    "read heartbeat.md if it exists",
+    "reply heartbeat_ok",
+    "heartbeat_ok",
+)
+
 
 def _is_internal_runtime_request_text(text: str) -> bool:
     """
@@ -202,7 +220,8 @@ def _strip_transport_wrapper(text: str) -> str:
     cleaned = re.sub(r"Conversation info \(untrusted metadata\):\s*```[\s\S]*?```", "", cleaned, flags=re.MULTILINE)
     cleaned = re.sub(r"Sender \(untrusted metadata\):\s*```[\s\S]*?```", "", cleaned, flags=re.MULTILINE)
     cleaned = re.sub(r"Replied message \(untrusted, for context\):\s*```[\s\S]*?```", "", cleaned, flags=re.MULTILINE)
-    cleaned = re.sub(r"^\[[^\]]+\]\s*", "", cleaned).strip()
+    if not re.match(r"^\[\s*(?:task|任务)\s*[:：]", cleaned.strip(), flags=re.IGNORECASE):
+        cleaned = re.sub(r"^\[[^\]]+\]\s*", "", cleaned).strip()
     runtime_match = re.search(
         r"\[Autonomy runtime execution request\][\s\S]*?user_goal:\s*(.+?)\n(?:done_definition:|stage_goal:|selected_plan:)",
         cleaned,
@@ -286,6 +305,43 @@ def _detect_canonical_project_task(text: str) -> Dict[str, object] | None:
             continue
         return entry
     return None
+
+
+def _extract_explicit_task_selector(text: str) -> Dict[str, str] | None:
+    """
+    中文注解：
+    - 功能：从用户文本里提取显式任务选择器，例如 `[task:foo]` 或 `任务: foo`。
+    - 设计意图：让会话上下文切换变成显式动作，而不是继续靠语义猜测。
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    for pattern in EXPLICIT_TASK_PATTERNS:
+        match = pattern.match(raw)
+        if not match:
+            continue
+        task_id = str(match.group(1) or "").strip()
+        if not task_id:
+            continue
+        remaining_text = str(match.group(2) or "").strip()
+        return {
+            "task_id": task_id,
+            "remaining_text": remaining_text,
+            "raw_text": raw,
+        }
+    return None
+
+
+def _is_heartbeat_probe(text: str) -> bool:
+    """
+    中文注解：
+    - 功能：识别主会话里的 heartbeat 轮询提示，避免它把当前聊天焦点误切到探针任务。
+    """
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return False
+    normalized = re.sub(r"\s+", " ", lowered)
+    return all(token in normalized for token in HEARTBEAT_PATTERNS)
 
 
 def _safe_load_contract(task_id: str):
@@ -597,10 +653,13 @@ def route_instruction(
       - `create_successor_task` / `branch_from_active_task`：沿现有 lineage 开新分支或后续任务。
     - 调用关系：Telegram / 主会话入口先调用这里，后续 receipt engine、runtime、doctor 都依赖这里写回的 task_id 和 link。
     """
-    goal = _strip_transport_wrapper(text)
-    intent = analyze_intent(goal, source=source)
-    mission_profile = detect_root_mission_profile(goal, intent=intent)
-    canonical_project_task = _detect_canonical_project_task(goal)
+    raw_goal = _strip_transport_wrapper(text)
+    explicit_task_selector = _extract_explicit_task_selector(raw_goal)
+    goal = str((explicit_task_selector or {}).get("remaining_text", "")).strip() if explicit_task_selector else raw_goal
+    goal_for_intent = goal or raw_goal
+    intent = analyze_intent(goal_for_intent, source=source)
+    mission_profile = detect_root_mission_profile(goal_for_intent, intent=intent)
+    canonical_project_task = _detect_canonical_project_task(goal_for_intent)
     existing = read_link(provider, conversation_id)
     route: Dict[str, object] = {
         "routed_at": utc_now_iso(),
@@ -611,20 +670,101 @@ def route_instruction(
         "sender_name": sender_name,
         "message_id": message_id,
         "source": source,
-        "goal": goal,
+        "goal": goal_for_intent,
+        "raw_goal": raw_goal,
         "intent": intent,
         "mode": "instant_reply_only",
-        "task_id": existing.get("task_id"),
+        "task_id": existing.get("task_id", ""),
         "created_task": False,
         "attached_existing": bool(existing),
         "brain_required": True,
         "mission_profile": mission_profile,
         "canonical_project_task": canonical_project_task,
+        "explicit_task_selector": explicit_task_selector or {},
     }
+
+    if provider == "openclaw-main" and conversation_id == "main" and source == "brain_enforcer" and _is_heartbeat_probe(raw_goal):
+        selected_task_id = _resolve_linked_active_task_id(str(existing.get("task_id", ""))) if existing else ""
+        route["mode"] = "heartbeat_probe"
+        route["brain_required"] = False
+        route["heartbeat_probe"] = True
+        route["attached_existing"] = bool(existing and selected_task_id)
+        route["task_id"] = selected_task_id
+        if selected_task_id:
+            snapshot = build_task_status_snapshot(selected_task_id)
+            route["authoritative_task_status"] = snapshot
+            route["governance_attention"] = summarize_snapshot_governance(snapshot)
+        route["route_path"] = _write_json(BRAIN_ROUTES_ROOT / provider / f"{conversation_id}.json", route)
+        return route
+
+    if explicit_task_selector:
+        requested_task_ref = str(explicit_task_selector.get("task_id", "")).strip()
+        selector_resolution = resolve_task_selector(requested_task_ref)
+        requested_task_id = str(selector_resolution.get("resolved_task_id", "")).strip() or requested_task_ref
+        route["explicit_task_selector_resolution"] = selector_resolution
+        if not requested_task_id or not contract_path(requested_task_id).exists():
+            route["mode"] = "explicit_task_not_found"
+            route["task_id"] = requested_task_ref
+            route["brain_required"] = False
+            route["route_path"] = _write_json(BRAIN_ROUTES_ROOT / provider / f"{conversation_id}.json", route)
+            return route
+
+        matched_by = str(selector_resolution.get("matched_by", "")).strip()
+        selected_task_id = requested_task_id
+        if matched_by in {"group_alias", "task_id"}:
+            selected_task_id = _resolve_linked_active_task_id(requested_task_id) or requested_task_id
+        selected_contract = _safe_load_contract(selected_task_id)
+        selected_goal = str(selected_contract.user_goal if selected_contract else "").strip()
+        payload = {
+            "provider": provider,
+            "conversation_id": conversation_id,
+            "conversation_type": conversation_type,
+            "task_id": selected_task_id,
+            "goal": selected_goal or requested_task_id,
+            "updated_at": utc_now_iso(),
+            "last_message_id": message_id,
+            "last_sender_id": sender_id,
+            "last_sender_name": sender_name,
+            "brain_source": source,
+            "selected_via": "explicit_task_selector",
+            "selection_updated_at": utc_now_iso(),
+            "selected_task_ref": requested_task_ref,
+            "selected_match_type": matched_by or "raw_task_id",
+            "selected_task_alias": str(selector_resolution.get("task_alias", "")).strip(),
+            "selected_task_group_alias": str(selector_resolution.get("task_group_alias", "")).strip(),
+        }
+        if selected_contract:
+            payload["lineage_root_task_id"] = str(selected_contract.metadata.get("lineage_root_task_id", "")).strip() or _lineage_root_task_id(selected_task_id)
+            payload["predecessor_task_id"] = str(selected_contract.metadata.get("predecessor_task_id", "")).strip()
+        if session_key:
+            payload["session_key"] = session_key
+        elif str(existing.get("session_key", "")).strip():
+            payload["session_key"] = str(existing.get("session_key", "")).strip()
+
+        route["task_id"] = selected_task_id
+        route["selection_updated"] = str(existing.get("task_id", "")).strip() != selected_task_id
+        route["selection_reason"] = "explicit_task_selector"
+        route["selected_task_ref"] = requested_task_ref
+        route["selected_task_alias"] = str(selector_resolution.get("task_alias", "")).strip()
+        route["selected_task_group_alias"] = str(selector_resolution.get("task_group_alias", "")).strip()
+        route["attached_existing"] = bool(existing)
+
+        explicit_status_query = not goal or (_looks_like_status_query(goal) and not _looks_actionable(goal, intent))
+        if explicit_status_query:
+            snapshot = build_task_status_snapshot(selected_task_id)
+            route["mode"] = "authoritative_task_status"
+            route["authoritative_task_status"] = snapshot
+            route["governance_attention"] = summarize_snapshot_governance(snapshot)
+        else:
+            route["mode"] = "append_to_existing_task"
+
+        route["link_path"] = write_link(provider, conversation_id, payload)
+        route["route_path"] = _write_json(BRAIN_ROUTES_ROOT / provider / f"{conversation_id}.json", route)
+        return route
 
     if canonical_project_task:
         canonical_task_id = str(canonical_project_task.get("task_id", "")).strip()
-        canonical_goal = str(canonical_project_task.get("canonical_goal", "")).strip() or goal
+        canonical_goal = str(canonical_project_task.get("canonical_goal", "")).strip() or goal_for_intent
         if canonical_task_id and not contract_path(canonical_task_id).exists():
             _build_task(
                 canonical_task_id,
@@ -650,7 +790,7 @@ def route_instruction(
             payload["session_key"] = session_key
         elif str(existing.get("session_key", "")).strip():
             payload["session_key"] = str(existing.get("session_key", "")).strip()
-        if _looks_like_status_query(goal) and not _looks_actionable(goal, intent):
+        if _looks_like_status_query(goal_for_intent) and not _looks_actionable(goal_for_intent, intent):
             snapshot = build_task_status_snapshot(canonical_task_id)
             route["mode"] = "authoritative_task_status"
             route["authoritative_task_status"] = snapshot

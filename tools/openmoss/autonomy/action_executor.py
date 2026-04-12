@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 """
 中文说明：
 - 文件路径：`tools/openmoss/autonomy/action_executor.py`
@@ -269,6 +275,11 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
         f"business_verification_requirements: {json.dumps(verifier_requirements, ensure_ascii=False)}",
         "Instruction: this is a background runtime execution request, not a user-facing status conversation.",
         "Instruction: do not reply with a status-only summary before acting. Use approved tools, make the next concrete move, and then report concise verification evidence.",
+        "Browser execution rule: do not exceed the global JinClaw browser budget of 3 open tabs for the active task/session.",
+        "Browser execution rule: reuse the current working tab whenever possible, and close finished or duplicate tabs before opening more.",
+        "Browser execution rule: stability comes before speed when working against live third-party sites.",
+        "Browser execution rule: if the target site starts returning robot checks, 'Something went wrong' pages, or suspicious empty states, stop the batch, cool down, and recover a clean browser session instead of forcing progress.",
+        "Browser execution rule: if repeated browser recovery attempts keep failing on the same live-site step, stop repeating the same browser-only tactic and switch to another available technical route such as direct HTTP, a verified API, or a hybrid collector.",
     ]
     batch_focus = stage_context.get("batch_focus", {}) or {}
     normalized_goal = str(stage_context.get("goal", contract.user_goal) or "").lower()
@@ -304,12 +315,11 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
     if batch_focus and ("seller.neosgo" in normalized_goal or "neosgo" in normalized_goal):
         prompt_lines.extend(
             [
-                "Single-tab execution rule: keep seller.neosgo work inside one chrome-relay tab whenever possible.",
-                "Single-tab execution rule: do not intentionally open a new tab for each Draft listing edit page.",
-                "Single-tab execution rule: prefer navigate(current tab, editHref) over clicking a link that may open target=_blank.",
-                "Tab budget: at most 1 active seller.neosgo chrome-relay tab should remain attached after each listing is processed.",
-                "If extra seller.neosgo tabs appear, close the older or duplicate ones and continue with the surviving working tab.",
-                "After finishing a listing, return the same working tab to Listings overview before selecting the next Draft.",
+                "Seller workflow browser rule: prefer keeping seller.neosgo work inside one working tab whenever possible.",
+                "Seller workflow browser rule: do not intentionally open a new tab for each Draft listing edit page.",
+                "Seller workflow browser rule: prefer navigate(current tab, editHref) over clicking a link that may open target=_blank.",
+                "Seller workflow browser rule: stay within the global 3-tab browser budget, and close older or duplicate seller.neosgo tabs after each listing is processed.",
+                "After finishing a listing, return the surviving working tab to Listings overview before selecting the next Draft.",
             ]
         )
     browser_target_hint = stage_context.get("browser_target_hint", {}) or {}

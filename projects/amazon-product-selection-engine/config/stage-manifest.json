@@ -1,0 +1,98 @@
+{
+  "task_name": "amazon_product_selection",
+  "governance": {
+    "constitution_path": "/Users/mac_claw/.openclaw/workspace/JINCLAW_CONSTITUTION.md",
+    "rule_paths": [
+      "/Users/mac_claw/.openclaw/workspace/projects/jinclaw-governance/jinclaw-live-guardrails.md",
+      "/Users/mac_claw/.openclaw/workspace/tools/openmoss/control_center/doctor_coverage_contract.md"
+    ],
+    "process_paths": [
+      "/Users/mac_claw/.openclaw/workspace/compat/gstack/prompts/jinclaw-gstack-lite.md",
+      "/Users/mac_claw/.openclaw/workspace/tools/openmoss/control_center/orchestrator.py",
+      "/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy/task_contract.py",
+      "/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy/preflight_engine.py"
+    ]
+  },
+  "stages": [
+    {
+      "id": "stage_1_sellersprite_export",
+      "title": "Export official SellerSprite candidate sheet",
+      "browser_actions": [
+        "start an OpenClaw-controlled Chrome session with a valid SellerSprite login",
+        "open SellerSprite Product Research",
+        "prefer the saved preset label 中件FBM when it is visible",
+        "otherwise apply the canonical US + 30-Day + FBM medium-parcel query mapping",
+        "click Search Now and wait for results",
+        "click Export on the results page",
+        "open My Exported Data",
+        "wait for the newest Product Research export to reach Completed",
+        "download the official xlsx file",
+        "validate the xlsx artifact"
+      ],
+      "automation_contract": {
+        "runner_script": "/Users/mac_claw/.openclaw/workspace/projects/amazon-product-selection-engine/scripts/run_stage1_sellersprite_official_export.py",
+        "validator_script": "/Users/mac_claw/.openclaw/workspace/projects/amazon-product-selection-engine/scripts/validate_stage1_export.py"
+      },
+      "handoff_contract": {
+        "required_fields": [
+          "file_path",
+          "file_name",
+          "file_format",
+          "header_preview",
+          "row_count_estimate",
+          "validated_at"
+        ]
+      }
+    },
+    {
+      "id": "stage_2_keyword_extraction",
+      "title": "Extract primary and alternate keywords",
+      "depends_on": [
+        "stage_1_sellersprite_export"
+      ],
+      "handoff_contract": {
+        "required_fields": [
+          "product_keywords_table",
+          "alternate_keyword_entries_table",
+          "unique_alternate_keyword_queue"
+        ]
+      }
+    },
+    {
+      "id": "stage_3_amazon_keyword_collection",
+      "title": "Collect Amazon metrics for every alternate keyword",
+      "depends_on": [
+        "stage_2_keyword_extraction"
+      ],
+      "automation_contract": {
+        "runner_script": "/Users/mac_claw/.openclaw/workspace/projects/amazon-product-selection-engine/scripts/run_stage3_hybrid_with_doctor.py"
+      },
+      "browser_actions": [
+        "load the full unique alternate-keyword queue from stage 2",
+        "prefer the non-browser hybrid collector instead of browser rendering once Amazon front-end browser flow shows instability",
+        "fetch exact Amazon search HTML for each unique alternate keyword with stability-first pacing",
+        "extract the keyword result count and first-page ASIN or link set from raw Amazon HTML",
+        "fetch SellerSprite quick-view metrics for the exact first-page ASIN set through authenticated extension API calls",
+        "join Amazon first-page ASINs with SellerSprite sales and listing-age fields",
+        "treat Amazon HTTP block pages and repeated non-200 responses as circuit-breaker signals instead of acceptable output",
+        "run this stage under OpenClaw doctor monitoring and persist checkpoints",
+        "write the unique keyword metrics table",
+        "expand the collected metrics back onto every alternate-keyword entry"
+      ]
+    },
+    {
+      "id": "stage_4_keyword_aggregation",
+      "title": "Aggregate keyword-level metrics",
+      "depends_on": [
+        "stage_3_amazon_keyword_collection"
+      ]
+    },
+    {
+      "id": "stage_5_final_export",
+      "title": "Export keyword table",
+      "depends_on": [
+        "stage_4_keyword_aggregation"
+      ]
+    }
+  ]
+}

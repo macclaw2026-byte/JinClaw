@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 """
 中文说明：
 - 文件路径：`tools/openmoss/control_center/system_doctor.py`
@@ -20,10 +26,12 @@ import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict, List
 
+from adaptive_fetch_router import build_fetch_route
 from control_plane_builder import build_control_plane
-from paths import CONTROL_CENTER_RUNTIME_ROOT
+from execution_governor import build_project_crawler_gate, classify_blocked_runtime_state, summarize_governance_attention
+from paths import CONTROL_CENTER_RUNTIME_ROOT, FETCH_ROUTES_ROOT
 from mission_supervisor import run_mission_supervisor
 from progress_evidence import build_progress_evidence
 from brain_router import route_instruction
@@ -35,17 +43,23 @@ from task_receipt_engine import emit_route_receipt
 from task_status_snapshot import build_task_status_snapshot
 from memory_writeback_runtime import record_memory_writeback
 from governance_runtime import _build_doctor_coverage_bundle
+from orchestrator import build_control_center_package
 
 AUTONOMY_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy")
 if str(AUTONOMY_DIR) not in sys.path:
     sys.path.insert(0, str(AUTONOMY_DIR))
 
-from manager import LINKS_ROOT, TASKS_ROOT, load_contract, load_state, log_event, save_state, create_task_from_contract, task_dir
-from learning_engine import load_task_summary
-from promotion_engine import promote_doctor_strategy, resolve_doctor_strategy
+from manager import LINKS_ROOT, TASKS_ROOT, create_task_from_contract, ensure_autonomy_root_mission_link, events_path, find_link_by_task_id, load_contract, load_state, log_event, save_contract, save_state, task_dir
+from learning_engine import load_task_summary, record_error, record_learning, update_task_summary
+from promotion_engine import promote_doctor_strategy, resolve_doctor_strategy, resolve_rule_for_error
+from task_contract import TaskContract
+from memory_writeback_runtime import load_memory_writeback
 
 DOCTOR_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "doctor"
 DOCTOR_HEARTBEATS_ROOT = DOCTOR_ROOT / "heartbeats"
+DOCTOR_PROCESS_INCIDENTS_ROOT = DOCTOR_ROOT / "process_incidents"
+DOCTOR_TASK_INCIDENTS_ROOT = DOCTOR_ROOT / "task_incidents"
+DOCTOR_RESOLUTIONS_ROOT = DOCTOR_ROOT / "resolutions"
 WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
 CONTROL_CENTER_ROOT = WORKSPACE_ROOT / "tools/openmoss/control_center"
 GSTACK_REQUIRED_FILES = [
@@ -67,6 +81,15 @@ GSTACK_REQUIRED_FILES = [
     WORKSPACE_ROOT / 'tools/openmoss/control_center/acp_dispatch_builder.py',
 ]
 GSTACK_LIFECYCLE = ['think', 'plan', 'build', 'review', 'test', 'ship', 'reflect']
+DOCTOR_RESOLUTION_REQUIRED_FIELDS = [
+    "scope",
+    "subject_id",
+    "resolution_summary",
+    "root_cause",
+    "fix_summary",
+    "verification_summary",
+    "reusable_rule",
+]
 
 # Single-doctor architecture rule:
 # JinClaw must have exactly one canonical whole-system doctor.
@@ -96,6 +119,15 @@ def _write_json(path: Path, payload: Dict[str, object]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _read_json(path: Path, default: Dict[str, object] | list | None = None):
+    if not path.exists():
+        return {} if default is None else default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {} if default is None else default
+
+
 def _seconds_since(iso_text: str) -> float:
     """
     中文注解：
@@ -112,6 +144,830 @@ def _seconds_since(iso_text: str) -> float:
     return max(0.0, (datetime.now(timezone.utc) - dt).total_seconds())
 
 
+def _slugify_runtime_identifier(value: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+    return slug[:80] or "unknown"
+
+
+def _tail_file(path_text: str, *, max_lines: int = 60, max_chars: int = 6000) -> Dict[str, object]:
+    path = Path(str(path_text or "").strip())
+    if not str(path):
+        return {"path": "", "exists": False, "tail": ""}
+    if not path.exists():
+        return {"path": str(path), "exists": False, "tail": ""}
+    try:
+        tail = "\n".join(path.read_text(encoding="utf-8", errors="replace").splitlines()[-max_lines:])
+    except OSError as exc:
+        return {"path": str(path), "exists": True, "tail": "", "error": str(exc)}
+    if len(tail) > max_chars:
+        tail = tail[-max_chars:]
+    return {"path": str(path), "exists": True, "tail": tail}
+
+
+def _read_jsonl_tail(path: Path, *, max_items: int = 20) -> List[Dict[str, object]]:
+    if not path.exists():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    items: List[Dict[str, object]] = []
+    for raw in lines[-max_items:]:
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            items.append(payload)
+    return items
+
+
+def _stage_snapshot(state) -> Dict[str, Dict[str, object]]:
+    return {
+        name: {
+            "status": stage.status,
+            "attempts": stage.attempts,
+            "summary": stage.summary,
+            "verification_status": stage.verification_status,
+            "blocker": stage.blocker,
+            "started_at": stage.started_at,
+            "completed_at": stage.completed_at,
+            "updated_at": stage.updated_at,
+        }
+        for name, stage in (state.stages or {}).items()
+    }
+
+
+def _append_task_summary_note(task_id: str, note: str, *, extra: Dict[str, object] | None = None) -> Dict[str, object]:
+    text = str(note or "").strip()
+    payload = dict(extra or {})
+    if text:
+        summary = load_task_summary(task_id)
+        notes = [str(item).strip() for item in summary.get("notes", []) or [] if str(item).strip()]
+        notes.append(text)
+        payload["notes"] = notes[-20:]
+    if not payload:
+        return load_task_summary(task_id)
+    return update_task_summary(task_id, payload)
+
+
+def _process_incident_signature(incident: Dict[str, object]) -> str:
+    parts = [
+        str(incident.get("label", "")).strip(),
+        str(incident.get("state", "")).strip(),
+        str(incident.get("state_family", "")).strip(),
+        str(incident.get("last_exit_code", "")).strip(),
+        str(incident.get("runs", "")).strip(),
+    ]
+    return "|".join(parts)
+
+
+def _process_incident_task_id(label: str) -> str:
+    return f"doctor-process-watch-{_slugify_runtime_identifier(label)}"
+
+
+def _task_incident_task_id(task_id: str) -> str:
+    return f"doctor-task-watch-{_slugify_runtime_identifier(task_id)}"
+
+
+def _task_incident_signature(task_id: str, diagnosis: Dict[str, object], repair: Dict[str, object]) -> str:
+    blocked_runtime_state = diagnosis.get("blocked_runtime_state", {}) or {}
+    parts = [
+        task_id,
+        str(diagnosis.get("status", "")).strip(),
+        str(diagnosis.get("current_stage", "")).strip(),
+        str(diagnosis.get("reason", "")).strip(),
+        str(diagnosis.get("next_action", "")).strip(),
+        str(blocked_runtime_state.get("category", "")).strip(),
+        str(repair.get("reason", "")).strip(),
+    ]
+    return "|".join(parts)
+
+
+def _task_incident_signal_text(task_id: str, diagnosis: Dict[str, object], state, recent_events: List[Dict[str, object]]) -> str:
+    parts = [
+        str(diagnosis.get("reason", "")).strip(),
+        str(diagnosis.get("next_action", "")).strip(),
+        " ".join(str(item).strip() for item in (state.blockers or []) if str(item).strip()),
+    ]
+    for stage in (state.stages or {}).values():
+        if stage.summary:
+            parts.append(stage.summary)
+        if stage.blocker:
+            parts.append(stage.blocker)
+    for event in recent_events[-8:]:
+        parts.extend(
+            [
+                str(event.get("event_type", "")).strip(),
+                str(event.get("error", "")).strip(),
+                str(event.get("summary", "")).strip(),
+                str(event.get("diagnosis", "")).strip(),
+            ]
+        )
+    return "\n".join(part for part in parts if part)
+
+
+def _doctor_reusable_rule(scope: str, report: Dict[str, object]) -> str:
+    diagnosis = report.get("diagnosis", {}) or {}
+    reason = str(diagnosis.get("reason") or report.get("doctor_attention_reason") or "").strip()
+    blocked_runtime_state = diagnosis.get("blocked_runtime_state", {}) or {}
+    blocked_category = str(blocked_runtime_state.get("category", "")).strip()
+    if reason in {"idle_without_active_execution", "waiting_external_without_active_execution", "stale_waiting_external"}:
+        return "When execution becomes idle or stale without a live run, clear distorted runtime metadata and immediately restart the right stage instead of leaving the task parked."
+    if blocked_category == "project_crawler_remediation":
+        return "Only apply crawler remediation gates to routes that actually depend on the affected site capability, and auto-clear stale global gates."
+    if blocked_category == "session_binding":
+        return "Attach or recover a valid autonomy session link before letting a live task remain blocked on session binding."
+    if "goal" in reason or "drift" in reason:
+        return "When execution drifts away from the goal anchor, force a re-plan or reroot immediately before more work accumulates."
+    if report.get("last_exit_code") not in {None, 0}:
+        return "Install dependency and startup preflight guards for recurrent launchd crashes before re-running the same process again."
+    return "When doctor cannot repair an anomaly locally, package the evidence, route it to an AI repair mission, and only close after verified recovery plus reusable learning."
+
+
+def _doctor_evolution_suggestions(scope: str, report: Dict[str, object]) -> List[str]:
+    diagnosis = report.get("diagnosis", {}) or {}
+    reason = str(diagnosis.get("reason") or report.get("doctor_attention_reason") or "").strip()
+    blocked_runtime_state = diagnosis.get("blocked_runtime_state", {}) or {}
+    blocked_category = str(blocked_runtime_state.get("category", "")).strip()
+    matched_rule = report.get("matched_durable_rule", {}) or {}
+    suggestions: List[str] = []
+    if reason in {"idle_without_active_execution", "waiting_external_without_active_execution", "stale_waiting_external"}:
+        suggestions.append("add stronger liveness and stale-run guards so doctor can restart the exact stage before the task drifts further")
+    if blocked_category == "project_crawler_remediation":
+        suggestions.append("scope crawler remediation to route-relevant sites instead of applying a broad project-wide block")
+    if blocked_category == "session_binding":
+        suggestions.append("pre-bind a background autonomy session for root missions before they hit session-binding deadlocks")
+    if "goal" in reason or "drift" in reason:
+        suggestions.append("tighten goal-anchor verification and reroot mismatched execution earlier in the control loop")
+    if report.get("last_exit_code") not in {None, 0}:
+        suggestions.append("install dependency preflight checks and startup self-tests for launchd services before restart")
+    if str(matched_rule.get("preferred_action", "")).strip():
+        suggestions.append(f"promote durable runtime action: {matched_rule.get('preferred_action')}")
+    suggestions.extend(
+        [
+            "persist a structured doctor resolution report so future repairs start from concrete evidence instead of rediscovery",
+            "promote the resolved pattern into durable doctor and runtime guidance after verification passes",
+        ]
+    )
+    deduped: List[str] = []
+    for item in suggestions:
+        text = str(item).strip()
+        if text and text not in deduped:
+            deduped.append(text)
+    return deduped[:6]
+
+
+def _record_doctor_resolution(
+    *,
+    scope: str,
+    subject_id: str,
+    watch_task_id: str,
+    report: Dict[str, object],
+    resolution_reason: str,
+) -> Dict[str, object]:
+    now = _utc_now_iso()
+    reusable_rule = _doctor_reusable_rule(scope, report)
+    evolution_payload = {
+        "task_id": watch_task_id or subject_id,
+        "subject_id": subject_id,
+        "scope": scope,
+        "proposed_at": now,
+        "reason": resolution_reason,
+        "current_blockers": list((report.get("blockers", []) or [])),
+        "learning_backlog": list(((report.get("task_summary", {}) or {}).get("learning_backlog", []) or [])),
+        "suggested_runtime_changes": _doctor_evolution_suggestions(scope, report),
+        "reusable_rule": reusable_rule,
+        "report_path": str(report.get("report_path", "")).strip(),
+    }
+    evolution_path = ""
+    if watch_task_id and task_dir(watch_task_id).exists():
+        evolution_path = str(task_dir(watch_task_id) / "runtime-evolution-proposal.json")
+        _write_json(Path(evolution_path), evolution_payload)
+        log_event(watch_task_id, "runtime_evolution_proposed", path=evolution_path, source="system_doctor_resolution")
+    resolution_payload = {
+        "written_at": now,
+        "scope": scope,
+        "subject_id": subject_id,
+        "watch_task_id": watch_task_id,
+        "resolution_reason": resolution_reason,
+        "report_signature": str(report.get("signature", "")).strip(),
+        "report_path": str(report.get("report_path", "")).strip(),
+        "reusable_rule": reusable_rule,
+        "evolution_proposal_path": evolution_path,
+        "suggested_runtime_changes": evolution_payload.get("suggested_runtime_changes", []),
+    }
+    doctor_reason = str(((report.get("diagnosis", {}) or {}).get("reason") or report.get("doctor_attention_reason") or "")).strip()
+    if doctor_reason:
+        resolution_payload["promoted_rule"] = promote_doctor_strategy(
+            doctor_reason=doctor_reason,
+            preferred_repair=str(((report.get("repair", {}) or {}).get("reason") or resolution_reason)).strip() or resolution_reason,
+            preferred_escalation_mode="ai_takeover",
+            prevention_hint=reusable_rule,
+            task_id=watch_task_id or subject_id,
+            evidence={
+                "status": str(report.get("status", "")).strip(),
+                "current_stage": str(report.get("current_stage", "")).strip(),
+                "scope": scope,
+            },
+        )
+    resolution_slug = _slugify_runtime_identifier(f"{scope}-{subject_id}")
+    resolution_path = DOCTOR_RESOLUTIONS_ROOT / f"{resolution_slug}.json"
+    resolution_payload["path"] = str(resolution_path)
+    _write_json(resolution_path, resolution_payload)
+
+    learning_owner = watch_task_id if watch_task_id and task_dir(watch_task_id).exists() else subject_id
+    record_learning(
+        learning_owner,
+        f"{scope} resolved for {subject_id}: {resolution_reason}. Reusable rule: {reusable_rule}",
+    )
+    _append_task_summary_note(
+        learning_owner,
+        f"Doctor resolved {scope} for {subject_id}: {resolution_reason}",
+        extra={
+            "doctor_last_resolution_path": str(resolution_path),
+            "doctor_last_resolution_at": now,
+            "doctor_evolution_proposal_path": evolution_path,
+        },
+    )
+    if scope == "task_incident" and task_dir(subject_id).exists():
+        _append_task_summary_note(
+            subject_id,
+            f"Doctor AI watch resolved the anomaly via {watch_task_id or 'doctor'}: {resolution_reason}",
+            extra={
+                "doctor_watch_task_id": watch_task_id,
+                "doctor_last_resolution_path": str(resolution_path),
+                "doctor_last_resolution_at": now,
+                "doctor_evolution_proposal_path": evolution_path,
+            },
+        )
+        state = load_state(subject_id)
+        state.metadata["doctor_last_resolution"] = resolution_payload
+        state.metadata["doctor_task_incident_active"] = False
+        state.last_update_at = now
+        save_state(state)
+        record_memory_writeback(
+            subject_id,
+            source="doctor:ai_resolution",
+            summary={
+                "attention_required": False,
+                "state_patch": {},
+                "governance_patch": {},
+                "next_actions": ["keep the reusable rule active in future doctor cycles"],
+                "warnings": [],
+                "errors": [],
+                "decisions": ["doctor_ai_watch_resolved", "runtime_evolution_proposed"],
+                "memory_targets": ["runtime", "task", "project"],
+                "memory_reasons": ["doctor_resolution", "system_evolution"],
+            },
+        )
+    if watch_task_id and task_dir(watch_task_id).exists():
+        watch_state = load_state(watch_task_id)
+        watch_state.metadata["doctor_watch_resolution"] = resolution_payload
+        watch_state.metadata["doctor_watch_active"] = False
+        watch_state.last_update_at = now
+        save_state(watch_state)
+        log_event(watch_task_id, "doctor_watch_resolved", resolution=resolution_payload)
+    return resolution_payload
+
+
+def _reopen_process_incident_task(task_id: str, incident_report: Dict[str, object]) -> str:
+    state = load_state(task_id)
+    history = list(state.metadata.get("doctor_process_incident_history", []) or [])
+    history.append(
+        {
+            "at": str(incident_report.get("generated_at", "")).strip(),
+            "signature": str(incident_report.get("signature", "")).strip(),
+            "label": str(incident_report.get("label", "")).strip(),
+            "reason": str(incident_report.get("doctor_attention_reason", "")).strip(),
+            "last_exit_code": incident_report.get("last_exit_code"),
+            "report_path": str(incident_report.get("report_path", "")).strip(),
+        }
+    )
+    state.metadata["doctor_process_incident"] = incident_report
+    state.metadata["doctor_process_incident_history"] = history[-12:]
+    state.metadata["doctor_process_incident_active"] = True
+    state.metadata["doctor_process_incident_last_report"] = str(incident_report.get("report_path", "")).strip()
+    state.metadata["doctor_process_incident_last_seen_at"] = _utc_now_iso()
+    state.metadata.pop("waiting_external", None)
+    state.metadata.pop("active_execution", None)
+
+    reopened = False
+    if state.status in {"completed", "failed", "blocked"}:
+        target_stage = "understand" if "understand" in state.stages else state.first_pending_stage() or state.current_stage or ""
+        for stage_name in state.stage_order:
+            stage = state.stages.get(stage_name)
+            if not stage:
+                continue
+            stage.status = "pending"
+            stage.summary = ""
+            stage.blocker = ""
+            stage.completed_at = ""
+            stage.updated_at = _utc_now_iso()
+        milestone_progress = dict(state.metadata.get("milestone_progress", {}) or {})
+        for entry in milestone_progress.values():
+            if not isinstance(entry, dict):
+                continue
+            entry["status"] = "pending"
+            entry["completed_at"] = ""
+            entry["summary"] = ""
+        if milestone_progress:
+            state.metadata["milestone_progress"] = milestone_progress
+            stats = state.metadata.get("milestone_stats", {}) or {}
+            stats["required_completed"] = 0
+            stats["all_required_completed"] = False
+            state.metadata["milestone_stats"] = stats
+        state.status = "planning"
+        state.current_stage = target_stage
+        state.blockers = [f"doctor detected runtime incident for {incident_report.get('label', task_id)}"]
+        state.next_action = f"start_stage:{target_stage}" if target_stage else "initialize"
+        reopened = True
+    state.last_update_at = _utc_now_iso()
+    save_state(state)
+    log_event(
+        task_id,
+        "doctor_process_incident_observed",
+        incident_report=str(incident_report.get("report_path", "")).strip(),
+        signature=str(incident_report.get("signature", "")).strip(),
+        last_exit_code=incident_report.get("last_exit_code"),
+        reopened=reopened,
+    )
+    return "reactivated" if reopened else "updated"
+
+
+def _build_process_incident_goal(incident_report: Dict[str, object]) -> str:
+    name = str(incident_report.get("name", "")).strip() or str(incident_report.get("label", "")).strip() or "runtime job"
+    label = str(incident_report.get("label", "")).strip() or name
+    description = str(incident_report.get("description", "")).strip()
+    trigger = str(incident_report.get("trigger_summary", "")).strip()
+    status_text = str(incident_report.get("status_text", "")).strip()
+    reason = str(incident_report.get("doctor_attention_reason", "")).strip()
+    report_path = str(incident_report.get("report_path", "")).strip()
+    last_exit_code = incident_report.get("last_exit_code")
+    lines = [
+        f"持续监控并修复运行进程 incident：{name}（{label}）。",
+        f"当前 doctor 检测到该进程异常，状态为 {status_text or incident_report.get('state', 'unknown')}，最近 exit code 为 {last_exit_code if last_exit_code is not None else 'unknown'}，触发原因是 {reason or 'runtime incident'}。",
+    ]
+    if description:
+        lines.append(f"任务职责：{description}")
+    if trigger:
+        lines.append(f"触发方式：{trigger}")
+    if report_path:
+        lines.append(f"证据包：{report_path}")
+    lines.append("请基于 launchctl 状态、stdout/stderr 日志尾部和历史规则先定位根因，再实施修复、验证恢复，并把结论写入学习与复盘。")
+    return "\n".join(lines)
+
+
+def _upsert_process_incident_task(incident_report: Dict[str, object]) -> Dict[str, object]:
+    label = str(incident_report.get("label", "")).strip()
+    task_id = _process_incident_task_id(label)
+    created = False
+    if not task_dir(task_id).exists():
+        goal = _build_process_incident_goal(incident_report)
+        package = build_control_center_package(task_id, goal, source="system_doctor:process_incident:root_mission")
+        package["metadata"] = {
+            **(package.get("metadata", {}) or {}),
+            "root_mission": True,
+            "doctor_process_incident_watch": True,
+            "doctor_process_label": label,
+            "doctor_process_incident": incident_report,
+        }
+        contract = TaskContract.from_dict(
+            {
+                "task_id": task_id,
+                "user_goal": package.get("goal", goal),
+                "done_definition": package.get("done_definition", ""),
+                "hard_constraints": package.get("hard_constraints", []) or [],
+                "soft_preferences": [],
+                "allowed_tools": package.get("allowed_tools", []) or [],
+                "forbidden_actions": package.get("forbidden_actions", []) or [],
+                "stages": package.get("stages", []) or [],
+                "metadata": package.get("metadata", {}) or {},
+            }
+        )
+        create_task_from_contract(contract)
+        log_event(
+            task_id,
+            "doctor_process_incident_task_created",
+            incident_report=str(incident_report.get("report_path", "")).strip(),
+            signature=str(incident_report.get("signature", "")).strip(),
+            label=label,
+        )
+        task_action = "created"
+        created = True
+    else:
+        task_action = _reopen_process_incident_task(task_id, incident_report)
+    link = ensure_autonomy_root_mission_link(task_id)
+    return {
+        "task_id": task_id,
+        "task_action": task_action,
+        "created": created,
+        "link_provider": str(link.get("provider", "")).strip(),
+        "link_conversation_id": str(link.get("conversation_id", "")).strip(),
+        "link_kind": str(link.get("link_kind", "")).strip(),
+    }
+
+
+def _task_incident_error_text(report: Dict[str, object]) -> str:
+    diagnosis = report.get("diagnosis", {}) or {}
+    recent_events = list(report.get("recent_events", []) or [])
+    latest_signal = ""
+    for event in reversed(recent_events):
+        latest_signal = str(event.get("error", "")).strip() or str(event.get("summary", "")).strip()
+        if latest_signal:
+            break
+    parts = [
+        f"doctor_task_incident:{str(diagnosis.get('reason', '')).strip()}",
+        str(report.get("next_action", "")).strip(),
+        latest_signal,
+    ]
+    return " | ".join(part for part in parts if part)[:2000]
+
+
+def _process_incident_error_text(report: Dict[str, object]) -> str:
+    stderr_tail = (report.get("stderr_tail", {}) or {}).get("tail", "")
+    last_tail_line = ""
+    for line in reversed(str(stderr_tail or "").splitlines()):
+        if line.strip():
+            last_tail_line = line.strip()
+            break
+    parts = [
+        f"doctor_process_incident:{str(report.get('label', '')).strip()}",
+        str(report.get("doctor_attention_reason", "")).strip(),
+        f"exit:{report.get('last_exit_code')}",
+        last_tail_line,
+    ]
+    return " | ".join(part for part in parts if part)[:2000]
+
+
+def _build_task_incident_goal(incident_report: Dict[str, object]) -> str:
+    task_id = str(incident_report.get("watched_task_id", "")).strip() or "unknown-task"
+    goal = str(incident_report.get("goal", "")).strip()
+    diagnosis = incident_report.get("diagnosis", {}) or {}
+    repair = incident_report.get("repair", {}) or {}
+    lines = [
+        f"持续监控并修复任务异常：{task_id}。",
+        f"当前 doctor 检测到该任务异常，状态为 {incident_report.get('status', 'unknown')}，阶段为 {incident_report.get('current_stage', 'unknown')}，原因是 {diagnosis.get('reason', 'unknown')}。",
+        f"doctor 一线修复结果：{repair.get('reason', 'not_attempted')}；若未真正恢复，请继续接管直到异常解除。",
+    ]
+    if goal:
+        lines.append(f"任务目标：{goal}")
+    if str(incident_report.get("next_action", "")).strip():
+        lines.append(f"当前 next_action：{incident_report.get('next_action')}")
+    if str(incident_report.get("report_path", "")).strip():
+        lines.append(f"证据包：{incident_report.get('report_path')}")
+    lines.append("请先看状态快照、阶段信息、最近事件和 durable rules，定位根因后实施修复、验证恢复，并在恢复后写出 root cause、reusable rule 与 runtime evolution proposal。")
+    return "\n".join(lines)
+
+
+def _reopen_task_incident_task(task_id: str, incident_report: Dict[str, object]) -> str:
+    state = load_state(task_id)
+    history = list(state.metadata.get("doctor_task_incident_history", []) or [])
+    history.append(
+        {
+            "at": str(incident_report.get("generated_at", "")).strip(),
+            "signature": str(incident_report.get("signature", "")).strip(),
+            "watched_task_id": str(incident_report.get("watched_task_id", "")).strip(),
+            "reason": str(((incident_report.get("diagnosis", {}) or {}).get("reason", ""))).strip(),
+            "report_path": str(incident_report.get("report_path", "")).strip(),
+        }
+    )
+    state.metadata["doctor_task_incident"] = incident_report
+    state.metadata["doctor_task_incident_history"] = history[-12:]
+    state.metadata["doctor_watch_active"] = True
+    state.metadata["doctor_watched_task_id"] = str(incident_report.get("watched_task_id", "")).strip()
+    state.metadata["doctor_task_incident_last_report"] = str(incident_report.get("report_path", "")).strip()
+    state.metadata["doctor_task_incident_last_seen_at"] = _utc_now_iso()
+    reopened = False
+    if state.status in {"completed", "failed", "blocked"}:
+        target_stage = "understand" if "understand" in state.stages else state.first_pending_stage() or state.current_stage or ""
+        for stage_name in state.stage_order:
+            stage = state.stages.get(stage_name)
+            if not stage:
+                continue
+            stage.status = "pending"
+            stage.summary = ""
+            stage.blocker = ""
+            stage.completed_at = ""
+            stage.updated_at = _utc_now_iso()
+        state.status = "planning"
+        state.current_stage = target_stage
+        state.blockers = [f"doctor detected unresolved anomaly for {incident_report.get('watched_task_id', task_id)}"]
+        state.next_action = f"start_stage:{target_stage}" if target_stage else "initialize"
+        reopened = True
+    state.last_update_at = _utc_now_iso()
+    save_state(state)
+    log_event(
+        task_id,
+        "doctor_task_incident_observed",
+        incident_report=str(incident_report.get("report_path", "")).strip(),
+        signature=str(incident_report.get("signature", "")).strip(),
+        watched_task_id=str(incident_report.get("watched_task_id", "")).strip(),
+        reopened=reopened,
+    )
+    return "reactivated" if reopened else "updated"
+
+
+def _upsert_task_incident_task(incident_report: Dict[str, object]) -> Dict[str, object]:
+    watched_task_id = str(incident_report.get("watched_task_id", "")).strip()
+    task_id = _task_incident_task_id(watched_task_id or "unknown-task")
+    created = False
+    if not task_dir(task_id).exists():
+        goal = _build_task_incident_goal(incident_report)
+        package = build_control_center_package(task_id, goal, source="system_doctor:task_incident:root_mission")
+        package["metadata"] = {
+            **(package.get("metadata", {}) or {}),
+            "root_mission": True,
+            "doctor_task_incident_watch": True,
+            "doctor_watched_task_id": watched_task_id,
+            "doctor_task_incident": incident_report,
+        }
+        contract = TaskContract.from_dict(
+            {
+                "task_id": task_id,
+                "user_goal": package.get("goal", goal),
+                "done_definition": package.get("done_definition", ""),
+                "hard_constraints": package.get("hard_constraints", []) or [],
+                "soft_preferences": [],
+                "allowed_tools": package.get("allowed_tools", []) or [],
+                "forbidden_actions": package.get("forbidden_actions", []) or [],
+                "stages": package.get("stages", []) or [],
+                "metadata": package.get("metadata", {}) or {},
+            }
+        )
+        create_task_from_contract(contract)
+        log_event(
+            task_id,
+            "doctor_task_incident_task_created",
+            incident_report=str(incident_report.get("report_path", "")).strip(),
+            signature=str(incident_report.get("signature", "")).strip(),
+            watched_task_id=watched_task_id,
+        )
+        task_action = "created"
+        created = True
+    else:
+        task_action = _reopen_task_incident_task(task_id, incident_report)
+    link = ensure_autonomy_root_mission_link(task_id)
+    return {
+        "task_id": task_id,
+        "task_action": task_action,
+        "created": created,
+        "link_provider": str(link.get("provider", "")).strip(),
+        "link_conversation_id": str(link.get("conversation_id", "")).strip(),
+        "link_kind": str(link.get("link_kind", "")).strip(),
+    }
+
+
+def _should_route_task_incident_to_ai(task_id: str, canonical_task_id: str, diagnosis: Dict[str, object], repair: Dict[str, object]) -> bool:
+    if not diagnosis.get("stuck"):
+        return False
+    if task_id != canonical_task_id:
+        return False
+    if task_id.startswith("doctor-process-watch-") or task_id.startswith("doctor-task-watch-"):
+        return False
+    contract = load_contract(task_id)
+    metadata = contract.metadata or {}
+    if metadata.get("doctor_process_incident_watch") or metadata.get("doctor_task_incident_watch"):
+        return False
+    state = load_state(task_id)
+    if str(state.metadata.get("superseded_by_task_id", "")).strip():
+        return False
+    blocked_category = str(((diagnosis.get("blocked_runtime_state", {}) or {}).get("category", ""))).strip()
+    if blocked_category == "targeted_fix":
+        return False
+    if repair.get("repaired") and str(repair.get("reason", "")).strip() not in {"doctor_failure_takeover_started", "awaiting_human_guidance"}:
+        return False
+    return True
+
+
+def _build_task_incident_report(candidate: Dict[str, object]) -> Dict[str, object]:
+    task_id = str(candidate.get("task_id", "")).strip()
+    diagnosis = dict(candidate.get("diagnosis", {}) or {})
+    repair = dict(candidate.get("repair", {}) or {})
+    state = load_state(task_id)
+    contract = load_contract(task_id)
+    summary = load_task_summary(task_id)
+    recent_events = _read_jsonl_tail(events_path(task_id), max_items=20)
+    signal_text = _task_incident_signal_text(task_id, diagnosis, state, recent_events)
+    matched_rule = resolve_rule_for_error(signal_text) if signal_text else None
+    status_snapshot = build_task_status_snapshot(task_id)
+    report = {
+        "generated_at": _utc_now_iso(),
+        "last_seen_at": _utc_now_iso(),
+        "active": True,
+        "watched_task_id": task_id,
+        "canonical_task_id": str(candidate.get("canonical_task_id", task_id)).strip() or task_id,
+        "goal": contract.user_goal,
+        "done_definition": contract.done_definition,
+        "status": state.status,
+        "current_stage": state.current_stage,
+        "next_action": state.next_action,
+        "blockers": list(state.blockers or []),
+        "active_execution": state.metadata.get("active_execution", {}) or {},
+        "waiting_external": state.metadata.get("waiting_external", {}) or {},
+        "stage_snapshot": _stage_snapshot(state),
+        "diagnosis": diagnosis,
+        "repair": repair,
+        "priority": dict(candidate.get("priority", {}) or {}),
+        "task_summary": summary,
+        "memory_writeback": load_memory_writeback(task_id),
+        "recent_events": recent_events,
+        "task_status_snapshot": {
+            "governance": status_snapshot.get("governance", {}) or {},
+            "authoritative_summary": status_snapshot.get("authoritative_summary", {}),
+        },
+        "signal_excerpt": signal_text[-4000:] if signal_text else "",
+        "matched_durable_rule": {
+            "error_key": str((matched_rule or {}).get("error_key", "")).strip(),
+            "preferred_action": str((matched_rule or {}).get("preferred_action", "")).strip(),
+            "preferred_guard": str((matched_rule or {}).get("preferred_guard", "")).strip(),
+            "prevention_hint": str((matched_rule or {}).get("prevention_hint", "")).strip(),
+        }
+        if matched_rule
+        else {},
+    }
+    report["signature"] = _task_incident_signature(task_id, diagnosis, repair)
+    return report
+
+
+def _reconcile_task_incidents(candidates: List[Dict[str, object]], *, idle_after_seconds: int) -> Dict[str, object]:
+    now = _utc_now_iso()
+    active_candidates = [item for item in candidates if str(item.get("task_id", "")).strip()]
+    active_task_ids = {str(item.get("task_id", "")).strip() for item in active_candidates}
+    resolved: List[Dict[str, object]] = []
+    dispatched: List[Dict[str, object]] = []
+
+    if DOCTOR_TASK_INCIDENTS_ROOT.exists():
+        for path in sorted(DOCTOR_TASK_INCIDENTS_ROOT.glob("*.json")):
+            payload = _read_json(path, {})
+            if not isinstance(payload, dict):
+                continue
+            watched_task_id = str(payload.get("watched_task_id", "")).strip()
+            if not watched_task_id or watched_task_id in active_task_ids:
+                continue
+            if task_dir(watched_task_id).exists():
+                diagnosis = diagnose_task(watched_task_id, idle_after_seconds=idle_after_seconds)
+                if diagnosis.get("stuck"):
+                    continue
+            if not payload.get("active") and payload.get("resolution"):
+                continue
+            payload["active"] = False
+            payload["resolved_at"] = now
+            payload["last_seen_at"] = now
+            watch_task_id = str(((payload.get("brain_dispatch", {}) or {}).get("task_id", ""))).strip() or _task_incident_task_id(watched_task_id)
+            payload["resolution"] = _record_doctor_resolution(
+                scope="task_incident",
+                subject_id=watched_task_id,
+                watch_task_id=watch_task_id,
+                report=payload,
+                resolution_reason="task_no_longer_requires_doctor_intervention",
+            )
+            _write_json(path, payload)
+            resolved.append(payload)
+
+    for candidate in active_candidates:
+        report = _build_task_incident_report(candidate)
+        watched_task_id = str(report.get("watched_task_id", "")).strip()
+        slug = _slugify_runtime_identifier(watched_task_id)
+        report_path = DOCTOR_TASK_INCIDENTS_ROOT / f"{slug}.json"
+        existing = _read_json(report_path, {})
+        history = list(existing.get("history", []) or []) if isinstance(existing, dict) else []
+        last_signature = str((existing or {}).get("last_dispatched_signature", "")).strip() if isinstance(existing, dict) else ""
+        report["report_path"] = str(report_path)
+        should_dispatch = report["signature"] != last_signature or not bool((existing or {}).get("active"))
+        if should_dispatch:
+            dispatch = _upsert_task_incident_task(report)
+            report["brain_dispatch"] = dispatch
+            report["last_dispatched_at"] = now
+            report["last_dispatched_signature"] = report["signature"]
+            history.append(
+                {
+                    "at": now,
+                    "signature": report["signature"],
+                    "reason": str(((report.get("diagnosis", {}) or {}).get("reason", ""))).strip(),
+                    "task_id": str(dispatch.get("task_id", "")).strip(),
+                    "task_action": str(dispatch.get("task_action", "")).strip(),
+                }
+            )
+            record_error(watched_task_id, _task_incident_error_text(report))
+            dispatched.append(report)
+        else:
+            report["brain_dispatch"] = dict((existing or {}).get("brain_dispatch", {}) or {})
+            report["last_dispatched_at"] = str((existing or {}).get("last_dispatched_at", "")).strip()
+            report["last_dispatched_signature"] = last_signature
+        report["history"] = history[-12:]
+        _write_json(report_path, report)
+
+    return {
+        "incident_total": len(active_candidates),
+        "dispatched_total": len(dispatched),
+        "resolved_total": len(resolved),
+        "items": dispatched,
+        "resolved": resolved[:20],
+    }
+
+
+def _reconcile_process_incidents(control_plane: Dict[str, object]) -> Dict[str, object]:
+    incident_items = list(((control_plane.get("runtime_jobs_registry", {}) or {}).get("incidents", []) or []))
+    now = _utc_now_iso()
+    reports: list[Dict[str, object]] = []
+    resolved_reports: list[Dict[str, object]] = []
+    active_labels = {str(item.get("label", "")).strip() for item in incident_items if str(item.get("label", "")).strip()}
+
+    if DOCTOR_PROCESS_INCIDENTS_ROOT.exists():
+        for path in sorted(DOCTOR_PROCESS_INCIDENTS_ROOT.glob("*.json")):
+            payload = _read_json(path, {})
+            if not isinstance(payload, dict):
+                continue
+            label = str(payload.get("label", "")).strip()
+            if label and label not in active_labels and (payload.get("active") or not payload.get("resolution")):
+                payload["active"] = False
+                payload["resolved_at"] = now
+                payload["last_seen_at"] = now
+                watch_task_id = str(((payload.get("brain_dispatch", {}) or {}).get("task_id", ""))).strip() or _process_incident_task_id(label)
+                payload["resolution"] = _record_doctor_resolution(
+                    scope="process_incident",
+                    subject_id=label,
+                    watch_task_id=watch_task_id,
+                    report=payload,
+                    resolution_reason="process_no_longer_reported_as_incident",
+                )
+                _write_json(path, payload)
+                resolved_reports.append(payload)
+
+    for incident in incident_items:
+        label = str(incident.get("label", "")).strip()
+        if not label:
+            continue
+        slug = _slugify_runtime_identifier(label)
+        report_path = DOCTOR_PROCESS_INCIDENTS_ROOT / f"{slug}.json"
+        existing = _read_json(report_path, {})
+        stderr_tail = _tail_file(str(incident.get("stderr_path", "")).strip())
+        stdout_tail = _tail_file(str(incident.get("stdout_path", "")).strip())
+        signal_text = "\n".join(
+            part
+            for part in [
+                str(incident.get("launchctl_excerpt", "")).strip(),
+                str(stderr_tail.get("tail", "")).strip(),
+                str(stdout_tail.get("tail", "")).strip(),
+            ]
+            if part
+        )
+        matched_rule = resolve_rule_for_error(signal_text) if signal_text else None
+        signature = _process_incident_signature(incident)
+        report = {
+            "generated_at": now,
+            "last_seen_at": now,
+            "active": True,
+            "signature": signature,
+            **incident,
+            "stderr_tail": stderr_tail,
+            "stdout_tail": stdout_tail,
+            "matched_durable_rule": {
+                "error_key": str((matched_rule or {}).get("error_key", "")).strip(),
+                "preferred_action": str((matched_rule or {}).get("preferred_action", "")).strip(),
+                "preferred_guard": str((matched_rule or {}).get("preferred_guard", "")).strip(),
+                "prevention_hint": str((matched_rule or {}).get("prevention_hint", "")).strip(),
+            }
+            if matched_rule
+            else {},
+        }
+        history = list(existing.get("history", []) or []) if isinstance(existing, dict) else []
+        last_signature = str((existing or {}).get("last_dispatched_signature", "")).strip() if isinstance(existing, dict) else ""
+        report["report_path"] = str(report_path)
+
+        if signature != last_signature or not bool((existing or {}).get("active")):
+            dispatch = _upsert_process_incident_task(report)
+            report["brain_dispatch"] = dispatch
+            report["last_dispatched_at"] = now
+            report["last_dispatched_signature"] = signature
+            history.append(
+                {
+                    "at": now,
+                    "signature": signature,
+                    "reason": str(incident.get("doctor_attention_reason", "")).strip(),
+                    "last_exit_code": incident.get("last_exit_code"),
+                    "task_id": str(dispatch.get("task_id", "")).strip(),
+                    "task_action": str(dispatch.get("task_action", "")).strip(),
+                }
+            )
+            record_error(str(dispatch.get("task_id", "")).strip() or label, _process_incident_error_text(report))
+            reports.append(report)
+        else:
+            report["brain_dispatch"] = dict((existing or {}).get("brain_dispatch", {}) or {})
+            report["last_dispatched_at"] = str((existing or {}).get("last_dispatched_at", "")).strip()
+            report["last_dispatched_signature"] = last_signature
+        report["history"] = history[-12:]
+        _write_json(report_path, report)
+    return {
+        "incident_total": len(incident_items),
+        "dispatched_total": len(reports),
+        "resolved_total": len(resolved_reports),
+        "items": reports,
+        "resolved": resolved_reports[:20],
+    }
+
+
 def _progress_age_seconds(*, status: str, next_action: str, last_progress_at: str, last_update_at: str) -> float:
     """
     中文注解：
@@ -123,7 +979,100 @@ def _progress_age_seconds(*, status: str, next_action: str, last_progress_at: st
     update_age = _seconds_since(last_update_at)
     if status == "waiting_external" and next_action.startswith("poll_run:"):
         return progress_age
+    if status == "blocked":
+        return progress_age
     return min(progress_age, update_age)
+
+
+def _clear_blocked_metadata(state) -> None:
+    state.metadata.pop("blocked_runtime_state", None)
+    state.metadata.pop("project_crawler_gate", None)
+
+
+def _normalized_blocked_runtime_state(state) -> Dict[str, object]:
+    if state.status != "blocked":
+        return {}
+    inferred = classify_blocked_runtime_state(
+        next_action=state.next_action,
+        blockers=list(state.blockers or []),
+        governance_attention=state.metadata.get("last_governance_attention", {}) or {},
+    )
+    if str(inferred.get("category", "")).strip():
+        return inferred
+    return dict(state.metadata.get("blocked_runtime_state", {}) or {})
+
+
+def _resolved_missing_commands(blockers: list[str]) -> list[str]:
+    resolved: list[str] = []
+    for blocker in blockers:
+        text = str(blocker or "").strip()
+        if not text.startswith("preflight_missing_commands:"):
+            continue
+        _, _, payload = text.partition(":")
+        for command in [item.strip() for item in payload.split(",") if item.strip()]:
+            if shutil.which(command):
+                resolved.append(command)
+    return sorted(set(resolved))
+
+
+def _load_or_build_fetch_route(task_id: str) -> Dict[str, object]:
+    fetch_route_path = FETCH_ROUTES_ROOT / f"{task_id}.json"
+    if fetch_route_path.exists():
+        try:
+            return json.loads(fetch_route_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            pass
+    contract = load_contract(task_id)
+    control_center = contract.metadata.get("control_center", {}) or {}
+    return build_fetch_route(
+        task_id,
+        control_center.get("intent", {}) or {},
+        control_center.get("selected_plan", {}) or {},
+        control_center.get("domain_profile", {}) or {},
+        {},
+    )
+
+
+def _project_crawler_gate_still_applies(task_id: str, state) -> Dict[str, object] | None:
+    contract = load_contract(task_id)
+    control_center = contract.metadata.get("control_center", {}) or {}
+    snapshot = build_task_status_snapshot(task_id)
+    governance = snapshot.get("governance", {}) or {}
+    mission = {
+        "intent": control_center.get("intent", {}) or {},
+        "fetch_route": _load_or_build_fetch_route(task_id),
+    }
+    return build_project_crawler_gate(
+        mission,
+        {"governance": governance},
+        summarize_governance_attention(governance),
+        str(state.current_stage or "").strip(),
+    )
+
+
+def _restart_after_block_repair(task_id: str, state, *, repair_reason: str, event_name: str, extra: Dict[str, object] | None = None) -> Dict[str, object]:
+    state.status = "planning"
+    state.blockers = []
+    state.metadata.pop("waiting_external", None)
+    state.metadata.pop("active_execution", None)
+    state.metadata.pop("last_dispatched_marker", None)
+    state.metadata.pop("last_dispatch_at", None)
+    state.metadata["last_blocked_repair"] = {
+        "reason": repair_reason,
+        "repaired_at": _utc_now_iso(),
+        "details": extra or {},
+    }
+    _clear_blocked_metadata(state)
+    state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+    state.last_update_at = _utc_now_iso()
+    save_state(state)
+    log_event(task_id, event_name, repair_reason=repair_reason, details=extra or {})
+    return {
+        "task_id": task_id,
+        "repaired": True,
+        "reason": repair_reason,
+        "details": extra or {},
+    }
 
 
 def _semantic_tokens(text: str) -> set[str]:
@@ -181,7 +1130,7 @@ def _drift_and_consistency_status(task_id: str) -> Dict[str, object]:
         len(goal_tokens) >= 2
         and len(signal_tokens) >= 4
         and not overlap
-        and state.status in {"planning", "running", "recovering", "blocked"}
+        and state.status in {"planning", "running", "recovering"}
         and state.current_stage in {"plan", "execute", "verify"}
     ):
         drift_detected = True
@@ -607,7 +1556,7 @@ def diagnose_task(task_id: str, *, idle_after_seconds: int = 180) -> Dict[str, o
     active_execution = state.metadata.get("active_execution", {}) or {}
     has_active_execution = bool(active_execution.get("run_id"))
     milestone_stats = state.metadata.get("milestone_stats", {}) or {}
-    blocked_runtime_state = state.metadata.get("blocked_runtime_state", {}) or {}
+    blocked_runtime_state = _normalized_blocked_runtime_state(state)
     diagnosis = {
         "task_id": task_id,
         "status": state.status,
@@ -641,6 +1590,11 @@ def diagnose_task(task_id: str, *, idle_after_seconds: int = 180) -> Dict[str, o
     if evidence.get("reason") == "latest_user_goal_mismatch_with_bound_task":
         diagnosis["stuck"] = True
         diagnosis["reason"] = "latest_user_goal_mismatch_with_bound_task"
+        return diagnosis
+    if evidence.get("progress_state") == "reanimated_completed_task":
+        diagnosis["stuck"] = True
+        diagnosis["reason"] = "reanimated_completed_task"
+        diagnosis["stuck_escalation"] = _stuck_escalation_plan(task_id, diagnosis)
         return diagnosis
     consistency = diagnosis.get("consistency", {}) or {}
     if consistency.get("inconsistency_detected"):
@@ -723,6 +1677,22 @@ def repair_task_if_possible(task_id: str, diagnosis: Dict[str, object]) -> Dict[
         save_state(state)
         log_event(task_id, "system_doctor_repaired_stale_waiting_external", diagnosis=diagnosis)
         return {"task_id": task_id, "repaired": True, "reason": "restarted_after_stale_waiting_external"}
+    if diagnosis.get("reason") == "reanimated_completed_task":
+        state.status = "completed"
+        state.blockers = []
+        state.metadata.pop("waiting_external", None)
+        state.metadata.pop("active_execution", None)
+        state.metadata.pop("last_dispatched_marker", None)
+        state.metadata.pop("last_dispatch_at", None)
+        state.metadata["doctor_reanimated_completed_repair"] = {
+            "repaired_at": _utc_now_iso(),
+            "reason": "completed_summary_and_workspace_guards_conflict_with_live_runtime_state",
+        }
+        state.next_action = ""
+        state.last_update_at = _utc_now_iso()
+        save_state(state)
+        log_event(task_id, "system_doctor_closed_reanimated_completed_task", diagnosis=diagnosis)
+        return {"task_id": task_id, "repaired": True, "reason": "closed_reanimated_completed_task"}
     if diagnosis.get("reason") == "terminal_failure_requires_takeover":
         state.status = "recovering"
         state.blockers = list(dict.fromkeys([*state.blockers, "terminal_failure_detected"]))
@@ -840,6 +1810,50 @@ def repair_task_if_possible(task_id: str, diagnosis: Dict[str, object]) -> Dict[
             "new_task_id": new_task_id,
             "route_mode": route.get("mode", ""),
         }
+    if str(diagnosis.get("reason", "")).startswith("blocked:"):
+        blocked_runtime_state = diagnosis.get("blocked_runtime_state", {}) or {}
+        blocked_category = str(blocked_runtime_state.get("category", "")).strip()
+        if blocked_category == "session_binding":
+            link = find_link_by_task_id(task_id) or ensure_autonomy_root_mission_link(task_id)
+            if link:
+                return _restart_after_block_repair(
+                    task_id,
+                    state,
+                    repair_reason="session_binding_recovered",
+                    event_name="system_doctor_repaired_session_binding",
+                    extra={
+                        "provider": str(link.get("provider", "")).strip(),
+                        "conversation_id": str(link.get("conversation_id", "")).strip(),
+                        "session_key": str(link.get("session_key", "")).strip(),
+                        "link_kind": str(link.get("link_kind", "")).strip(),
+                    },
+                )
+        if blocked_category == "project_crawler_remediation":
+            recomputed_gate = _project_crawler_gate_still_applies(task_id, state)
+            if not recomputed_gate:
+                return _restart_after_block_repair(
+                    task_id,
+                    state,
+                    repair_reason="stale_project_crawler_gate_cleared",
+                    event_name="system_doctor_cleared_stale_project_crawler_gate",
+                    extra={
+                        "previous_next_action": state.next_action,
+                        "blocked_runtime_state": blocked_runtime_state,
+                    },
+                )
+        if blocked_category == "runtime_or_contract_fix":
+            resolved_commands = _resolved_missing_commands(list(state.blockers or []))
+            if resolved_commands:
+                return _restart_after_block_repair(
+                    task_id,
+                    state,
+                    repair_reason="runtime_dependencies_restored",
+                    event_name="system_doctor_repaired_runtime_dependencies",
+                    extra={
+                        "resolved_commands": resolved_commands,
+                        "previous_next_action": state.next_action,
+                    },
+                )
     escalation = diagnosis.get("stuck_escalation", {}) or {}
     if escalation.get("mode") == "deep_research":
         state.status = "planning"
@@ -974,9 +1988,11 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
     )
     heartbeat_summary = _write_doctor_heartbeats(control_plane, idle_after_seconds=idle_after_seconds)
     heartbeat_overview = _heartbeat_stability_overview(heartbeat_summary)
+    process_incidents = _reconcile_process_incidents(control_plane)
     reports = []
     doctor_items = list(control_plane.get("doctor_queue", {}).get("items", []) or [])
     doctor_strategy = _doctor_cycle_strategy(control_plane)
+    task_incident_candidates: List[Dict[str, object]] = []
     seen_task_ids = set()
     processed_total = 0
     skipped_reports = []
@@ -1031,6 +2047,21 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
                 "bucket": str(item.get("priority_bucket", "")).strip() or "unknown",
                 "reason": str(item.get("priority_reason", "")).strip() or "unknown",
             }
+            if _should_route_task_incident_to_ai(
+                task_id,
+                str(item.get("canonical_task_id", task_id)).strip() or task_id,
+                diagnosis,
+                repair,
+            ):
+                task_incident_candidates.append(
+                    {
+                        "task_id": task_id,
+                        "canonical_task_id": str(item.get("canonical_task_id", task_id)).strip() or task_id,
+                        "diagnosis": diagnosis,
+                        "repair": repair,
+                        "priority": report["priority"],
+                    }
+                )
             if diagnosis.get("stuck"):
                 report["governance"] = (build_task_status_snapshot(task_id).get("governance", {}) or {})
             if diagnosis.get("stuck") and diagnosis.get("idle_seconds", 0) >= escalation_after_seconds:
@@ -1076,6 +2107,7 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
         stale_after_seconds=max(120, idle_after_seconds),
         escalation_after_seconds=max(300, escalation_after_seconds),
     )
+    task_incidents = _reconcile_task_incidents(task_incident_candidates, idle_after_seconds=idle_after_seconds)
     integration_health = _run_gstack_integration_checks()
     crawler_profile = control_plane.get("crawler_capability_profile", {}) or {}
     crawler_summary = crawler_profile.get("summary", {}) or {}
@@ -1110,6 +2142,8 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
             "remediation_plan": (control_plane.get("crawler_remediation_plan", {}).get("items", []) or [])[:6],
             "remediation_execution": (control_plane.get("crawler_remediation_execution", {}).get("items", []) or [])[:6],
         },
+        "process_incidents": process_incidents,
+        "task_incidents": task_incidents,
         "project_repair_value": control_plane.get("project_repair_value", {}) or {},
         "project_repair_history": (control_plane.get("project_repair_value_history", {}) or {}).get("trend", {}) or {},
         "project_repair_recommendations": (control_plane.get("project_repair_recommendations", []) or [])[:6],

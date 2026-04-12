@@ -1,3 +1,12 @@
+<!--
+RULES-FIRST NOTICE:
+Before modifying this file, first read:
+- `JINCLAW_CONSTITUTION.md`
+- `AI_OPTIMIZATION_FRAMEWORK.md`
+Follow the constitution and framework:
+brain-first, one-doctor, fail-closed, evidence-over-narration,
+validate locally, then use the required PR workflow.
+-->
 # OpenMOSS Voice Runtime
 
 这个目录预留给本地的 MOSS 语音运行时。

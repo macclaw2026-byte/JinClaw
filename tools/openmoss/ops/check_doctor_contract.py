@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,6 +15,7 @@ WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
 
 REQUIRED_FILES = [
     WORKSPACE_ROOT / 'JINCLAW_CONSTITUTION.md',
+    WORKSPACE_ROOT / 'AI_OPTIMIZATION_FRAMEWORK.md',
     WORKSPACE_ROOT / 'tools/openmoss/control_center/README.md',
     WORKSPACE_ROOT / 'tools/openmoss/control_center/system_doctor.py',
     WORKSPACE_ROOT / 'tools/openmoss/ops/jinclaw_ops.py',
@@ -19,6 +27,10 @@ REQUIRED_SNIPPETS = {
     WORKSPACE_ROOT / 'JINCLAW_CONSTITUTION.md': [
         'exactly one canonical system doctor exists',
         '## Single-doctor architecture rule',
+    ],
+    WORKSPACE_ROOT / 'AI_OPTIMIZATION_FRAMEWORK.md': [
+        '## Mandatory Reading Order',
+        '## Required Workflow Before Modifying Core Files',
     ],
     WORKSPACE_ROOT / 'tools/openmoss/control_center/README.md': [
         '## Single-doctor invariant',

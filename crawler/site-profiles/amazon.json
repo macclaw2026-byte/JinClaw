@@ -1,22 +1,21 @@
 {
   "site": "amazon",
-  "last_evaluated": "2026-04-05",
+  "last_evaluated": "2026-04-12",
   "mode": "anonymous_public_crawl",
   "confidence": "high",
   "tested_tools": [
     "curl-cffi",
-    "playwright",
-    "scrapy-cffi"
+    "scrapy-cffi",
+    "crawl4ai-cli"
   ],
   "preferred_tool_order": [
     "curl-cffi",
-    "playwright",
-    "scrapy-cffi"
+    "scrapy-cffi",
+    "crawl4ai-cli"
   ],
   "blocked_tools": [],
   "usable_tools": [
     "curl-cffi",
-    "playwright",
     "scrapy-cffi"
   ],
   "first_choice_extraction_mode": "best_single_tool_output",

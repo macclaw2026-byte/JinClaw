@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 """
 中文说明：
 - 文件路径：`tools/openmoss/control_center/task_status_snapshot.py`
@@ -15,6 +21,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from canonical_active_task import resolve_canonical_active_task
+from execution_governor import classify_blocked_runtime_state
 from governance_runtime import build_governance_bundle
 from paths import BROWSER_SIGNALS_ROOT, OPENMOSS_ROOT, TASK_STATUS_ROOT, WORKSPACE_ROOT
 from progress_evidence import build_progress_evidence
@@ -372,6 +379,19 @@ def _build_authoritative_summary(task_id: str, state: Dict[str, Any], browser_si
     ).strip()
 
 
+def _normalized_blocked_runtime_state(state: Dict[str, Any]) -> Dict[str, Any]:
+    if str(state.get("status", "")).strip() != "blocked":
+        return {}
+    inferred = classify_blocked_runtime_state(
+        next_action=str(state.get("next_action", "")).strip(),
+        blockers=[str(item).strip() for item in (state.get("blockers", []) or []) if str(item).strip()],
+        governance_attention=((state.get("metadata", {}) or {}).get("last_governance_attention", {}) or {}),
+    )
+    if str(inferred.get("category", "")).strip():
+        return inferred
+    return (state.get("metadata", {}) or {}).get("blocked_runtime_state", {}) or {}
+
+
 def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
     """
     中文注解：
@@ -407,7 +427,7 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
         "current_stage": state.get("current_stage", ""),
         "next_action": state.get("next_action", ""),
         "blockers": state.get("blockers", []),
-        "blocked_runtime_state": (state.get("metadata", {}) or {}).get("blocked_runtime_state", {}) or {},
+        "blocked_runtime_state": _normalized_blocked_runtime_state(state),
         "business_outcome": business,
         "milestone_progress": milestone_progress,
         "run_liveness": build_run_liveness(canonical_task_id),

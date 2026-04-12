@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 from __future__ import annotations
 
 import re
@@ -129,6 +135,22 @@ def task_depends_on_external_crawling(mission: Dict[str, object], context_packet
     return bool(allowed_tools & external_tools)
 
 
+def _normalize_site_id(value: object) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+    return normalized
+
+
+def _site_ids(values: object, *, key: str = "site") -> set[str]:
+    items = values if isinstance(values, list) else []
+    normalized: set[str] = set()
+    for item in items:
+        raw = item.get(key, "") if isinstance(item, dict) else item
+        site_id = _normalize_site_id(raw)
+        if site_id:
+            normalized.add(site_id)
+    return normalized
+
+
 def build_project_crawler_gate(
     mission: Dict[str, object],
     context_packet: Dict[str, object],
@@ -152,32 +174,53 @@ def build_project_crawler_gate(
     scheduler_modes = governance_attention.get("scheduler_modes", {}) or {}
     remediation_mode = str(scheduler_modes.get("crawler_remediation", "")).strip().lower()
     attention_sites = list(crawler_project.get("attention_sites", []) or [])
+    attention_site_ids = _site_ids(attention_sites)
+    guidance = fetch_route.get("crawler_project_guidance", {}) or {}
+    relevant_site_ids = _site_ids(guidance.get("relevant_sites", []))
+    if not relevant_site_ids:
+        relevant_site_ids = _site_ids(guidance.get("requested_sites", []), key="")
+    matched_attention_sites = []
+    for site in attention_sites:
+        site_name = site.get("site", "") if isinstance(site, dict) else site
+        if _normalize_site_id(site_name) in attention_site_ids & relevant_site_ids:
+            matched_attention_sites.append(site)
+    route_targets_attention_site = bool(matched_attention_sites)
     recommended_actions = [str(item) for item in (crawler_project.get("recommended_project_actions", []) or []) if str(item).strip()]
-    if health_status == "critical" and attention_sites:
+    if health_status == "critical" and (route_targets_attention_site or high_risk_route):
         return {
             "action": "await_project_crawler_remediation",
-            "reason": "project-level crawler health is critical for an externally dependent task, so execution should wait for remediation instead of forcing a fragile route",
+            "reason": (
+                "project-level crawler health is critical for the specific sites this task targets, so execution should wait for remediation"
+                if route_targets_attention_site
+                else "project-level crawler health is critical and the task is already on a high-risk external route, so execution should wait for remediation"
+            ),
             "auto_safe": True,
             "project_gate": {
                 "health_status": health_status,
                 "feedback_status": feedback_status,
                 "remediation_mode": remediation_mode,
                 "current_route": current_route,
-                "attention_sites": attention_sites[:3],
+                "relevant_sites": sorted(relevant_site_ids),
+                "attention_sites": (matched_attention_sites or attention_sites)[:3],
                 "recommended_project_actions": recommended_actions[:3],
             },
         }
-    if feedback_status == "thin" and remediation_mode == "aggressive" and (attention_sites or high_risk_route):
+    if feedback_status == "thin" and remediation_mode == "aggressive" and (route_targets_attention_site or high_risk_route):
         return {
             "action": "await_project_crawler_remediation",
-            "reason": "project feedback coverage is still thin while remediation is in aggressive mode, so the task should pause before spending more effort on a low-confidence external route",
+            "reason": (
+                "project feedback coverage is still thin for the sites this task targets, so it should pause before spending more effort on a low-confidence route"
+                if route_targets_attention_site
+                else "project feedback coverage is still thin while remediation is aggressive and this task is already on a high-risk route"
+            ),
             "auto_safe": True,
             "project_gate": {
                 "health_status": health_status or "unknown",
                 "feedback_status": feedback_status,
                 "remediation_mode": remediation_mode,
                 "current_route": current_route,
-                "attention_sites": attention_sites[:3],
+                "relevant_sites": sorted(relevant_site_ids),
+                "attention_sites": (matched_attention_sites or attention_sites)[:3],
                 "recommended_project_actions": recommended_actions[:3],
             },
         }

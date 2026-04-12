@@ -1,3 +1,12 @@
+<!--
+RULES-FIRST NOTICE:
+Before modifying this file, first read:
+- `JINCLAW_CONSTITUTION.md`
+- `AI_OPTIMIZATION_FRAMEWORK.md`
+Follow the constitution and framework:
+brain-first, one-doctor, fail-closed, evidence-over-narration,
+validate locally, then use the required PR workflow.
+-->
 # JinClaw Live Guardrails
 
 ## Core risk
@@ -43,3 +52,23 @@ After any upstream adoption:
 - confirm JinClaw mode is still active
 - confirm no silent reversion to upstream-only behavior
 
+### 5. Browser tab budget
+
+For any JinClaw or OpenClaw browser automation path:
+
+- never allow uncontrolled tab growth
+- keep the active browser budget at 3 tabs or fewer per task/session
+- prefer reusing the current working tab before opening a new one
+- close finished, duplicate, or stale tabs before opening more
+- if a task needs stricter discipline than the global budget, that stricter rule must be declared explicitly at the task layer
+
+### 6. Stability-first browser automation
+
+For any JinClaw or OpenClaw browser automation path that touches a live third-party site:
+
+- stability outranks throughput by default
+- if the target site shows degradation signals such as robot checks, repeated "Something went wrong" pages, or abnormal empty-result pages, stop the active batch instead of forcing progress
+- when degradation is detected, reduce concurrency, cool down, and recover a clean browser session before resuming
+- do not continue a run just to maximize coverage if the current page quality is already compromised
+- task-level workflows may be stricter than the global browser budget and should prefer one working page when site stability is at risk
+- if repeated browser recovery attempts still fail on the same live-site step, stop retrying the same browser-only tactic and switch to a different technical path such as direct HTTP collection, a verified API route, or a hybrid collector when one exists

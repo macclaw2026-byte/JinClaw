@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.jinclaw.neosgo-admin-ops-daily-report</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/env</string>
+    <string>python3</string>
+    <string>/Users/mac_claw/.openclaw/workspace/projects/neosgo-seo-geo-engine/scripts/run_neosgo_admin_ops_watcher.py</string>
+    <string>--mode</string>
+    <string>daily-report</string>
+  </array>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/mac_claw/.openclaw/workspace/output/neosgo-admin-ops/daily-report.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/mac_claw/.openclaw/workspace/output/neosgo-admin-ops/daily-report.stderr.log</string>
+</dict>
+</plist>

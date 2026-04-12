@@ -1,3 +1,12 @@
+<!--
+RULES-FIRST NOTICE:
+Before modifying this file, first read:
+- `JINCLAW_CONSTITUTION.md`
+- `AI_OPTIMIZATION_FRAMEWORK.md`
+Follow the constitution and framework:
+brain-first, one-doctor, fail-closed, evidence-over-narration,
+validate locally, then use the required PR workflow.
+-->
 # Telegram-Native OpenMOSS Layer
 
 这个目录用于把 OpenMOSS 的核心能力直接接到当前 OpenClaw 的 Telegram 通道上，而不是依赖 IMClaw。
