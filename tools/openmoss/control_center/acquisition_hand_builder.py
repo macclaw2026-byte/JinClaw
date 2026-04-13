@@ -22,6 +22,7 @@ from acquisition_adapter_registry import build_acquisition_adapter_registry
 from control_center_schemas import (
     build_acquisition_consensus_schema,
     build_acquisition_hand_schema,
+    build_acquisition_release_governance_schema,
 )
 
 
@@ -194,6 +195,44 @@ def _derive_delivery_requirements(
         },
         "notes": _dedupe_strings(rationale),
     }
+
+
+def _derive_release_governance(
+    goal: str,
+    governance: Dict[str, Any],
+    delivery_requirements: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：推导 acquisition hand 的交付治理规则。
+    - 输入角色：消费 goal/governance/delivery requirements，识别本次取数能否自动交付、何时只能 guarded 交付。
+    - 输出角色：供 execution summary、verifier、doctor 使用同一份 release governance 契约。
+    """
+    tier = str(governance.get("tier", "standard")).strip() or "standard"
+    fresh_task = _goal_time_sensitivity(goal) == "fresh"
+    strict_tier = tier in {"reviewed", "mission"}
+    plan_only = tier == "plan_only"
+    allow_guarded_medium = tier in {"lite", "standard"} and not fresh_task and not plan_only
+    mode = "plan_only_research" if plan_only else ("fresh_strict" if fresh_task else ("strict_reviewed" if strict_tier else "standard_guarded"))
+    return build_acquisition_release_governance_schema(
+        mode=mode,
+        auto_release_requires_release_ready=True,
+        auto_release_requires_trusted_ready=bool(strict_tier or fresh_task),
+        allow_guarded_medium_trust_with_disclosure=allow_guarded_medium,
+        allow_guarded_low_trust_release=False,
+        allow_session_snapshot_for_fresh=True,
+        allow_snapshot_only_for_fresh=False,
+        requires_human_confirmation_for_guarded=bool(strict_tier or plan_only),
+        guarded_release_requires_disclosure=True,
+        preferred_blocking_actions={
+            "missing_required_fields": "capture_missing_required_fields_before_release",
+            "needs_review": "review_field_level_conflicts_before_release",
+            "guarded_low_trust": "seek_higher_trust_source_before_release",
+            "guarded_medium_trust": "capture_higher_trust_source_before_release",
+            "freshness_gap": "rerun_fresher_route_before_release",
+            "human_confirmation": "ask_user_to_confirm_guarded_release",
+        },
+    )
 
 
 def _risk_bucket(score: float) -> str:
@@ -579,6 +618,7 @@ def build_acquisition_hand(
     adapter_registry = build_acquisition_adapter_registry(capabilities)
     route_candidates = _derive_route_candidates(fetch_route, crawler, adapter_registry, challenge) if enabled else []
     delivery_requirements = _derive_delivery_requirements(goal, intent, route_candidates) if enabled else {}
+    release_governance = _derive_release_governance(goal, governance, delivery_requirements) if enabled else build_acquisition_release_governance_schema(mode="disabled")
     execution_strategy = _derive_execution_strategy(route_candidates, challenge) if enabled else {
         "mode": "disabled",
         "primary_route_id": "",
@@ -609,6 +649,7 @@ def build_acquisition_hand(
             "selected_plan_id": str(selected_plan.get("plan_id", "")).strip(),
         },
         delivery_requirements=delivery_requirements,
+        release_governance=release_governance,
         governance_binding={
             "tier": str(governance.get("tier", "standard")).strip() or "standard",
             "protocol_pack_id": str(protocol_pack.get("pack_id", "")).strip(),
@@ -669,6 +710,7 @@ def build_acquisition_hand(
             "target_sites": list(delivery_requirements.get("target_sites", []) or []),
             "required_fields_by_site": dict(delivery_requirements.get("required_fields_by_site", {}) or {}),
             "recommended_tools": recommended_tools,
+            "release_governance_mode": str(release_governance.get("mode", "")).strip(),
         },
     )
 

@@ -277,6 +277,10 @@ def _delivery_requirements(acquisition_hand: Dict[str, Any]) -> Dict[str, Any]:
     return acquisition_hand.get("delivery_requirements", {}) or {}
 
 
+def _release_governance(acquisition_hand: Dict[str, Any]) -> Dict[str, Any]:
+    return acquisition_hand.get("release_governance", {}) or {}
+
+
 def _site_field_requirements(
     site: str,
     acquisition_hand: Dict[str, Any],
@@ -402,6 +406,113 @@ def _derive_expected_fields(site: str, route_runs: List[Dict[str, Any]], acquisi
         ]
     )
     return _unique_preserve([*expected, *discovered])
+
+
+def _required_field_freshness_posture(
+    required_fields: List[str],
+    field_provenance: Dict[str, Dict[str, Any]],
+) -> str:
+    alignments = _unique_preserve(
+        [
+            str((field_provenance.get(field_name, {}) or {}).get("selected_freshness_alignment", "")).strip()
+            for field_name in required_fields
+            if str((field_provenance.get(field_name, {}) or {}).get("selected_freshness_alignment", "")).strip()
+        ]
+    )
+    if not alignments:
+        return "not_ready"
+    if any(item == "snapshot_only" for item in alignments):
+        return "snapshot_only"
+    if any(item == "session_snapshot" for item in alignments):
+        return "session_snapshot"
+    if any(item == "fresh_ready" for item in alignments):
+        return "fresh_ready"
+    if any(item == "adequate" for item in alignments):
+        return "adequate"
+    return alignments[0]
+
+
+def _site_governed_release(
+    *,
+    release_ready: bool,
+    trust_posture: str,
+    freshness_posture: str,
+    acquisition_hand: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：把结构性 readiness、来源信任和新鲜度姿态汇总成真正可执行的 release 治理结论。
+    - 设计意图：系统不仅要知道“现在像不像能交付”，还要知道“此刻是否允许自动交付、是否只能 guarded 交付、是否必须先补抓”。
+    """
+    rules = _release_governance(acquisition_hand)
+    preferred_actions = dict(rules.get("preferred_blocking_actions", {}) or {})
+    fresh_task = _goal_time_sensitivity(acquisition_hand) == "fresh"
+    blockers: List[str] = []
+    actions: List[str] = []
+    notes: List[str] = []
+    governed_release_status = "blocked_release_readiness"
+    governed_release_ready = False
+
+    freshness_blocked = False
+    if fresh_task and freshness_posture == "snapshot_only" and not bool(rules.get("allow_snapshot_only_for_fresh", False)):
+        freshness_blocked = True
+        blockers.append("snapshot_only_freshness_blocker")
+        actions.append(preferred_actions.get("freshness_gap", "rerun_fresher_route_before_release"))
+        notes.append("当前任务要求新鲜数据，但核心字段仍主要来自 snapshot-only 证据。")
+    if fresh_task and freshness_posture == "session_snapshot" and not bool(rules.get("allow_session_snapshot_for_fresh", True)):
+        freshness_blocked = True
+        blockers.append("session_snapshot_freshness_blocker")
+        actions.append(preferred_actions.get("freshness_gap", "rerun_fresher_route_before_release"))
+        notes.append("当前任务要求新鲜数据，但 reviewed session 快照仍不满足 release 规则。")
+
+    if not release_ready:
+        blockers.append("release_readiness_blocked")
+        notes.append("结构性 release readiness 尚未满足，当前结果不能进入交付路径。")
+    elif trust_posture == "guarded_low_trust_sources":
+        blockers.append("guarded_low_trust_blocker")
+        actions.append(preferred_actions.get("guarded_low_trust", "seek_higher_trust_source_before_release"))
+        governed_release_status = "needs_higher_trust_source"
+        notes.append("核心字段仍主要依赖低信任浏览器观察证据，不能自动交付。")
+    elif trust_posture == "guarded_medium_trust_sources":
+        if bool(rules.get("auto_release_requires_trusted_ready", False)):
+            if bool(rules.get("requires_human_confirmation_for_guarded", False)):
+                blockers.append("guarded_medium_trust_requires_confirmation")
+                actions.append(preferred_actions.get("human_confirmation", "ask_user_to_confirm_guarded_release"))
+                governed_release_status = "guarded_requires_human_confirmation"
+                notes.append("当前结果结构上可交付，但治理规则要求 guarded medium-trust 结果先获用户确认。")
+            else:
+                blockers.append("guarded_medium_trust_blocker")
+                actions.append(preferred_actions.get("guarded_medium_trust", "capture_higher_trust_source_before_release"))
+                governed_release_status = "needs_higher_trust_source"
+                notes.append("当前任务要求 trusted-ready 级别结果，medium-trust 证据仍需升级。")
+        elif bool(rules.get("allow_guarded_medium_trust_with_disclosure", True)):
+            governed_release_status = "guarded_release_with_disclosure"
+            governed_release_ready = True
+            actions.append("include_guarded_release_disclosure")
+            notes.append("当前结果允许 guarded 交付，但必须明确披露其主要来自 medium-trust 证据。")
+        else:
+            blockers.append("guarded_medium_trust_blocker")
+            actions.append(preferred_actions.get("guarded_medium_trust", "capture_higher_trust_source_before_release"))
+            governed_release_status = "needs_higher_trust_source"
+            notes.append("medium-trust guarded release 当前不被允许。")
+    elif freshness_blocked:
+        blockers.append("freshness_blocker")
+        governed_release_status = "needs_fresher_capture"
+    else:
+        governed_release_status = "auto_release_allowed"
+        governed_release_ready = True
+        notes.append("当前结果满足自动交付规则。")
+
+    if freshness_blocked and governed_release_status in {"needs_higher_trust_source", "guarded_requires_human_confirmation"}:
+        actions.append(preferred_actions.get("freshness_gap", "rerun_fresher_route_before_release"))
+    return {
+        "freshness_posture": freshness_posture,
+        "governed_release_status": governed_release_status,
+        "governed_release_ready": governed_release_ready,
+        "governance_blockers": _unique_preserve(blockers),
+        "governance_actions": _unique_preserve(actions),
+        "governance_notes": notes,
+    }
 
 
 def _field_provenance_for_site(
@@ -628,6 +739,16 @@ def _field_provenance_for_site(
             trusted_release_ready = True
             site_notes.append("核心字段主要来自较高信任层级的来源。")
 
+    freshness_posture = _required_field_freshness_posture(required_fields, field_provenance)
+    release_governance = _site_governed_release(
+        release_ready=release_ready,
+        trust_posture=trust_posture,
+        freshness_posture=freshness_posture,
+        acquisition_hand=acquisition_hand,
+    )
+    site_notes.extend(list(release_governance.get("governance_notes", []) or []))
+    recommended_next_actions.extend(list(release_governance.get("governance_actions", []) or []))
+
     return build_acquisition_site_synthesis_schema(
         site=site,
         synthesis_status=synthesis_status,
@@ -642,6 +763,10 @@ def _field_provenance_for_site(
         release_ready=release_ready,
         trust_posture=trust_posture,
         trusted_release_ready=trusted_release_ready,
+        freshness_posture=str(release_governance.get("freshness_posture", "")).strip(),
+        governed_release_status=str(release_governance.get("governed_release_status", "")).strip(),
+        governed_release_ready=bool(release_governance.get("governed_release_ready")),
+        governance_blockers=list(release_governance.get("governance_blockers", []) or []),
         cross_validated_fields=_unique_preserve(cross_validated_fields),
         conflicted_fields=_unique_preserve(conflicted_fields),
         supporting_route_ids=_unique_preserve(
@@ -890,6 +1015,14 @@ def build_acquisition_execution_summary(
     trusted_ready_sites_total = sum(1 for item in site_synthesized_outputs if bool(item.get("trusted_release_ready")))
     guarded_low_trust_sites_total = sum(1 for item in site_synthesized_outputs if str(item.get("trust_posture", "")).strip() == "guarded_low_trust_sources")
     guarded_medium_trust_sites_total = sum(1 for item in site_synthesized_outputs if str(item.get("trust_posture", "")).strip() == "guarded_medium_trust_sources")
+    fresh_ready_sites_total = sum(1 for item in site_synthesized_outputs if str(item.get("freshness_posture", "")).strip() == "fresh_ready")
+    snapshot_only_sites_total = sum(1 for item in site_synthesized_outputs if str(item.get("freshness_posture", "")).strip() == "snapshot_only")
+    session_snapshot_sites_total = sum(1 for item in site_synthesized_outputs if str(item.get("freshness_posture", "")).strip() == "session_snapshot")
+    governed_release_ready_sites_total = sum(1 for item in site_synthesized_outputs if bool(item.get("governed_release_ready")))
+    guarded_release_sites_total = sum(1 for item in site_synthesized_outputs if str(item.get("governed_release_status", "")).strip() == "guarded_release_with_disclosure")
+    needs_higher_trust_sites_total = sum(1 for item in site_synthesized_outputs if str(item.get("governed_release_status", "")).strip() == "needs_higher_trust_source")
+    needs_fresher_capture_sites_total = sum(1 for item in site_synthesized_outputs if str(item.get("governed_release_status", "")).strip() == "needs_fresher_capture")
+    human_confirmation_sites_total = sum(1 for item in site_synthesized_outputs if str(item.get("governed_release_status", "")).strip() == "guarded_requires_human_confirmation")
     cross_validated_field_total = sum(len(item.get("cross_validated_fields", []) or []) for item in site_synthesized_outputs)
     conflicted_field_total = sum(len(item.get("conflicted_fields", []) or []) for item in site_synthesized_outputs)
     missing_field_total = sum(len(item.get("missing_fields", []) or []) for item in site_synthesized_outputs)
@@ -945,6 +1078,27 @@ def build_acquisition_execution_summary(
         trusted_release_status = "guarded_low_trust"
     elif release_readiness_status == "ready" and guarded_medium_trust_sites_total:
         trusted_release_status = "guarded_medium_trust"
+
+    governed_release_status = "blocked_release_readiness"
+    if any(str(item.get("governed_release_status", "")).strip() == "needs_higher_trust_source" for item in site_synthesized_outputs):
+        governed_release_status = "needs_higher_trust_source"
+    elif any(str(item.get("governed_release_status", "")).strip() == "needs_fresher_capture" for item in site_synthesized_outputs):
+        governed_release_status = "needs_fresher_capture"
+    elif any(str(item.get("governed_release_status", "")).strip() == "guarded_requires_human_confirmation" for item in site_synthesized_outputs):
+        governed_release_status = "guarded_requires_human_confirmation"
+    elif any(str(item.get("governed_release_status", "")).strip() == "guarded_release_with_disclosure" for item in site_synthesized_outputs):
+        governed_release_status = "guarded_release_with_disclosure"
+    elif sites_total and governed_release_ready_sites_total == sites_total:
+        governed_release_status = "auto_release_allowed"
+
+    release_blockers = _unique_preserve(
+        [
+            str(blocker).strip()
+            for item in site_synthesized_outputs
+            for blocker in (item.get("governance_blockers", []) or [])
+            if str(blocker).strip()
+        ]
+    )
 
     recommended_next_actions = _unique_preserve(
         [
@@ -1003,6 +1157,21 @@ def build_acquisition_execution_summary(
                 if stretch_field_gap_total
                 else []
             ),
+            *(
+                ["rerun_fresher_route_before_release"]
+                if needs_fresher_capture_sites_total
+                else []
+            ),
+            *(
+                ["ask_user_to_confirm_guarded_release"]
+                if human_confirmation_sites_total
+                else []
+            ),
+            *(
+                ["include_guarded_release_disclosure"]
+                if guarded_release_sites_total
+                else []
+            ),
             *[
                 str(action).strip()
                 for item in site_consensus_rows
@@ -1046,6 +1215,14 @@ def build_acquisition_execution_summary(
             "trusted_ready_sites_total": trusted_ready_sites_total,
             "guarded_low_trust_sites_total": guarded_low_trust_sites_total,
             "guarded_medium_trust_sites_total": guarded_medium_trust_sites_total,
+            "fresh_ready_sites_total": fresh_ready_sites_total,
+            "snapshot_only_sites_total": snapshot_only_sites_total,
+            "session_snapshot_sites_total": session_snapshot_sites_total,
+            "governed_release_ready_sites_total": governed_release_ready_sites_total,
+            "guarded_release_sites_total": guarded_release_sites_total,
+            "needs_higher_trust_sites_total": needs_higher_trust_sites_total,
+            "needs_fresher_capture_sites_total": needs_fresher_capture_sites_total,
+            "human_confirmation_sites_total": human_confirmation_sites_total,
             "cross_validated_field_total": cross_validated_field_total,
             "conflicted_field_total": conflicted_field_total,
             "missing_field_total": missing_field_total,
@@ -1053,6 +1230,9 @@ def build_acquisition_execution_summary(
             "stretch_field_gap_total": stretch_field_gap_total,
             "release_readiness_status": release_readiness_status,
             "trusted_release_status": trusted_release_status,
+            "governed_release_status": governed_release_status,
+            "requires_human_confirmation": bool(human_confirmation_sites_total),
+            "release_blockers": release_blockers,
             "route_gap_count": len(planned_but_not_executed),
             "global_planned_route_ids": execution_plan.get("global_planned_route_ids", []) or _planned_route_ids(acquisition_hand),
             "global_skipped_route_ids": global_skipped_route_ids,
@@ -1081,6 +1261,7 @@ def render_acquisition_execution_summary_markdown(summary: Dict[str, Any]) -> st
         f"- Synthesis status: `{overall.get('synthesis_status', '')}`",
         f"- Release readiness: `{overall.get('release_readiness_status', '')}`",
         f"- Trusted release: `{overall.get('trusted_release_status', '')}`",
+        f"- Governed release: `{overall.get('governed_release_status', '')}`",
         f"- Validation diversity: `{overall.get('validation_diversity_status', '')}`",
         f"- Planned routes: `{', '.join(summary.get('planned_route_ids', []) or [])}`",
         f"- Executed routes: `{', '.join(summary.get('executed_route_ids', []) or [])}`",
@@ -1104,6 +1285,8 @@ def render_acquisition_execution_summary_markdown(summary: Dict[str, Any]) -> st
                 f"- Validation families: `{', '.join(site.get('validation_families', []) or [])}`",
                 f"- Synthesis: `{site.get('synthesis_status', synthesized.get('synthesis_status', ''))}`",
                 f"- Trust posture: `{site.get('trust_posture', synthesized.get('trust_posture', ''))}`",
+                f"- Freshness posture: `{synthesized.get('freshness_posture', '')}`",
+                f"- Governed release: `{synthesized.get('governed_release_status', '')}`",
                 f"- Winner route: `{winner.get('route_id', '')}`",
                 f"- Winner adapter: `{winner.get('adapter_id', '')}`",
                 f"- Winner source trust: `{winner.get('source_trust_tier', '')}`",

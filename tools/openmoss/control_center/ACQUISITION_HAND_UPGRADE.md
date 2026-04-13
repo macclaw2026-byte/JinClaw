@@ -24,6 +24,8 @@ The current phase also extends that control surface into execution evidence:
 - task-level `delivery_requirements` now define which fields are truly required for release versus only nice-to-have
 - acquisition summaries now expose `release_readiness_status` so doctor/runtime can tell the difference between missing critical fields and missing stretch fields
 - acquisition summaries now also expose `trusted_release_status`, making it explicit whether required fields are backed mainly by higher-trust sources or only by browser/public-fetch evidence
+- acquisition hand now carries explicit `release_governance`, so the system can distinguish automatic release, guarded release with disclosure, user-confirmed guarded release, and must-recapture states
+- acquisition summaries now expose `governed_release_status`, turning trust/freshness posture into an actual delivery rule instead of just passive metadata
 
 ## New Core Structures
 
@@ -33,6 +35,7 @@ The current phase also extends that control surface into execution evidence:
   - Unified data-acquisition protocol with:
     - target profile
     - delivery requirements
+    - release governance
     - governance binding
     - challenge assessment
     - routing policy
@@ -49,6 +52,7 @@ The current phase also extends that control surface into execution evidence:
     - per-site winner / validation status
     - required-field coverage and release readiness
     - trust posture and trusted-release status
+    - freshness posture and governed-release decision
     - overall consensus status
 - structured `challenge` signals
   - Challenge classification now emits severity, signals, safe next routes, and anti-bot posture hints.
@@ -81,3 +85,4 @@ It also means the system can now explain:
 2. which route actually executed
 3. whether multiple routes agreed
 4. where route coverage is still missing
+5. whether the current result may be auto-delivered, only guarded-delivered, or must first gather fresher / higher-trust evidence

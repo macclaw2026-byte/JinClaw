@@ -42,6 +42,7 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertTrue((integration.get('acquisition_hand', {}) or {}).get('field_synthesis_contract'))
         self.assertTrue((integration.get('acquisition_hand', {}) or {}).get('delivery_requirements_contract'))
         self.assertTrue((integration.get('acquisition_hand', {}) or {}).get('source_trust_contract'))
+        self.assertTrue((integration.get('acquisition_hand', {}) or {}).get('release_governance_contract'))
         self.assertTrue((integration.get('acquisition_hand', {}) or {}).get('browser_execution_contract'))
         self.assertTrue((integration.get('acquisition_hand', {}) or {}).get('validation_family_contract'))
 

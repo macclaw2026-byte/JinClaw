@@ -494,6 +494,7 @@ def verify_acquisition_summary_complete(spec: Dict[str, Any]) -> Dict[str, Any]:
                     "required_field_gap_total",
                     "release_readiness_status",
                     "trusted_release_status",
+                    "governed_release_status",
                 ]
                 if field not in overall and field not in missing_fields
             ]
@@ -535,6 +536,10 @@ def verify_acquisition_summary_complete(spec: Dict[str, Any]) -> Dict[str, Any]:
                     "release_ready",
                     "trust_posture",
                     "trusted_release_ready",
+                    "freshness_posture",
+                    "governed_release_status",
+                    "governed_release_ready",
+                    "governance_blockers",
                 ]
                 if field not in item
             ]

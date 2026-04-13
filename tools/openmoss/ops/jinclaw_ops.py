@@ -395,6 +395,7 @@ def _doctor_runtime_summary() -> Dict[str, Any]:
             "browser_execution_profiles": list(adapter_coverage.get("browser_execution_profiles", []) or []),
             "delivery_requirements_contract": bool(acquisition_integration.get("delivery_requirements_contract")),
             "source_trust_contract": bool(acquisition_integration.get("source_trust_contract")),
+            "release_governance_contract": bool(acquisition_integration.get("release_governance_contract")),
             "attention_sites_total": len(acquisition_health.get("attention_sites", []) or []),
             "stability_score": float(adapter_coverage.get("stability_score", 0.0) or 0.0),
         },
