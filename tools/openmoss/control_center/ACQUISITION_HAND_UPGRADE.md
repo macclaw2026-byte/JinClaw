@@ -28,6 +28,7 @@ The current phase also extends that control surface into execution evidence:
 - acquisition summaries now expose `governed_release_status`, turning trust/freshness posture into an actual delivery rule instead of just passive metadata
 - guarded results now emit structured `release_disclosure`, so user-facing caveats and operator-facing release blockers come from the same schema
 - fresh tasks now support field-level `freshness_priority` resolution when competing routes have equal trust rank but different freshness posture
+- acquisition summaries now also emit structured `answer_synthesis`, so downstream reply/runtime layers can directly consume a governed answer contract instead of reverse-engineering `final_fields`
 
 ## New Core Structures
 
@@ -56,6 +57,7 @@ The current phase also extends that control surface into execution evidence:
     - trust posture and trusted-release status
     - freshness posture and governed-release decision
     - structured release disclosure
+    - site-level and task-level answer synthesis contracts
     - overall consensus status
 - structured `challenge` signals
   - Challenge classification now emits severity, signals, safe next routes, and anti-bot posture hints.
@@ -90,3 +92,4 @@ It also means the system can now explain:
 4. where route coverage is still missing
 5. whether the current result may be auto-delivered, only guarded-delivered, or must first gather fresher / higher-trust evidence
 6. what exact caveat text should accompany a guarded release
+7. what response mode the downstream layer should use right now: auto answer, guarded answer, confirmation-first answer, or pause-and-recapture

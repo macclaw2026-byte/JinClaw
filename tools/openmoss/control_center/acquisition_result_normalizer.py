@@ -20,6 +20,8 @@ from collections import defaultdict
 from typing import Any, Dict, List
 
 from control_center_schemas import (
+    build_acquisition_answer_field_schema,
+    build_acquisition_answer_synthesis_schema,
     build_acquisition_execution_summary_schema,
     build_acquisition_field_provenance_schema,
     build_acquisition_release_disclosure_schema,
@@ -656,6 +658,234 @@ def _aggregate_release_disclosure(site_outputs: List[Dict[str, Any]]) -> Dict[st
     )
 
 
+def _answer_response_mode(status: str, requires_user_confirmation: bool) -> str:
+    normalized = str(status or "").strip()
+    if normalized == "ready":
+        return "auto_answer"
+    if normalized == "guarded":
+        return "confirm_then_guarded_answer" if requires_user_confirmation else "guarded_answer"
+    if normalized == "partial":
+        return "partial_answer_with_blockers"
+    return "pause_and_recapture"
+
+
+def _build_answer_field_row(
+    *,
+    field_name: str,
+    priority: str,
+    final_fields: Dict[str, Any],
+    field_provenance: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    provenance = field_provenance.get(field_name, {}) or {}
+    return build_acquisition_answer_field_schema(
+        field_name=field_name,
+        value=final_fields.get(field_name),
+        priority=priority,
+        confidence=str(provenance.get("confidence", "")).strip(),
+        resolution_basis=str(provenance.get("resolution_basis", "")).strip(),
+        source_trust_tier=str(provenance.get("selected_source_trust_tier", "")).strip(),
+        freshness_alignment=str(provenance.get("selected_freshness_alignment", "")).strip(),
+        selection_weight=float(provenance.get("selection_weight", 0.0) or 0.0),
+        route_ids=[str(item).strip() for item in (provenance.get("supporting_route_ids", []) or []) if str(item).strip()],
+        validation_families=[
+            str(item).strip()
+            for item in (provenance.get("supporting_validation_families", []) or [])
+            if str(item).strip()
+        ],
+        notes=[str(item).strip() for item in (provenance.get("notes", []) or []) if str(item).strip()],
+    )
+
+
+def _build_site_answer_synthesis(site_output: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：把站点级字段融合结果整理成可直接给下游回复层消费的答案合同。
+    - 设计意图：不让 runtime/response policy 重新回溯 final_fields + disclosure 自己拼答案。
+    """
+    site = str(site_output.get("site", "")).strip()
+    final_fields = dict(site_output.get("final_fields", {}) or {})
+    field_provenance = dict(site_output.get("field_provenance", {}) or {})
+    required_fields = [str(item).strip() for item in (site_output.get("required_fields", []) or []) if str(item).strip()]
+    stretch_fields = [str(item).strip() for item in (site_output.get("stretch_fields", []) or []) if str(item).strip()]
+    delivery_mode = str(site_output.get("governed_release_status", "")).strip()
+    disclosure = site_output.get("release_disclosure", {}) or {}
+    requires_user_confirmation = bool(disclosure.get("requires_user_confirmation"))
+    if delivery_mode == "auto_release_allowed" and bool(site_output.get("governed_release_ready")):
+        status = "ready"
+    elif delivery_mode in {"guarded_release_with_disclosure", "guarded_requires_human_confirmation"} and final_fields:
+        status = "guarded"
+    elif final_fields:
+        status = "partial"
+    else:
+        status = "blocked"
+    answerable = status in {"ready", "guarded"}
+    required_rows = [
+        _build_answer_field_row(
+            field_name=field_name,
+            priority="required",
+            final_fields=final_fields,
+            field_provenance=field_provenance,
+        )
+        for field_name in required_fields
+        if field_name in final_fields
+    ]
+    stretch_rows = [
+        _build_answer_field_row(
+            field_name=field_name,
+            priority="stretch",
+            final_fields=final_fields,
+            field_provenance=field_provenance,
+        )
+        for field_name in stretch_fields
+        if field_name in final_fields
+    ]
+    blocker_reasons = _unique_preserve(
+        [
+            *[str(item).strip() for item in (site_output.get("governance_blockers", []) or []) if str(item).strip()],
+            *[
+                f"missing_required_field:{field_name}"
+                for field_name in (site_output.get("missing_required_fields", []) or [])
+                if str(field_name).strip()
+            ],
+            *[
+                f"conflicted_field:{field_name}"
+                for field_name in (site_output.get("conflicted_fields", []) or [])
+                if str(field_name).strip()
+            ],
+        ]
+    )
+    notes = [
+        "当前站点结果已经整理成可直接消费的答案合同。"
+        if answerable
+        else ("当前站点有部分可读字段，但仍不满足直接交付规则。" if final_fields else "当前站点尚未形成可交付答案。")
+    ]
+    return build_acquisition_answer_synthesis_schema(
+        scope="site",
+        site=site,
+        status=status,
+        delivery_mode=delivery_mode,
+        response_mode=_answer_response_mode(status, requires_user_confirmation),
+        answerable=answerable,
+        requires_disclosure=bool(disclosure.get("required")),
+        requires_user_confirmation=requires_user_confirmation,
+        answer_field_count=len(required_rows) + len(stretch_rows),
+        required_field_total=len(required_fields),
+        stretch_field_total=len(stretch_fields),
+        required_fields=required_rows,
+        stretch_fields=stretch_rows,
+        missing_required_fields=[str(item).strip() for item in (site_output.get("missing_required_fields", []) or []) if str(item).strip()],
+        missing_stretch_fields=[str(item).strip() for item in (site_output.get("missing_stretch_fields", []) or []) if str(item).strip()],
+        user_visible_lines=[str(item).strip() for item in (disclosure.get("user_visible_lines", []) or []) if str(item).strip()],
+        blocker_reasons=blocker_reasons,
+        recommended_next_actions=[
+            str(item).strip()
+            for item in (site_output.get("recommended_next_actions", []) or [])
+            if str(item).strip()
+        ],
+        notes=_unique_preserve([*notes, *[str(item).strip() for item in (site_output.get("notes", []) or []) if str(item).strip()]]),
+    )
+
+
+def _aggregate_answer_synthesis(site_outputs: List[Dict[str, Any]], recommended_next_actions: List[str]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：把站点级答案合同聚合成任务级答案合成摘要。
+    - 设计意图：让系统直接知道“现在该自动回答、guarded 回答，还是先停下补抓”。
+    """
+    site_answers = [dict((item.get("answer_synthesis", {}) or {})) for item in site_outputs if (item.get("answer_synthesis", {}) or {})]
+    if not site_answers:
+        return build_acquisition_answer_synthesis_schema(
+            scope="overall",
+            status="blocked",
+            delivery_mode="blocked_release_readiness",
+            response_mode="pause_and_recapture",
+            answerable=False,
+            blocker_reasons=["answer_synthesis_missing"],
+            recommended_next_actions=_unique_preserve([str(item).strip() for item in recommended_next_actions if str(item).strip()]),
+            notes=["当前任务还没有任何站点级答案合同。"],
+        )
+    answerable_site_total = sum(1 for item in site_answers if bool(item.get("answerable")))
+    ready_site_total = sum(1 for item in site_answers if str(item.get("status", "")).strip() == "ready")
+    guarded_site_total = sum(1 for item in site_answers if str(item.get("status", "")).strip() == "guarded")
+    blocked_site_total = sum(1 for item in site_answers if str(item.get("status", "")).strip() in {"blocked", "partial"})
+    requires_user_confirmation = any(bool(item.get("requires_user_confirmation")) for item in site_answers)
+    requires_disclosure = any(bool(item.get("requires_disclosure")) for item in site_answers)
+    if blocked_site_total and answerable_site_total:
+        status = "partial"
+    elif guarded_site_total:
+        status = "guarded"
+    elif ready_site_total and ready_site_total == len(site_answers):
+        status = "ready"
+    else:
+        status = "blocked"
+    delivery_mode = (
+        "partial_answer_with_blockers"
+        if status == "partial"
+        else (
+            "guarded_requires_human_confirmation"
+            if requires_user_confirmation and status == "guarded"
+            else (
+                "guarded_release_with_disclosure"
+                if status == "guarded"
+                else ("auto_release_allowed" if status == "ready" else "blocked_release_readiness")
+            )
+        )
+    )
+    return build_acquisition_answer_synthesis_schema(
+        scope="overall",
+        status=status,
+        delivery_mode=delivery_mode,
+        response_mode=_answer_response_mode(status, requires_user_confirmation),
+        answerable=bool(answerable_site_total),
+        requires_disclosure=requires_disclosure,
+        requires_user_confirmation=requires_user_confirmation,
+        answer_field_count=sum(int(item.get("answer_field_count", 0) or 0) for item in site_answers),
+        required_field_total=sum(int(item.get("required_field_total", 0) or 0) for item in site_answers),
+        stretch_field_total=sum(int(item.get("stretch_field_total", 0) or 0) for item in site_answers),
+        missing_required_fields=_unique_preserve(
+            [
+                f"{str(item.get('site', '')).strip()}:{field_name}"
+                for item in site_answers
+                for field_name in (item.get("missing_required_fields", []) or [])
+                if str(field_name).strip()
+            ]
+        ),
+        missing_stretch_fields=_unique_preserve(
+            [
+                f"{str(item.get('site', '')).strip()}:{field_name}"
+                for item in site_answers
+                for field_name in (item.get("missing_stretch_fields", []) or [])
+                if str(field_name).strip()
+            ]
+        ),
+        user_visible_lines=_unique_preserve(
+            [
+                str(line).strip()
+                for item in site_answers
+                for line in (item.get("user_visible_lines", []) or [])
+                if str(line).strip()
+            ]
+        ),
+        blocker_reasons=_unique_preserve(
+            [
+                str(item).strip()
+                for site_answer in site_answers
+                for item in (site_answer.get("blocker_reasons", []) or [])
+                if str(item).strip()
+            ]
+        ),
+        recommended_next_actions=_unique_preserve([str(item).strip() for item in recommended_next_actions if str(item).strip()]),
+        site_answers=site_answers,
+        answerable_site_total=answerable_site_total,
+        ready_site_total=ready_site_total,
+        guarded_site_total=guarded_site_total,
+        blocked_site_total=blocked_site_total,
+        notes=[
+            f"共有 {len(site_answers)} 个站点答案合同，其中 ready={ready_site_total}，guarded={guarded_site_total}，blocked_or_partial={blocked_site_total}。"
+        ],
+    )
+
+
 def _field_provenance_for_site(
     site: str,
     route_runs: List[Dict[str, Any]],
@@ -672,7 +902,7 @@ def _field_provenance_for_site(
     stretch_fields = site_requirements.get("stretch_fields", [])
     expected_fields = _derive_expected_fields(site, surviving or route_runs, acquisition_hand)
     if not surviving:
-        return build_acquisition_site_synthesis_schema(
+        site_output = build_acquisition_site_synthesis_schema(
             site=site,
             synthesis_status="blocked",
             required_fields=required_fields,
@@ -685,6 +915,8 @@ def _field_provenance_for_site(
             recommended_next_actions=["switch_route_or_pause_for_human_checkpoint"],
             notes=["当前站点没有 surviving route，无法进行字段级融合。"],
         )
+        site_output["answer_synthesis"] = _build_site_answer_synthesis(site_output)
+        return site_output
 
     final_fields: Dict[str, Any] = {}
     field_provenance: Dict[str, Dict[str, Any]] = {}
@@ -832,6 +1064,15 @@ def _field_provenance_for_site(
             disagreeing_route_ids=disagreeing_route_ids,
             disagreeing_validation_families=disagreeing_families,
             supporting_values=selected.get("supporting_values", []) or [],
+            selection_weight=float(selected.get("group_score", 0.0) or 0.0),
+            selection_factors={
+                "field_priority": "required" if field_name in required_fields else ("stretch" if field_name in stretch_fields else "derived"),
+                "support_count": len(selected.get("supporting_route_ids", []) or []),
+                "supporting_validation_family_count": len(supporting_families),
+                "source_trust_rank": SOURCE_TRUST_RANK.get(selected_source_trust_tier, 0),
+                "freshness_rank": FRESHNESS_ALIGNMENT_RANK.get(selected_freshness_alignment, 0),
+                "best_quality_score": round(float(selected.get("best_quality_score", 0.0) or 0.0), 3),
+            },
             notes=notes,
         )
 
@@ -907,7 +1148,7 @@ def _field_provenance_for_site(
     site_notes.extend(list(release_governance.get("governance_notes", []) or []))
     recommended_next_actions.extend(list(release_governance.get("governance_actions", []) or []))
 
-    return build_acquisition_site_synthesis_schema(
+    site_output = build_acquisition_site_synthesis_schema(
         site=site,
         synthesis_status=synthesis_status,
         final_fields=final_fields,
@@ -934,6 +1175,8 @@ def _field_provenance_for_site(
         recommended_next_actions=_unique_preserve(recommended_next_actions),
         notes=site_notes,
     )
+    site_output["answer_synthesis"] = _build_site_answer_synthesis(site_output)
+    return site_output
 
 
 def _site_consensus(site: str, route_runs: List[Dict[str, Any]], acquisition_hand: Dict[str, Any]) -> Dict[str, Any]:
@@ -1348,6 +1591,8 @@ def build_acquisition_execution_summary(
         ]
     )
 
+    answer_synthesis = _aggregate_answer_synthesis(site_synthesized_outputs, recommended_next_actions)
+
     return build_acquisition_execution_summary_schema(
         task_id=task_id,
         goal=goal,
@@ -1396,6 +1641,7 @@ def build_acquisition_execution_summary(
             "requires_human_confirmation": bool(human_confirmation_sites_total),
             "release_blockers": release_blockers,
             "release_disclosure": release_disclosure,
+            "answer_synthesis": answer_synthesis,
             "route_gap_count": len(planned_but_not_executed),
             "global_planned_route_ids": execution_plan.get("global_planned_route_ids", []) or _planned_route_ids(acquisition_hand),
             "global_skipped_route_ids": global_skipped_route_ids,
@@ -1432,6 +1678,7 @@ def render_acquisition_execution_summary_markdown(summary: Dict[str, Any]) -> st
         "",
     ]
     release_disclosure = overall.get("release_disclosure", {}) or {}
+    answer_synthesis = overall.get("answer_synthesis", {}) or {}
     if release_disclosure.get("required"):
         lines.extend(
             [
@@ -1445,6 +1692,20 @@ def render_acquisition_execution_summary_markdown(summary: Dict[str, Any]) -> st
         for item in release_disclosure.get("user_visible_lines", []) or []:
             lines.append(f"- Disclosure: {item}")
         lines.append("")
+    if answer_synthesis:
+        lines.extend(
+            [
+                "## Answer Synthesis",
+                "",
+                f"- Status: `{answer_synthesis.get('status', '')}`",
+                f"- Response mode: `{answer_synthesis.get('response_mode', '')}`",
+                f"- Answerable sites: `{answer_synthesis.get('answerable_site_total', 0)}`",
+                f"- Ready sites: `{answer_synthesis.get('ready_site_total', 0)}`",
+                f"- Guarded sites: `{answer_synthesis.get('guarded_site_total', 0)}`",
+                f"- Blocked or partial sites: `{answer_synthesis.get('blocked_site_total', 0)}`",
+                "",
+            ]
+        )
     synthesis_by_site = {
         str(item.get("site", "")).strip(): item
         for item in summary.get("site_synthesized_outputs", []) or []
@@ -1464,6 +1725,7 @@ def render_acquisition_execution_summary_markdown(summary: Dict[str, Any]) -> st
                 f"- Trust posture: `{site.get('trust_posture', synthesized.get('trust_posture', ''))}`",
                 f"- Freshness posture: `{synthesized.get('freshness_posture', '')}`",
                 f"- Governed release: `{synthesized.get('governed_release_status', '')}`",
+                f"- Answer delivery: `{((synthesized.get('answer_synthesis', {}) or {}).get('response_mode', ''))}`",
                 f"- Winner route: `{winner.get('route_id', '')}`",
                 f"- Winner adapter: `{winner.get('adapter_id', '')}`",
                 f"- Winner source trust: `{winner.get('source_trust_tier', '')}`",
@@ -1500,6 +1762,15 @@ def render_acquisition_execution_summary_markdown(summary: Dict[str, Any]) -> st
             lines.append(f"  - headline: {disclosure.get('headline', '')}")
             for item in disclosure.get("user_visible_lines", []) or []:
                 lines.append(f"  - {item}")
+        answer_bundle = synthesized.get("answer_synthesis", {}) or {}
+        if answer_bundle.get("required_fields"):
+            lines.append("- Answer fields:")
+            for row in answer_bundle.get("required_fields", []) or []:
+                lines.append(
+                    "  - "
+                    + f"{row.get('field_name', '')}: {row.get('value', '')} "
+                    + f"(confidence={row.get('confidence', '')}, source={row.get('source_trust_tier', '')}, freshness={row.get('freshness_alignment', '')})"
+                )
         if site.get("recommended_next_actions"):
             lines.append("- Recommended next actions:")
             for action in site.get("recommended_next_actions", []) or []:
