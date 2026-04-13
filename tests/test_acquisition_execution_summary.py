@@ -48,6 +48,9 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
     def _acquisition_hand(
         self,
         *,
+        primary_adapter_id='curl_cffi_http',
+        primary_route_id='primary:curl',
+        primary_route_type='static_fetch',
         validation_adapter_id='crawl4ai_cli',
         validation_route_id='validate:crawl4ai',
         validation_route_type='crawl4ai',
@@ -64,10 +67,10 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
             },
             'route_candidates': [
                 {
-                    'route_id': 'primary:curl',
-                    'adapter_id': 'curl_cffi_http',
-                    'route_type': 'static_fetch',
-                    'risk_level': 'low',
+                    'route_id': primary_route_id,
+                    'adapter_id': primary_adapter_id,
+                    'route_type': primary_route_type,
+                    'risk_level': 'low' if primary_route_type != 'browser_render' else 'high',
                 },
                 {
                     'route_id': validation_route_id,
@@ -77,13 +80,13 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
                 },
             ],
             'execution_strategy': {
-                'primary_route_id': 'primary:curl',
+                'primary_route_id': primary_route_id,
                 'validation_route_ids': [validation_route_id],
                 'escalation_route_ids': [],
             },
         }
 
-    def _report_payload(self, *, validation_tool='crawl4ai-cli'):
+    def _report_payload(self, *, primary_tool='curl-cffi', validation_tool='crawl4ai-cli'):
         return {
             'generated_at': '2026-04-13T12:00:00+00:00',
             'sites': [
@@ -92,7 +95,7 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
                     'url': 'https://www.amazon.com/s?k=wireless+mouse',
                     'tool_results': [
                         {
-                            'tool': 'curl-cffi',
+                            'tool': primary_tool,
                             'status': 'usable',
                             'arbitration_score': 88,
                             'normalized_task_output': {
@@ -142,6 +145,7 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         adapters_by_id = {item['adapter_id']: item for item in registry['adapters']}
         self.assertEqual(adapters_by_id['playwright_stealth_scroll_browser']['execution_profile'], 'stealth_scroll_capture')
         self.assertEqual(adapters_by_id['curl_cffi_http']['validation_family'], 'http_fetch')
+        self.assertEqual(adapters_by_id['curl_cffi_http']['source_trust_tier'], 'public_fetch')
 
     def test_execution_summary_reports_cross_route_validation(self):
         summary = build_acquisition_execution_summary(
@@ -154,8 +158,10 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         self.assertEqual(summary['overall_summary']['consensus_status'], 'cross_route_validated')
         self.assertEqual(summary['overall_summary']['synthesis_status'], 'ready')
         self.assertEqual(summary['overall_summary']['release_readiness_status'], 'ready')
+        self.assertEqual(summary['overall_summary']['trusted_release_status'], 'guarded_medium_trust')
         self.assertEqual(summary['overall_summary']['validation_diversity_status'], 'independent_family_validation')
         self.assertEqual(summary['site_consensus'][0]['validation_status'], 'cross_validated_independent')
+        self.assertEqual(summary['site_synthesized_outputs'][0]['trust_posture'], 'guarded_medium_trust_sources')
         self.assertEqual(summary['site_synthesized_outputs'][0]['final_fields']['title'], 'Wireless Mouse')
         self.assertEqual(summary['site_synthesized_outputs'][0]['field_provenance']['price']['confidence'], 'cross_validated_independent')
         self.assertTrue(summary['site_synthesized_outputs'][0]['release_ready'])
@@ -205,6 +211,59 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         self.assertIn('price', site_output['conflicted_fields'])
         self.assertEqual(site_output['field_provenance']['price']['confidence'], 'resolved_by_best_evidence')
         self.assertIn('review_field_level_conflicts_before_release', summary['recommended_next_actions'])
+
+    def test_execution_summary_prefers_higher_trust_source_for_required_field_conflict(self):
+        payload = self._report_payload(primary_tool='search', validation_tool='direct-http-html')
+        payload['sites'][0]['tool_results'][0]['arbitration_score'] = 65
+        payload['sites'][0]['tool_results'][1]['arbitration_score'] = 75
+        payload['sites'][0]['tool_results'][1]['normalized_task_output']['fields']['price'] = '18.49'
+        summary = build_acquisition_execution_summary(
+            'test-acq-source-trust',
+            'Collect current Amazon price evidence with source links',
+            payload,
+            self._acquisition_hand(
+                primary_adapter_id='official_api_search',
+                primary_route_id='primary:official',
+                primary_route_type='official_api',
+                validation_adapter_id='direct_http_html',
+                validation_route_id='validate:direct',
+                validation_route_type='static_fetch',
+                required_fields=['title', 'price', 'link'],
+                stretch_fields=['rating'],
+            ),
+            report_path='/tmp/crawler-tool-matrix.json',
+        )
+        price_provenance = summary['site_synthesized_outputs'][0]['field_provenance']['price']
+        self.assertEqual(summary['site_synthesized_outputs'][0]['final_fields']['price'], '19.99')
+        self.assertEqual(price_provenance['confidence'], 'resolved_by_source_trust')
+        self.assertEqual(price_provenance['resolution_basis'], 'source_trust_priority')
+        self.assertEqual(price_provenance['selected_source_trust_tier'], 'official_source')
+        self.assertEqual(summary['overall_summary']['trusted_release_status'], 'trusted_ready')
+        self.assertTrue(summary['site_synthesized_outputs'][0]['trusted_release_ready'])
+
+    def test_execution_summary_marks_low_trust_browser_release_as_guarded(self):
+        payload = self._report_payload(primary_tool='playwright-stealth', validation_tool='playwright')
+        summary = build_acquisition_execution_summary(
+            'test-acq-low-trust',
+            'Collect current Amazon price evidence with source links',
+            payload,
+            self._acquisition_hand(
+                primary_adapter_id='playwright_stealth_browser',
+                primary_route_id='primary:browser',
+                primary_route_type='browser_render',
+                validation_adapter_id='playwright_browser',
+                validation_route_id='validate:browser',
+                validation_route_type='browser_render',
+                required_fields=['title', 'price', 'link'],
+                stretch_fields=['rating'],
+            ),
+            report_path='/tmp/crawler-tool-matrix.json',
+        )
+        self.assertEqual(summary['overall_summary']['release_readiness_status'], 'ready')
+        self.assertEqual(summary['overall_summary']['trusted_release_status'], 'guarded_low_trust')
+        self.assertEqual(summary['site_synthesized_outputs'][0]['trust_posture'], 'guarded_low_trust_sources')
+        self.assertFalse(summary['site_synthesized_outputs'][0]['trusted_release_ready'])
+        self.assertIn('seek_higher_trust_source_before_release', summary['recommended_next_actions'])
 
     def test_execution_summary_allows_release_when_only_stretch_fields_are_missing(self):
         payload = self._report_payload()
@@ -284,6 +343,7 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         snapshot = build_task_status_snapshot(task_id)
         self.assertEqual(snapshot['acquisition_hand']['execution_synthesis_status'], 'ready')
         self.assertEqual(snapshot['acquisition_hand']['release_readiness_status'], 'ready')
+        self.assertEqual(snapshot['acquisition_hand']['trusted_release_status'], 'guarded_medium_trust')
         self.assertEqual(snapshot['acquisition_hand']['validation_diversity_status'], 'independent_family_validation')
         self.assertEqual(snapshot['acquisition_hand']['required_field_gap_total'], 0)
         self.assertEqual(snapshot['acquisition_hand']['synthesized_sites_total'], 1)

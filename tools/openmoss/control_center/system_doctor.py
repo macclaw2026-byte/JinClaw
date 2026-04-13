@@ -2141,6 +2141,8 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
                     errors.append('acquisition_chain_missing_validation_diversity_status')
                 if not str((sample_summary.get('overall_summary', {}) or {}).get('release_readiness_status', '')).strip():
                     errors.append('acquisition_chain_missing_release_readiness_status')
+                if not str((sample_summary.get('overall_summary', {}) or {}).get('trusted_release_status', '')).strip():
+                    errors.append('acquisition_chain_missing_trusted_release_status')
 
             contract = TaskContract.from_dict({
                 'task_id': task_id,
@@ -2194,6 +2196,10 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
         ),
         'delivery_requirements_contract': not any(
             item in {'acquisition_chain_missing_delivery_requirements', 'acquisition_chain_missing_release_readiness_status'}
+            for item in errors
+        ),
+        'source_trust_contract': not any(
+            item in {'acquisition_chain_missing_trusted_release_status'}
             for item in errors
         ),
         'browser_execution_contract': not any(
@@ -2398,6 +2404,13 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
             if str((item or {}).get("validation_family", "")).strip()
         }
     )
+    source_trust_tiers = sorted(
+        {
+            str((item or {}).get("source_trust_tier", "")).strip()
+            for item in (acquisition_market.get("adapters", []) or [])
+            if str((item or {}).get("source_trust_tier", "")).strip()
+        }
+    )
     crawler_attention_sites = [
         {
             "site": site.get("site", ""),
@@ -2441,6 +2454,8 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
                 "observed_only_adapter_total": len(acquisition_market.get("observed_only_adapter_ids", []) or []),
                 "validation_family_total": len(validation_families),
                 "validation_families": validation_families[:8],
+                "source_trust_tier_total": len(source_trust_tiers),
+                "source_trust_tiers": source_trust_tiers[:8],
                 "browser_adapter_total": len(browser_adapters),
                 "browser_runtime_ready_total": len(browser_runtime_ready),
                 "browser_execution_profiles": browser_profiles[:8],

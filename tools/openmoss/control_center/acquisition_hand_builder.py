@@ -286,6 +286,7 @@ def _make_route_candidate(
         "risk_level": risk_level,
         "anti_bot_readiness": str(adapter.get("anti_bot_readiness", "medium")).strip() or "medium",
         "validation_family": str(adapter.get("validation_family", "")).strip() or route_type or "unknown",
+        "source_trust_tier": str(adapter.get("source_trust_tier", "")).strip(),
         "tools": [str(item) for item in adapter.get("tools", []) if str(item).strip()],
         "requires_review": requires_review,
         "can_run_parallel": can_run_parallel,
@@ -514,6 +515,8 @@ def _derive_result_consensus(
         {"name": "required_field_coverage", "weight": 6 if has_required_field_contract else 4, "why": "先满足本次任务真正 required 的字段，再考虑扩展字段。"},
         {"name": "field_completeness", "weight": 5, "why": "最终结果要尽量覆盖任务要求字段。"},
         {"name": "freshness", "weight": fresh_weight, "why": "时效敏感任务必须提高 freshness 权重。"},
+        {"name": "source_trust_tier", "weight": 5, "why": "关键字段冲突时，应解释当前值来自哪一层来源信任。"},
+        {"name": "freshness_alignment", "weight": fresh_weight if _goal_time_sensitivity(goal) == "fresh" else 2, "why": "新鲜度敏感任务要优先更贴近实时的来源。"},
         {"name": "site_readiness", "weight": 4 if challenge_rank >= 2 else 3, "why": "遇到反爬/风控时，优先已验证可用路线。"},
         {"name": "cross_route_agreement", "weight": 4 if route_diversity_required else 2, "why": "多路线结果越一致，可信度越高。"},
         {"name": "validation_family_diversity", "weight": 4 if len(validation_families) >= 2 else 2, "why": "优先不同证据家族形成的交叉验证，而不是同家族换壳确认。"},
@@ -525,6 +528,8 @@ def _derive_result_consensus(
         comparison_axes=comparison_axes,
         tie_breakers=[
             "prefer_route_with_higher_required_field_coverage",
+            "prefer_higher_trust_source_for_required_fields",
+            "prefer_better_freshness_alignment_when_task_is_fresh",
             "prefer_lower_risk_route_when_quality_is_similar",
             "prefer_verified_site_route_when_challenge_is_present",
             "prefer_route_with_clearer_provenance",
@@ -537,6 +542,8 @@ def _derive_result_consensus(
             "status",
             "field_coverage",
             "validation_family",
+            "source_trust_tier",
+            "freshness_alignment",
             "evidence_ref",
         ],
         must_compare_when_multiple_routes=len(route_candidates) >= 2,
@@ -645,6 +652,7 @@ def build_acquisition_hand(
                 "route_type": str(primary_route.get("route_type", "")).strip(),
                 "adapter_id": str(primary_route.get("adapter_id", "")).strip(),
                 "validation_family": _candidate_validation_family(primary_route) if primary_route else "",
+                "source_trust_tier": str(primary_route.get("source_trust_tier", "")).strip(),
             },
             "validation_routes": [
                 {
@@ -652,6 +660,7 @@ def build_acquisition_hand(
                     "route_type": str(item.get("route_type", "")).strip(),
                     "adapter_id": str(item.get("adapter_id", "")).strip(),
                     "validation_family": _candidate_validation_family(item),
+                    "source_trust_tier": str(item.get("source_trust_tier", "")).strip(),
                 }
                 for item in validation_routes
                 if item
