@@ -2069,10 +2069,19 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
             browser_enabled_adapters = [
                 item for item in enabled_adapters if str((item or {}).get('route_type', '')).strip() == 'browser_render'
             ]
+            validation_families = sorted(
+                {
+                    str((item or {}).get('validation_family', '')).strip()
+                    for item in enabled_adapters
+                    if str((item or {}).get('validation_family', '')).strip()
+                }
+            )
             if enabled_adapters and not any(str((item or {}).get('execution_tool_id', '')).strip() for item in enabled_adapters):
                 errors.append('acquisition_chain_missing_execution_binding_registry')
             if browser_enabled_adapters and not any(str((item or {}).get('execution_profile', '')).strip() for item in browser_enabled_adapters):
                 errors.append('acquisition_chain_missing_browser_execution_profiles')
+            if enabled_adapters and not validation_families:
+                errors.append('acquisition_chain_missing_validation_families')
             probe_plan = _derive_probe_execution_plan(
                 goal,
                 control_center.get('crawler', {}) or {},
@@ -2125,6 +2134,8 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
                     errors.append('acquisition_chain_missing_site_synthesis_summary')
                 if not str((sample_summary.get('overall_summary', {}) or {}).get('synthesis_status', '')).strip():
                     errors.append('acquisition_chain_missing_synthesis_status')
+                if not str((sample_summary.get('overall_summary', {}) or {}).get('validation_diversity_status', '')).strip():
+                    errors.append('acquisition_chain_missing_validation_diversity_status')
 
             contract = TaskContract.from_dict({
                 'task_id': task_id,
@@ -2178,6 +2189,10 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
         ),
         'browser_execution_contract': not any(
             item in {'acquisition_chain_missing_browser_execution_profiles'}
+            for item in errors
+        ),
+        'validation_family_contract': not any(
+            item in {'acquisition_chain_missing_validation_families', 'acquisition_chain_missing_validation_diversity_status'}
             for item in errors
         ),
         'acquisition_chain': 'ok' if not errors else 'error',
@@ -2367,6 +2382,13 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
             if str((item or {}).get("execution_profile", "")).strip()
         }
     )
+    validation_families = sorted(
+        {
+            str((item or {}).get("validation_family", "")).strip()
+            for item in (acquisition_market.get("adapters", []) or [])
+            if str((item or {}).get("validation_family", "")).strip()
+        }
+    )
     crawler_attention_sites = [
         {
             "site": site.get("site", ""),
@@ -2408,6 +2430,8 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
                 "stability_score": float(crawler_summary.get("stability_score", 0.0) or 0.0),
                 "available_adapter_total": int(acquisition_market.get("available_adapter_total", 0) or 0),
                 "observed_only_adapter_total": len(acquisition_market.get("observed_only_adapter_ids", []) or []),
+                "validation_family_total": len(validation_families),
+                "validation_families": validation_families[:8],
                 "browser_adapter_total": len(browser_adapters),
                 "browser_runtime_ready_total": len(browser_runtime_ready),
                 "browser_execution_profiles": browser_profiles[:8],

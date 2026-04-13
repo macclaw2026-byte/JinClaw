@@ -386,6 +386,8 @@ def _doctor_runtime_summary() -> Dict[str, Any]:
             "sites_production_ready": int(adapter_coverage.get("sites_production_ready", 0) or 0),
             "sites_attention_required": int(adapter_coverage.get("sites_attention_required", 0) or 0),
             "available_adapter_total": int(adapter_coverage.get("available_adapter_total", 0) or 0),
+            "validation_family_total": int(adapter_coverage.get("validation_family_total", 0) or 0),
+            "validation_families": list(adapter_coverage.get("validation_families", []) or []),
             "browser_runtime_ready_total": int(adapter_coverage.get("browser_runtime_ready_total", 0) or 0),
             "browser_execution_profiles": list(adapter_coverage.get("browser_execution_profiles", []) or []),
             "attention_sites_total": len(acquisition_health.get("attention_sites", []) or []),
