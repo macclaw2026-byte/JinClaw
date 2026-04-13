@@ -88,7 +88,11 @@ def analyze(site: str, tool: str, url: str, stdout: str, stderr: str, returncode
         'window.__initiallanguage__', 'window.__initiali18nstore__',
         'window.__pxappid', 'press & hold human challenge',
         'please slide to verify', 'sorry, we have detected unusual traffic from your network',
-        'password login', '短信登录', '密码登录'
+        'password login', '短信登录', '密码登录',
+        'window.__px', 'window.___browsercheck___', 'window.___grecaptcha_cfg',
+        'window.location.href = decodeuricomponent', 'window.location.href=decodeuricomponent',
+        'login.1688.com/member/signin', 'login.taobao.com', 'x5secdata',
+        'no results for', 'search_result', 'organizing categories'
     ]
     shell_signal_count = sum(1 for sig in shell_indicators if sig in stdout.lower())
 
@@ -108,6 +112,10 @@ def analyze(site: str, tool: str, url: str, stdout: str, stderr: str, returncode
     score = max(0, min(100, score))
 
     if block_signal_count > 0 or shell_signal_count >= 2:
+        status = 'blocked'
+    elif site == 'temu' and shell_signal_count >= 1:
+        status = 'blocked'
+    elif site == '1688' and ('login.1688.com' in stdout.lower() or 'login.taobao.com' in stdout.lower() or 'x5secdata' in stdout.lower()):
         status = 'blocked'
     elif product_signal_count >= 2 and chars > 1200 and shell_signal_count == 0:
         status = 'usable'
@@ -134,8 +142,8 @@ def direct_http_tool(site, url):
         'resp=urllib.request.urlopen(req, timeout=30); '
         'print(resp.read().decode("utf-8","ignore")[:300000])'
     )
-    p = run(['python3', '-c', code, url])
-    return analyze(site, 'direct-http-html', url, p.stdout, p.stderr, p.returncode, 'raw urllib HTTP fetch')
+    p = run([str(VENV_PY), '-c', code, url])
+    return analyze(site, 'direct-http-html', url, p.stdout, p.stderr, p.returncode, 'raw urllib HTTP fetch via matrix-venv')
 
 
 def curl_cffi_tool(site, url):

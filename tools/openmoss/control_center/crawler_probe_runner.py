@@ -42,6 +42,7 @@ from site_tool_matrix_v2 import (  # type: ignore
     playwright_tool,
     scrapy_cffi_tool,
 )
+from acquisition_result_normalizer import build_acquisition_execution_summary, render_acquisition_execution_summary_markdown
 
 
 SUPPORTED_SITES = {
@@ -506,7 +507,12 @@ def _build_site_profile(site_id: str, site_payload: Dict[str, Any]) -> Tuple[Dic
     return payload, "\n".join(lines)
 
 
-def run_crawler_probe(task_id: str, goal: str, crawler_plan: Dict[str, Any]) -> Dict[str, Any]:
+def run_crawler_probe(
+    task_id: str,
+    goal: str,
+    crawler_plan: Dict[str, Any],
+    acquisition_hand: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
     """
     中文注解：
     - 功能：执行一轮真实 crawler 工具矩阵测试，并产出结构化报告。
@@ -634,9 +640,30 @@ def run_crawler_probe(task_id: str, goal: str, crawler_plan: Dict[str, Any]) -> 
         "attempted_tool_labels": attempted_tool_labels,
         "all_sites_attempted": sorted({site["site"] for site in site_payloads}) == sorted(requested_sites),
     }
+    acquisition_summary: Dict[str, Any] = {}
+    acquisition_summary_json_path = ""
+    acquisition_summary_md_path = ""
+    if acquisition_hand:
+        acquisition_summary = build_acquisition_execution_summary(
+            task_id,
+            goal,
+            report_payload,
+            acquisition_hand,
+            report_path=str(report_json_path),
+        )
+        acquisition_summary_json_path = str(output_dir / "crawler-acquisition-summary.json")
+        acquisition_summary_md_path = str(output_dir / "crawler-acquisition-summary.md")
+        _write_json(Path(acquisition_summary_json_path), acquisition_summary)
+        _write_text(
+            Path(acquisition_summary_md_path),
+            render_acquisition_execution_summary_markdown(acquisition_summary),
+        )
     return {
         "report_json_path": str(report_json_path),
         "report_md_path": str(report_md_path),
+        "acquisition_summary_json_path": acquisition_summary_json_path,
+        "acquisition_summary_md_path": acquisition_summary_md_path,
+        "acquisition_summary": acquisition_summary,
         "required_sites": requested_sites,
         "required_tools": requested_tools,
         "coverage": coverage,
@@ -748,12 +775,18 @@ def main() -> int:
     parser.add_argument("--task-id", required=True)
     parser.add_argument("--goal", required=True)
     parser.add_argument("--crawler-json", required=True)
+    parser.add_argument("--acquisition-hand-json", default="")
     parser.add_argument("--mode", choices=["probe", "retro"], default="probe")
     parser.add_argument("--execution-json", default="")
     args = parser.parse_args()
     crawler = json.loads(args.crawler_json)
     if args.mode == "probe":
-        payload = run_crawler_probe(args.task_id, args.goal, crawler)
+        payload = run_crawler_probe(
+            args.task_id,
+            args.goal,
+            crawler,
+            json.loads(args.acquisition_hand_json or "{}"),
+        )
     else:
         payload = run_crawler_retro(args.task_id, args.goal, crawler, json.loads(args.execution_json or "{}"))
     print(json.dumps(payload, ensure_ascii=False, indent=2))

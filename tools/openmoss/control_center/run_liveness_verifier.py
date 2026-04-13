@@ -130,6 +130,7 @@ def build_run_liveness(task_id: str) -> Dict[str, Any]:
     metadata = state.get("metadata", {}) or {}
     active = metadata.get("active_execution", {}) or {}
     waiting = metadata.get("waiting_external", {}) or {}
+    business_outcome = metadata.get("business_outcome", {}) or {}
     run_id = str(active.get("run_id", "")).strip()
     stage_name = str(active.get("stage_name", "")).strip() or str(state.get("current_stage", "")).strip()
     latest_record = _latest_execution_record(task_id, run_id) if run_id else {}
@@ -143,6 +144,13 @@ def build_run_liveness(task_id: str) -> Dict[str, Any]:
     completion_guards = _completion_guards(task_id)
     runtime_files_missing = not state_path.exists() and not contract_path.exists() and not events_path.exists()
     orphaned_completed = runtime_files_missing and completion_guards.get("present_count", 0) > 0
+    satisfied_waiting_residue = bool(
+        not bool(run_id)
+        and waiting
+        and business_outcome.get("goal_satisfied") is True
+        and business_outcome.get("user_visible_result_confirmed") is True
+        and completion_guards.get("present_count", 0) > 0
+    )
     return {
         "task_id": task_id,
         "status": str(state.get("status", "")).strip(),
@@ -171,6 +179,12 @@ def build_run_liveness(task_id: str) -> Dict[str, Any]:
         "orphaned_completed_reason": (
             "completed_workspace_guards_with_missing_runtime_state"
             if orphaned_completed
+            else None
+        ),
+        "satisfied_waiting_residue": satisfied_waiting_residue,
+        "satisfied_waiting_residue_reason": (
+            "waiting_external_residue_with_satisfied_business_outcome"
+            if satisfied_waiting_residue
             else None
         ),
     }

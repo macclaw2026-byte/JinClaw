@@ -10,6 +10,9 @@ python3 -m unittest \
   "$ROOT/tests/test_coding_methodology_injection.py" \
   "$ROOT/tests/test_coding_session_adapter.py" \
   "$ROOT/tests/test_acp_dispatch_builder.py" \
+  "$ROOT/tests/test_orchestrator_governance_upgrade.py" \
+  "$ROOT/tests/test_acquisition_hand_upgrade.py" \
+  "$ROOT/tests/test_acquisition_execution_summary.py" \
   "$ROOT/tests/test_runtime_dispatch_prompt_integration.py" \
   "$ROOT/tests/test_gstack_integration_doctor.py" \
   "$ROOT/tests/test_single_doctor_architecture.py"

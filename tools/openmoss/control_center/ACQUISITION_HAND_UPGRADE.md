@@ -1,0 +1,77 @@
+<!--
+RULES-FIRST NOTICE:
+Before modifying this file, first read:
+- `JINCLAW_CONSTITUTION.md`
+- `AI_OPTIMIZATION_FRAMEWORK.md`
+Follow the constitution and framework:
+brain-first, one-doctor, fail-closed, evidence-over-narration,
+validate locally, then use the required PR workflow.
+-->
+# Acquisition Hand Upgrade
+
+## What Changed
+
+JinClaw/OpenClaw now exposes a unified `acquisition_hand` contract in `metadata.control_center`.
+
+This contract does not replace the existing `crawler` payload yet.
+It wraps the current fetch/crawler chain in a more general, reusable control surface for any task that needs external data.
+
+The current phase also extends that control surface into execution evidence:
+
+- the adapter catalog is now a concrete adapter market instead of only stack-level labels
+- execution results can be normalized into a route-aware `acquisition execution summary`
+- verifier/runtime/doctor now have a shared artifact for planned-vs-executed route gaps and site-level consensus
+
+## New Core Structures
+
+- `acquisition_adapter_registry`
+  - Concrete adapter market built from the crawler stack registry, local capability availability, and observed-but-not-yet-wired anti-bot/browser adapters.
+- `acquisition_hand`
+  - Unified data-acquisition protocol with:
+    - target profile
+    - governance binding
+    - challenge assessment
+    - routing policy
+    - route candidates
+    - execution strategy
+    - result consensus
+    - evidence contract
+    - learning contract
+- `acquisition_execution_summary`
+  - Execution-time normalized artifact with:
+    - planned routes
+    - executed routes
+    - planned-vs-executed gaps
+    - per-site winner / validation status
+    - overall consensus status
+- structured `challenge` signals
+  - Challenge classification now emits severity, signals, safe next routes, and anti-bot posture hints.
+
+## Compatibility Strategy
+
+- keep `crawler` intact for current runtime execution and verifier paths
+- map current crawler selected stack and fallback stacks into `acquisition_hand.compatibility`
+- let stage context, ACP dispatch, task snapshot, and doctor consume `acquisition_hand`
+- let execute-stage crawler runs write `crawler-acquisition-summary.json/.md` beside the existing crawler report
+- let verifier/runtime treat missing acquisition summary as a first-class integration gap when acquisition hand is enabled
+- preserve fail-closed behavior for human verification and authorized-session routes
+
+## Why This Matters
+
+Before this upgrade, the system had a crawler governance layer but not a general-purpose “data acquisition hand”.
+
+After this upgrade, JinClaw can reason about external data collection as:
+
+1. a governed capability
+2. a multi-route decision problem
+3. a consensus-and-evidence problem
+4. a reusable learning surface
+
+This makes future adapter additions such as stronger browser stacks or new structured-source connectors an adapter-registry task instead of a main-orchestrator rewrite.
+
+It also means the system can now explain:
+
+1. which route it planned
+2. which route actually executed
+3. whether multiple routes agreed
+4. where route coverage is still missing

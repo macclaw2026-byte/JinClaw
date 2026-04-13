@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import shutil
 from pathlib import Path
@@ -36,6 +37,18 @@ def _safe_read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except OSError:
         return ""
+
+
+def _python_package_exists(name: str) -> bool:
+    """
+    中文注解：
+    - 功能：判断某个 Python 包是否存在。
+    - 设计意图：registry 只需要“是否可用”的事实，不应该为了探测而执行包内初始化逻辑。
+    """
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ModuleNotFoundError, ValueError):
+        return False
 
 
 def _detect_skill_tags(name: str, body: str) -> List[str]:
@@ -134,21 +147,34 @@ def _scan_tools() -> List[Dict[str, object]]:
     for binary, aliases in {
         "python": ["scrapy"],
         "node": ["crawlee"],
+        "curl": ["direct-http-html"],
+        "chromedriver": ["selenium"],
     }.items():
+        resolved = shutil.which(binary)
         tools.append(
             {
                 "name": binary,
-                "path": shutil.which(binary) or "",
-                "exists": bool(shutil.which(binary)),
+                "path": resolved or "",
+                "exists": bool(resolved),
                 "provides": aliases,
             }
         )
-    for package_name in ["curl_cffi", "playwright", "playwright_stealth", "httpx", "selectolax"]:
-        try:
-            __import__(package_name)
-            exists = True
-        except Exception:
-            exists = False
+    for package_name in [
+        "curl_cffi",
+        "playwright",
+        "playwright_stealth",
+        "httpx",
+        "selectolax",
+        "parsel",
+        "nodriver",
+        "browserforge",
+        "patchright",
+        "camoufox",
+        "undetected_chromedriver",
+        "selenium",
+        "seleniumbase",
+    ]:
+        exists = _python_package_exists(package_name)
         tools.append(
             {
                 "name": package_name,

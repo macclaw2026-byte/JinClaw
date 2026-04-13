@@ -25,6 +25,8 @@ functional regions:
 - `domain_profile_store`: keep domain-specific fetch preferences and challenge posture
 - `challenge_classifier`: recognize rate limits, auth walls, CAPTCHA-like gates, and rendering barriers
 - `adaptive_fetch_router`: choose the compliant acquisition ladder from API/static fetch to browser, authorized session, or human checkpoint
+- `acquisition_hand_builder`: assemble the unified data-acquisition hand with route candidates, adapter registry, consensus rules, and learning contracts
+- `acquisition_result_normalizer`: turn real crawler/browser runs into route-level acquisition evidence, consensus summaries, and doctor/verifier-readable artifacts
 - `authorized_session_manager`: define isolated reviewed session requirements for approved authenticated access
 - `human_checkpoint`: pause automation safely when human verification is required
 - `security_policy`: classify risk and define hard boundaries

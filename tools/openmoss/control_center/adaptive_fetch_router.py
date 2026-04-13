@@ -145,6 +145,9 @@ def _route_ladder(intent: Dict[str, object], selected_plan: Dict[str, object], d
         "authorized_session",
         "human_checkpoint",
     ]
+    safe_next_routes = [str(item) for item in challenge.get("safe_next_routes", []) if str(item).strip()]
+    if safe_next_routes:
+        return safe_next_routes
     if challenge.get("recommended_route") == "browser_render":
         return ["browser_render", "authorized_session", "human_checkpoint"]
     if challenge.get("recommended_route") == "official_source_or_authorized_session":

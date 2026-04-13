@@ -407,15 +407,16 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
     business = _derive_business_outcome_from_workspace_guards(canonical_task_id, state)
     milestone_progress = _milestone_snapshot(contract, state)
     progress_evidence = build_progress_evidence(canonical_task_id)
+    control_center = ((contract.get("metadata", {}) or {}).get("control_center", {}) or {})
     governance = build_governance_bundle(
         canonical_task_id,
         str(state.get("current_stage", "")).strip(),
         contract,
         state,
         {
-            "selected_plan": ((contract.get("metadata", {}) or {}).get("control_center", {}) or {}).get("selected_plan", {}),
-            "intent": ((contract.get("metadata", {}) or {}).get("control_center", {}) or {}).get("intent", {}),
-            "approval": ((contract.get("metadata", {}) or {}).get("control_center", {}) or {}).get("approval", {}),
+            "selected_plan": control_center.get("selected_plan", {}),
+            "intent": control_center.get("intent", {}),
+            "approval": control_center.get("approval", {}),
         },
     )
     snapshot: Dict[str, Any] = {
@@ -433,6 +434,19 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
         "run_liveness": build_run_liveness(canonical_task_id),
         "goal_conformance": progress_evidence.get("goal_conformance", {}),
         "governance": governance,
+        "control_center_governance": control_center.get("governance", {}),
+        "protocol_pack": control_center.get("protocol_pack", {}),
+        "plan_reviews": control_center.get("plan_reviews", {}),
+        "readiness_dashboard": control_center.get("readiness_dashboard", {}),
+        "acquisition_hand": {
+            "enabled": bool((control_center.get("acquisition_hand", {}) or {}).get("enabled")),
+            "mode": str((((control_center.get("acquisition_hand", {}) or {}).get("execution_strategy", {}) or {}).get("mode", ""))).strip(),
+            "primary_route": (((control_center.get("acquisition_hand", {}) or {}).get("summary", {}) or {}).get("primary_route", {}) or {}),
+            "validation_routes": (((control_center.get("acquisition_hand", {}) or {}).get("summary", {}) or {}).get("validation_routes", []) or []),
+            "execution_summary_path": str(((state.get("metadata", {}) or {}).get("crawler_execution", {}) or {}).get("acquisition_summary_json_path", "")).strip(),
+            "execution_consensus_status": str(((((state.get("metadata", {}) or {}).get("crawler_execution", {}) or {}).get("acquisition_summary", {}) or {}).get("overall_summary", {}) or {}).get("consensus_status", "")).strip(),
+            "planned_route_gaps": (((state.get("metadata", {}) or {}).get("crawler_execution", {}) or {}).get("acquisition_summary", {}) or {}).get("planned_but_not_executed_route_ids", []) or [],
+        },
         "memory": governance.get("memory", {}),
         "browser_signals": {
             "diagnosis": browser_signals.get("diagnosis", "none"),
