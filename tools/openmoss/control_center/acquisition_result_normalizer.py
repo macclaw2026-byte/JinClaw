@@ -22,6 +22,7 @@ from typing import Any, Dict, List
 from control_center_schemas import (
     build_acquisition_execution_summary_schema,
     build_acquisition_field_provenance_schema,
+    build_acquisition_release_disclosure_schema,
     build_acquisition_route_result_schema,
     build_acquisition_site_synthesis_schema,
 )
@@ -515,6 +516,146 @@ def _site_governed_release(
     }
 
 
+def _build_release_disclosure(
+    *,
+    site: str,
+    governed_release_status: str,
+    trust_posture: str,
+    freshness_posture: str,
+    governance_blockers: List[str],
+    governance_actions: List[str],
+    acquisition_hand: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：把 guarded/blocked release 的说明整理成结构化 disclosure。
+    - 设计意图：release governance 不能只给内部状态名，还要能直接转成用户可见的披露与操作提示。
+    """
+    fresh_task = _goal_time_sensitivity(acquisition_hand) == "fresh"
+    site_label = str(site or "current target").strip()
+    status = str(governed_release_status or "").strip()
+    blocker_reasons = _unique_preserve([str(item).strip() for item in governance_blockers if str(item).strip()])
+    actions = _unique_preserve([str(item).strip() for item in governance_actions if str(item).strip()])
+    user_lines: List[str] = []
+    headline = ""
+    summary = ""
+    level = "none"
+    requires_confirmation = False
+    required = False
+
+    if status == "guarded_release_with_disclosure":
+        required = True
+        level = "guarded"
+        headline = f"{site_label} currently qualifies for a guarded release"
+        summary = "结果可交付，但必须明确说明其关键字段仍主要来自 medium-trust 证据。"
+        user_lines.append(f"{site_label} 的关键字段目前主要来自公开抓取或内容提取证据，而不是更高信任层级来源。")
+        user_lines.append("这份结果适合作为 guarded answer 使用，并应保留来源与局限说明。")
+    elif status == "guarded_requires_human_confirmation":
+        required = True
+        level = "confirmation_required"
+        requires_confirmation = True
+        headline = f"{site_label} requires user confirmation before guarded release"
+        summary = "结果结构上可用，但治理规则要求先由用户确认，再以 guarded 方式交付。"
+        user_lines.append(f"{site_label} 的关键字段当前没有达到 trusted-ready 水平。")
+        user_lines.append("如果要继续使用当前结果，需要用户明确确认接受 guarded release。")
+    elif status == "needs_higher_trust_source":
+        required = True
+        level = "blocked"
+        headline = f"{site_label} needs a higher-trust source before release"
+        summary = "当前结果还不能按现有治理规则交付，需要更高信任层级的来源补强。"
+        user_lines.append(f"{site_label} 的当前证据层级不足以满足 release 规则。")
+        user_lines.append("建议继续补抓更高信任来源，而不是直接把当前值当成最终答案。")
+    elif status == "needs_fresher_capture":
+        required = True
+        level = "blocked"
+        headline = f"{site_label} needs a fresher capture before release"
+        summary = "当前结果的时效性不足，不能满足 fresh 任务的交付规则。"
+        user_lines.append(f"{site_label} 当前依赖的证据时间姿态是 `{freshness_posture}`，还不够新。")
+        user_lines.append("在 fresh 任务里，应先重新获取更新的数据后再交付。")
+    elif status == "blocked_release_readiness":
+        required = True
+        level = "blocked"
+        headline = f"{site_label} is not release-ready yet"
+        summary = "当前结果还没有满足结构性 release readiness。"
+        user_lines.append(f"{site_label} 仍存在缺失字段、未解决冲突或其他 release blocker。")
+    else:
+        return build_acquisition_release_disclosure_schema(
+            required=False,
+            level="none",
+            headline="",
+            summary="",
+            user_visible_lines=[],
+            blocker_reasons=[],
+            recommended_actions=[],
+            requires_user_confirmation=False,
+        )
+
+    if trust_posture == "guarded_low_trust_sources":
+        user_lines.append("核心字段主要来自低信任浏览器观察证据。")
+    elif trust_posture == "guarded_medium_trust_sources":
+        user_lines.append("核心字段主要来自 medium-trust 的公开抓取/内容提取证据。")
+    if fresh_task:
+        user_lines.append(f"这次任务是 fresh-sensitive 任务，当前 freshness posture 为 `{freshness_posture}`。")
+    return build_acquisition_release_disclosure_schema(
+        required=required,
+        level=level,
+        headline=headline,
+        summary=summary,
+        user_visible_lines=_unique_preserve(user_lines),
+        blocker_reasons=blocker_reasons,
+        recommended_actions=actions,
+        requires_user_confirmation=requires_confirmation,
+    )
+
+
+def _aggregate_release_disclosure(site_outputs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：把站点级 disclosure 聚合成任务级 release disclosure。
+    - 设计意图：doctor、snapshot、用户回复通常消费任务级摘要，因此需要一份总披露说明。
+    """
+    disclosures = [item.get("release_disclosure", {}) or {} for item in site_outputs if (item.get("release_disclosure", {}) or {})]
+    required_disclosures = [item for item in disclosures if bool(item.get("required"))]
+    if not required_disclosures:
+        return build_acquisition_release_disclosure_schema(
+            required=False,
+            level="none",
+            headline="",
+            summary="",
+            user_visible_lines=[],
+            blocker_reasons=[],
+            recommended_actions=[],
+            requires_user_confirmation=False,
+        )
+    levels = [str(item.get("level", "")).strip() for item in required_disclosures if str(item.get("level", "")).strip()]
+    if "confirmation_required" in levels:
+        level = "confirmation_required"
+    elif "blocked" in levels:
+        level = "blocked"
+    else:
+        level = "guarded"
+    headline = str(required_disclosures[0].get("headline", "")).strip()
+    summary = " | ".join(
+        [str(item.get("summary", "")).strip() for item in required_disclosures if str(item.get("summary", "")).strip()]
+    )[:600]
+    return build_acquisition_release_disclosure_schema(
+        required=True,
+        level=level,
+        headline=headline,
+        summary=summary,
+        user_visible_lines=_unique_preserve(
+            [str(line).strip() for item in required_disclosures for line in (item.get("user_visible_lines", []) or []) if str(line).strip()]
+        ),
+        blocker_reasons=_unique_preserve(
+            [str(line).strip() for item in required_disclosures for line in (item.get("blocker_reasons", []) or []) if str(line).strip()]
+        ),
+        recommended_actions=_unique_preserve(
+            [str(line).strip() for item in required_disclosures for line in (item.get("recommended_actions", []) or []) if str(line).strip()]
+        ),
+        requires_user_confirmation=any(bool(item.get("requires_user_confirmation")) for item in required_disclosures),
+    )
+
+
 def _field_provenance_for_site(
     site: str,
     route_runs: List[Dict[str, Any]],
@@ -640,6 +781,10 @@ def _field_provenance_for_site(
             lead = float(selected.get("group_score", 0.0) or 0.0) - float(grouped_rows[1].get("group_score", 0.0) or 0.0)
             runner_up_route = (((grouped_rows[1] or {}).get("best_observation", {}) or {}).get("route_run", {}) or {})
             source_trust_gap = SOURCE_TRUST_RANK.get(selected_source_trust_tier, 0) - SOURCE_TRUST_RANK.get(_route_source_trust_tier(runner_up_route), 0)
+            freshness_gap = FRESHNESS_ALIGNMENT_RANK.get(selected_freshness_alignment, 0) - FRESHNESS_ALIGNMENT_RANK.get(
+                _route_freshness_alignment(runner_up_route, acquisition_hand),
+                0,
+            )
             if len(selected.get("supporting_route_ids", []) or []) >= 2 and lead >= 15:
                 confidence = (
                     "resolved_multi_route_majority_independent"
@@ -656,6 +801,10 @@ def _field_provenance_for_site(
                 confidence = "resolved_by_source_trust"
                 resolution_basis = "source_trust_priority"
                 notes.append("存在冲突，当前值优先采用来源信任层级更高的路线。")
+            elif _goal_time_sensitivity(acquisition_hand) == "fresh" and source_trust_gap == 0 and freshness_gap >= 1:
+                confidence = "resolved_by_freshness"
+                resolution_basis = "freshness_priority"
+                notes.append("存在冲突，当前值优先采用更新鲜的路线证据。")
             elif lead >= 40:
                 confidence = "resolved_by_best_evidence"
                 resolution_basis = "best_evidence_score"
@@ -746,6 +895,15 @@ def _field_provenance_for_site(
         freshness_posture=freshness_posture,
         acquisition_hand=acquisition_hand,
     )
+    release_disclosure = _build_release_disclosure(
+        site=site,
+        governed_release_status=str(release_governance.get("governed_release_status", "")).strip(),
+        trust_posture=trust_posture,
+        freshness_posture=freshness_posture,
+        governance_blockers=list(release_governance.get("governance_blockers", []) or []),
+        governance_actions=list(release_governance.get("governance_actions", []) or []),
+        acquisition_hand=acquisition_hand,
+    )
     site_notes.extend(list(release_governance.get("governance_notes", []) or []))
     recommended_next_actions.extend(list(release_governance.get("governance_actions", []) or []))
 
@@ -767,6 +925,7 @@ def _field_provenance_for_site(
         governed_release_status=str(release_governance.get("governed_release_status", "")).strip(),
         governed_release_ready=bool(release_governance.get("governed_release_ready")),
         governance_blockers=list(release_governance.get("governance_blockers", []) or []),
+        release_disclosure=release_disclosure,
         cross_validated_fields=_unique_preserve(cross_validated_fields),
         conflicted_fields=_unique_preserve(conflicted_fields),
         supporting_route_ids=_unique_preserve(
@@ -1023,6 +1182,7 @@ def build_acquisition_execution_summary(
     needs_higher_trust_sites_total = sum(1 for item in site_synthesized_outputs if str(item.get("governed_release_status", "")).strip() == "needs_higher_trust_source")
     needs_fresher_capture_sites_total = sum(1 for item in site_synthesized_outputs if str(item.get("governed_release_status", "")).strip() == "needs_fresher_capture")
     human_confirmation_sites_total = sum(1 for item in site_synthesized_outputs if str(item.get("governed_release_status", "")).strip() == "guarded_requires_human_confirmation")
+    disclosure_required_sites_total = sum(1 for item in site_synthesized_outputs if bool((item.get("release_disclosure", {}) or {}).get("required")))
     cross_validated_field_total = sum(len(item.get("cross_validated_fields", []) or []) for item in site_synthesized_outputs)
     conflicted_field_total = sum(len(item.get("conflicted_fields", []) or []) for item in site_synthesized_outputs)
     missing_field_total = sum(len(item.get("missing_fields", []) or []) for item in site_synthesized_outputs)
@@ -1099,6 +1259,7 @@ def build_acquisition_execution_summary(
             if str(blocker).strip()
         ]
     )
+    release_disclosure = _aggregate_release_disclosure(site_synthesized_outputs)
 
     recommended_next_actions = _unique_preserve(
         [
@@ -1223,6 +1384,7 @@ def build_acquisition_execution_summary(
             "needs_higher_trust_sites_total": needs_higher_trust_sites_total,
             "needs_fresher_capture_sites_total": needs_fresher_capture_sites_total,
             "human_confirmation_sites_total": human_confirmation_sites_total,
+            "disclosure_required_sites_total": disclosure_required_sites_total,
             "cross_validated_field_total": cross_validated_field_total,
             "conflicted_field_total": conflicted_field_total,
             "missing_field_total": missing_field_total,
@@ -1233,6 +1395,7 @@ def build_acquisition_execution_summary(
             "governed_release_status": governed_release_status,
             "requires_human_confirmation": bool(human_confirmation_sites_total),
             "release_blockers": release_blockers,
+            "release_disclosure": release_disclosure,
             "route_gap_count": len(planned_but_not_executed),
             "global_planned_route_ids": execution_plan.get("global_planned_route_ids", []) or _planned_route_ids(acquisition_hand),
             "global_skipped_route_ids": global_skipped_route_ids,
@@ -1268,6 +1431,20 @@ def render_acquisition_execution_summary_markdown(summary: Dict[str, Any]) -> st
         f"- Planned but not executed: `{', '.join(summary.get('planned_but_not_executed_route_ids', []) or [])}`",
         "",
     ]
+    release_disclosure = overall.get("release_disclosure", {}) or {}
+    if release_disclosure.get("required"):
+        lines.extend(
+            [
+                "## Release Disclosure",
+                "",
+                f"- Level: `{release_disclosure.get('level', '')}`",
+                f"- Headline: {release_disclosure.get('headline', '')}",
+                f"- Summary: {release_disclosure.get('summary', '')}",
+            ]
+        )
+        for item in release_disclosure.get("user_visible_lines", []) or []:
+            lines.append(f"- Disclosure: {item}")
+        lines.append("")
     synthesis_by_site = {
         str(item.get("site", "")).strip(): item
         for item in summary.get("site_synthesized_outputs", []) or []
@@ -1316,6 +1493,13 @@ def render_acquisition_execution_summary_markdown(summary: Dict[str, Any]) -> st
             lines.append("- Synthesis notes:")
             for note in synthesized.get("notes", []) or []:
                 lines.append(f"  - {note}")
+        if (synthesized.get("release_disclosure", {}) or {}).get("required"):
+            lines.append("- Release disclosure:")
+            disclosure = synthesized.get("release_disclosure", {}) or {}
+            lines.append(f"  - level: {disclosure.get('level', '')}")
+            lines.append(f"  - headline: {disclosure.get('headline', '')}")
+            for item in disclosure.get("user_visible_lines", []) or []:
+                lines.append(f"  - {item}")
         if site.get("recommended_next_actions"):
             lines.append("- Recommended next actions:")
             for action in site.get("recommended_next_actions", []) or []:

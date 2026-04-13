@@ -2147,6 +2147,12 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
                     errors.append('acquisition_chain_missing_trusted_release_status')
                 if not str((sample_summary.get('overall_summary', {}) or {}).get('governed_release_status', '')).strip():
                     errors.append('acquisition_chain_missing_governed_release_status')
+                release_disclosure = (sample_summary.get('overall_summary', {}) or {}).get('release_disclosure', {})
+                governed_release_status = str((sample_summary.get('overall_summary', {}) or {}).get('governed_release_status', '')).strip()
+                if not isinstance(release_disclosure, dict):
+                    errors.append('acquisition_chain_missing_release_disclosure')
+                elif governed_release_status != 'auto_release_allowed' and not (release_disclosure or {}).get('headline'):
+                    errors.append('acquisition_chain_release_disclosure_missing_headline')
 
             contract = TaskContract.from_dict({
                 'task_id': task_id,
@@ -2208,6 +2214,10 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
         ),
         'release_governance_contract': not any(
             item in {'acquisition_chain_missing_release_governance', 'acquisition_chain_missing_governed_release_status'}
+            for item in errors
+        ),
+        'release_disclosure_contract': not any(
+            item in {'acquisition_chain_missing_release_disclosure', 'acquisition_chain_release_disclosure_missing_headline'}
             for item in errors
         ),
         'browser_execution_contract': not any(

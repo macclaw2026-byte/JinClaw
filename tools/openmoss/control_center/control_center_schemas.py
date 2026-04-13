@@ -465,6 +465,34 @@ def build_acquisition_field_provenance_schema(
     }
 
 
+def build_acquisition_release_disclosure_schema(
+    *,
+    required: bool = False,
+    level: str = "",
+    headline: str = "",
+    summary: str = "",
+    user_visible_lines: List[str] | None = None,
+    blocker_reasons: List[str] | None = None,
+    recommended_actions: List[str] | None = None,
+    requires_user_confirmation: bool = False,
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：构造 acquisition release disclosure schema。
+    - 设计意图：把 guarded release 的披露要求从零散 notes 升级成统一、可直接展示给用户或 operator 的结构化对象。
+    """
+    return {
+        "required": bool(required),
+        "level": str(level).strip(),
+        "headline": str(headline).strip(),
+        "summary": str(summary).strip(),
+        "user_visible_lines": list(user_visible_lines or []),
+        "blocker_reasons": list(blocker_reasons or []),
+        "recommended_actions": list(recommended_actions or []),
+        "requires_user_confirmation": bool(requires_user_confirmation),
+    }
+
+
 def build_acquisition_site_synthesis_schema(
     *,
     site: str,
@@ -484,6 +512,7 @@ def build_acquisition_site_synthesis_schema(
     governed_release_status: str = "",
     governed_release_ready: bool = False,
     governance_blockers: List[str] | None = None,
+    release_disclosure: Dict[str, Any] | None = None,
     cross_validated_fields: List[str] | None = None,
     conflicted_fields: List[str] | None = None,
     supporting_route_ids: List[str] | None = None,
@@ -513,6 +542,7 @@ def build_acquisition_site_synthesis_schema(
         "governed_release_status": str(governed_release_status).strip(),
         "governed_release_ready": bool(governed_release_ready),
         "governance_blockers": list(governance_blockers or []),
+        "release_disclosure": dict(release_disclosure or {}),
         "cross_validated_fields": list(cross_validated_fields or []),
         "conflicted_fields": list(conflicted_fields or []),
         "supporting_route_ids": list(supporting_route_ids or []),
