@@ -35,6 +35,7 @@ UPSTREAM_WATCH_REPORT_PATH = RUNTIME_ROOT / "upstream_watch/reports/latest-repor
 BRAIN_ROUTES_ROOT = RUNTIME_ROOT / "control_center/brain_routes"
 MAIN_LINK_PATH = RUNTIME_ROOT / "autonomy/links/openclaw-main__main.json"
 SESSIONS_INDEX_PATH = Path("/Users/mac_claw/.openclaw/agents/main/sessions/sessions.json")
+DOCTOR_LAST_RUN_PATH = RUNTIME_ROOT / "control_center/doctor/last_run.json"
 UPSTREAM_WATCH_SCRIPT = OPENMOSS_ROOT / "upstream_watch/watch_updates.py"
 LAUNCH_AGENTS = {
     "selfheal": "ai.openclaw.selfheal",
@@ -303,6 +304,100 @@ def _looks_substantive_assistant_text(text: str) -> bool:
     return True
 
 
+def _public_session_tail_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：返回可公开写入 payload 的会话摘要，剔除内部事件缓存字段。
+    - 输入角色：消费 `_session_tail_summary` 的完整结果。
+    - 输出角色：提供给 `message_pipeline_summary` 序列化输出，避免泄露内部解析细节。
+    """
+    return {key: value for key, value in (summary or {}).items() if not str(key).startswith("_")}
+
+
+def _latest_timed_event(events: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：从事件列表里选出时间最近的一条事件。
+    - 输入角色：消费用户/assistant 事件列表。
+    - 输出角色：供跨会话消息链对账使用。
+    """
+    ranked = []
+    for event in events:
+        dt = parse_iso(str((event or {}).get("timestamp", "")).strip())
+        if not dt:
+            continue
+        ranked.append((dt, event))
+    if not ranked:
+        return {}
+    ranked.sort(key=lambda item: item[0])
+    return ranked[-1][1]
+
+
+def _first_assistant_event_after(
+    events: List[Dict[str, Any]],
+    pivot: datetime | None,
+    *,
+    substantive_only: bool = False,
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：寻找某个用户消息之后最早出现的 assistant 事件，可选择只看“实质回复”。
+    - 输入角色：消费跨会话 assistant 事件与用户时间锚点。
+    - 输出角色：供 doctor 判断“有没有真正回复用户”与计算回复时延。
+    """
+    if pivot is None:
+        return {}
+    ranked = []
+    for event in events:
+        if substantive_only and not bool((event or {}).get("substantive")):
+            continue
+        dt = parse_iso(str((event or {}).get("timestamp", "")).strip())
+        if not dt or dt < pivot:
+            continue
+        ranked.append((dt, event))
+    if not ranked:
+        return {}
+    ranked.sort(key=lambda item: item[0])
+    return ranked[0][1]
+
+
+def _doctor_runtime_summary() -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：读取 canonical system doctor 最近一次运行摘要，让 ops doctor 也能看到全局医生对新能力的监控结果。
+    - 输入角色：消费 `system_doctor.py` 写出的 `doctor/last_run.json`。
+    - 输出角色：供 `status_payload` 与 `doctor_payload` 聚合显示 acquisition/integration 健康度。
+    """
+    payload = read_json(DOCTOR_LAST_RUN_PATH, {})
+    if not isinstance(payload, dict):
+        payload = {}
+    acquisition_health = payload.get("acquisition_health", {}) or {}
+    adapter_coverage = acquisition_health.get("adapter_coverage", {}) or {}
+    integration_health = payload.get("integration_health", {}) or {}
+    checked_at = str(payload.get("checked_at", "")).strip()
+    return {
+        "last_run_exists": DOCTOR_LAST_RUN_PATH.exists(),
+        "last_run_path": str(DOCTOR_LAST_RUN_PATH),
+        "last_run_at": checked_at,
+        "last_run_recent": is_recent(checked_at, 30) if checked_at else False,
+        "acquisition_health": {
+            "enabled": bool(acquisition_health.get("enabled")),
+            "sites_total": int(adapter_coverage.get("sites_total", 0) or 0),
+            "sites_production_ready": int(adapter_coverage.get("sites_production_ready", 0) or 0),
+            "sites_attention_required": int(adapter_coverage.get("sites_attention_required", 0) or 0),
+            "available_adapter_total": int(adapter_coverage.get("available_adapter_total", 0) or 0),
+            "attention_sites_total": len(acquisition_health.get("attention_sites", []) or []),
+            "stability_score": float(adapter_coverage.get("stability_score", 0.0) or 0.0),
+        },
+        "integration_health": {
+            "ok": bool(integration_health.get("ok")),
+            "coding_chain": str(integration_health.get("coding_chain", "")).strip(),
+            "noncoding_chain": str(integration_health.get("noncoding_chain", "")).strip(),
+            "acquisition_chain": str(integration_health.get("acquisition_chain", "")).strip(),
+        },
+    }
+
+
 def _session_tail_summary(session_file: Path) -> Dict[str, Any]:
     """
     中文注解：
@@ -319,14 +414,20 @@ def _session_tail_summary(session_file: Path) -> Dict[str, Any]:
             "assistant_substantive_after_latest_user": False,
             "internal_flow_leak_detected": False,
             "assistant_preview": "",
+            "latest_substantive_assistant_at": "",
+            "_user_events": [],
+            "_assistant_events": [],
         }
     latest_user_at = ""
     latest_assistant_at = ""
+    latest_substantive_assistant_at = ""
     assistant_after_latest_user = False
     assistant_substantive_after_latest_user = False
     internal_flow_leak_detected = False
     pending_internal_flow = False
     assistant_preview = ""
+    user_events: List[Dict[str, Any]] = []
+    assistant_events: List[Dict[str, Any]] = []
     try:
         lines = session_file.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
@@ -344,6 +445,7 @@ def _session_tail_summary(session_file: Path) -> Dict[str, Any]:
         content = message.get("content")
         if role == "user":
             latest_user_at = timestamp or latest_user_at
+            user_events.append({"timestamp": timestamp})
             assistant_after_latest_user = False
             assistant_substantive_after_latest_user = False
             internal_flow_leak_detected = False
@@ -355,25 +457,39 @@ def _session_tail_summary(session_file: Path) -> Dict[str, Any]:
         latest_assistant_at = timestamp or latest_assistant_at
         text = _extract_text_from_content(content)
         preview = text.strip().replace("\n", " ")[:240]
-        if isinstance(content, list) and any(
+        contains_tool_call = isinstance(content, list) and any(
             isinstance(item, dict) and item.get("type") == "toolCall" for item in content
-        ):
+        )
+        if contains_tool_call:
             pending_internal_flow = True
+        substantive = _looks_substantive_assistant_text(text)
+        assistant_events.append(
+            {
+                "timestamp": timestamp,
+                "substantive": substantive,
+                "contains_tool_call": contains_tool_call,
+                "preview": preview,
+            }
+        )
         if latest_user_at and (not latest_assistant_at or (timestamp and timestamp >= latest_user_at)):
             assistant_after_latest_user = True
             assistant_preview = preview
-            if _looks_substantive_assistant_text(text):
+            if substantive:
                 assistant_substantive_after_latest_user = True
+                latest_substantive_assistant_at = timestamp or latest_substantive_assistant_at
                 pending_internal_flow = False
     internal_flow_leak_detected = pending_internal_flow and not assistant_substantive_after_latest_user
     return {
         "exists": True,
         "latest_user_at": latest_user_at,
         "latest_assistant_at": latest_assistant_at,
+        "latest_substantive_assistant_at": latest_substantive_assistant_at,
         "assistant_after_latest_user": assistant_after_latest_user,
         "assistant_substantive_after_latest_user": assistant_substantive_after_latest_user,
         "internal_flow_leak_detected": internal_flow_leak_detected,
         "assistant_preview": assistant_preview,
+        "_user_events": user_events,
+        "_assistant_events": assistant_events,
     }
 
 
@@ -409,17 +525,45 @@ def message_pipeline_summary() -> Dict[str, Any]:
     latest_telegram = sessions.get(latest_telegram_key) or {}
     latest_telegram_file = Path(latest_telegram.get("sessionFile") or "")
     telegram_tail = _session_tail_summary(latest_telegram_file) if latest_telegram_file else {}
-    primary_tail = telegram_tail if telegram_tail.get("exists") else main_tail
-    latest_user_iso = primary_tail.get("latest_user_at") or main_tail.get("latest_user_at") or ""
-    latest_assistant_iso = primary_tail.get("latest_assistant_at") or main_tail.get("latest_assistant_at") or ""
+    scoped_user_events: List[Dict[str, Any]] = []
+    scoped_assistant_events: List[Dict[str, Any]] = []
+    for source_name, tail in (("telegram", telegram_tail), ("main", main_tail)):
+        for event in tail.get("_user_events", []) or []:
+            scoped_user_events.append({**event, "session": source_name})
+        for event in tail.get("_assistant_events", []) or []:
+            scoped_assistant_events.append({**event, "session": source_name})
+
+    latest_user_event = _latest_timed_event(scoped_user_events)
+    latest_user_iso = str(latest_user_event.get("timestamp", "")).strip()
+    latest_user_dt = parse_iso(latest_user_iso)
+    first_assistant_after_user = _first_assistant_event_after(scoped_assistant_events, latest_user_dt)
+    first_substantive_after_user = _first_assistant_event_after(
+        scoped_assistant_events,
+        latest_user_dt,
+        substantive_only=True,
+    )
+    latest_assistant_event = _latest_timed_event(scoped_assistant_events)
+    latest_assistant_iso = str(latest_assistant_event.get("timestamp", "")).strip()
     reply_gap_seconds = None
-    user_dt = parse_iso(latest_user_iso)
-    assistant_dt = parse_iso(latest_assistant_iso)
-    if user_dt and assistant_dt:
-        reply_gap_seconds = int((assistant_dt - user_dt).total_seconds())
+    reply_event = first_substantive_after_user or first_assistant_after_user
+    reply_dt = parse_iso(str(reply_event.get("timestamp", "")).strip())
+    if latest_user_dt and reply_dt:
+        reply_gap_seconds = int((reply_dt - latest_user_dt).total_seconds())
     user_wait_seconds = None
-    if user_dt:
-        user_wait_seconds = int((utc_now() - user_dt).total_seconds())
+    if latest_user_dt:
+        user_wait_seconds = int((utc_now() - latest_user_dt).total_seconds())
+    internal_flow_leak_detected = bool(
+        latest_user_dt
+        and any(
+            bool((event or {}).get("contains_tool_call"))
+            and parse_iso(str((event or {}).get("timestamp", "")).strip())
+            and parse_iso(str((event or {}).get("timestamp", "")).strip()) >= latest_user_dt
+            for event in scoped_assistant_events
+        )
+        and not first_substantive_after_user
+    )
+    latest_user_source = str(latest_user_event.get("session", "")).strip()
+    reply_source = str(reply_event.get("session", "")).strip()
     return {
         "sessions_index_exists": SESSIONS_INDEX_PATH.exists(),
         "telegram_session_count": len(telegram_keys),
@@ -430,11 +574,17 @@ def message_pipeline_summary() -> Dict[str, Any]:
         "latest_assistant_at": latest_assistant_iso,
         "user_wait_seconds": user_wait_seconds,
         "reply_gap_seconds": reply_gap_seconds,
-        "assistant_after_latest_user": bool(primary_tail.get("assistant_after_latest_user")),
-        "assistant_substantive_after_latest_user": bool(primary_tail.get("assistant_substantive_after_latest_user")),
-        "internal_flow_leak_detected": bool(primary_tail.get("internal_flow_leak_detected")),
-        "assistant_preview": primary_tail.get("assistant_preview", ""),
-        "telegram_tail": telegram_tail,
+        "assistant_after_latest_user": bool(first_assistant_after_user),
+        "assistant_substantive_after_latest_user": bool(first_substantive_after_user),
+        "internal_flow_leak_detected": internal_flow_leak_detected,
+        "assistant_preview": str((first_substantive_after_user or first_assistant_after_user).get("preview", "")).strip(),
+        "latest_user_source_session": latest_user_source,
+        "reply_source_session": reply_source,
+        "cross_session_reply_detected": bool(
+            latest_user_source and reply_source and latest_user_source != reply_source and first_substantive_after_user
+        ),
+        "telegram_tail": _public_session_tail_summary(telegram_tail),
+        "main_tail": _public_session_tail_summary(main_tail),
     }
 
 
@@ -473,6 +623,7 @@ def status_payload() -> Dict[str, Any]:
         "launch_agents": launch_agent_summary(),
         "runtime": runtime_summary(),
         "message_pipeline": message_pipeline_summary(),
+        "doctor_runtime": _doctor_runtime_summary(),
         "control_plane_summary": control_plane_summary,
         "project_scheduler_policy": scheduler_policy,
     }
@@ -504,6 +655,7 @@ def doctor_payload() -> Dict[str, Any]:
 
     runtime = payload["runtime"]
     message_pipeline = payload["message_pipeline"]
+    doctor_runtime = payload.get("doctor_runtime", {}) or {}
     if not runtime["selfheal_state_exists"]:
         issues.append("selfheal_state_missing")
     elif not runtime["selfheal_recent"]:
@@ -542,6 +694,12 @@ def doctor_payload() -> Dict[str, Any]:
         issues.append("telegram_user_message_without_substantive_reply")
     if message_pipeline["internal_flow_leak_detected"]:
         warnings.append("main_session_contains_internal_tool_flow")
+    if not doctor_runtime.get("last_run_exists"):
+        warnings.append("system_doctor_last_run_missing")
+    elif not doctor_runtime.get("last_run_recent"):
+        warnings.append("system_doctor_last_run_not_recent")
+    if doctor_runtime.get("last_run_exists") and not ((doctor_runtime.get("integration_health", {}) or {}).get("ok")):
+        warnings.append("system_doctor_integration_health_attention")
 
     payload["issues"] = issues
     payload["warnings"] = warnings

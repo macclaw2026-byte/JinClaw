@@ -382,6 +382,30 @@ def _build_doctor_coverage_bundle() -> Dict[str, Any]:
                     "coding_chain_continuity",
                     "noncoding_anti_pollution",
                 ],
+                "primary_monitor": "system_doctor.integration_health.gstack",
+                "backstop_monitor": "tests/test_single_doctor_architecture.py",
+                "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json",
+            },
+            {
+                "name": "acquisition-hand",
+                "required_files": [
+                    "tools/openmoss/control_center/acquisition_hand_builder.py",
+                    "tools/openmoss/control_center/acquisition_adapter_registry.py",
+                    "tools/openmoss/control_center/acquisition_result_normalizer.py",
+                    "tools/openmoss/control_center/challenge_classifier.py",
+                    "tools/openmoss/control_center/crawler_probe_runner.py",
+                    "tools/openmoss/control_center/task_status_snapshot.py",
+                ],
+                "doctor_checks": [
+                    "package_contract_presence",
+                    "stage_context_continuity",
+                    "dispatch_prompt_injection",
+                    "task_status_snapshot_visibility",
+                    "doctor_runtime_summary",
+                ],
+                "primary_monitor": "system_doctor.integration_health.acquisition_hand",
+                "backstop_monitor": "tools/openmoss/ops/jinclaw_ops.py:doctor_runtime",
+                "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json#acquisition_health",
             }
         ],
     }
