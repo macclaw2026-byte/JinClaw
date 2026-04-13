@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 from __future__ import annotations
 
 import json
@@ -157,46 +164,90 @@ def curl_cffi_tool(site, url):
     return analyze(site, 'curl-cffi', url, p.stdout, p.stderr, p.returncode, 'curl_cffi browser-impersonated HTTP fetch')
 
 
-def playwright_tool(site, url):
-    code = r'''
-from playwright.sync_api import sync_playwright
-import sys
-u=sys.argv[1]
-with sync_playwright() as p:
-    browser=p.chromium.launch(headless=True)
-    page=browser.new_page()
-    page.goto(u, wait_until="load", timeout=45000)
-    try:
-        page.wait_for_load_state("networkidle", timeout=8000)
-    except Exception:
-        pass
-    print(page.content()[:300000])
-    browser.close()
-'''
+def _playwright_capture_tool(site, url, *, tool_name: str, stealth: bool, scroll_steps: int, notes: str):
+    """
+    中文注解：
+    - 功能：统一生成 Playwright 系列浏览器抓取 runner。
+    - 设计意图：让 plain/stealth/scroll 这些浏览器执行变体共享同一套实现，而不是复制多份脚本。
+    """
+    stealth_import = "from playwright_stealth import Stealth\n" if stealth else ""
+    stealth_apply = "    Stealth().apply_stealth_sync(page)\n" if stealth else ""
+    scroll_loop = ""
+    if scroll_steps > 0:
+        scroll_loop = (
+            f"    for _ in range({int(scroll_steps)}):\n"
+            "        page.mouse.wheel(0, 2200)\n"
+            "        page.wait_for_timeout(700)\n"
+            "        try:\n"
+            "            page.wait_for_load_state(\"networkidle\", timeout=3000)\n"
+            "        except Exception:\n"
+            "            pass\n"
+        )
+    code = (
+        "from playwright.sync_api import sync_playwright\n"
+        f"{stealth_import}"
+        "import sys\n"
+        "u=sys.argv[1]\n"
+        "with sync_playwright() as p:\n"
+        "    browser=p.chromium.launch(headless=True)\n"
+        "    page=browser.new_page()\n"
+        f"{stealth_apply}"
+        "    page.goto(u, wait_until=\"load\", timeout=45000)\n"
+        "    try:\n"
+        "        page.wait_for_load_state(\"networkidle\", timeout=8000)\n"
+        "    except Exception:\n"
+        "        pass\n"
+        f"{scroll_loop}"
+        "    print(f\"opened_url={page.url}\")\n"
+        "    print(page.content()[:300000])\n"
+        "    browser.close()\n"
+    )
     p = run([str(VENV_PY), '-c', code, url])
-    return analyze(site, 'playwright', url, p.stdout, p.stderr, p.returncode, 'plain Playwright Chromium render')
+    return analyze(site, tool_name, url, p.stdout, p.stderr, p.returncode, notes)
+
+
+def playwright_tool(site, url):
+    return _playwright_capture_tool(
+        site,
+        url,
+        tool_name='playwright',
+        stealth=False,
+        scroll_steps=0,
+        notes='plain Playwright Chromium render',
+    )
+
+
+def playwright_scroll_tool(site, url):
+    return _playwright_capture_tool(
+        site,
+        url,
+        tool_name='playwright-scroll',
+        stealth=False,
+        scroll_steps=4,
+        notes='Playwright Chromium render with repeated scroll capture for lazy-loaded content',
+    )
 
 
 def playwright_stealth_tool(site, url):
-    code = r'''
-from playwright.sync_api import sync_playwright
-from playwright_stealth import Stealth
-import sys
-u=sys.argv[1]
-with sync_playwright() as p:
-    browser=p.chromium.launch(headless=True)
-    page=browser.new_page()
-    Stealth().apply_stealth_sync(page)
-    page.goto(u, wait_until="load", timeout=45000)
-    try:
-        page.wait_for_load_state("networkidle", timeout=8000)
-    except Exception:
-        pass
-    print(page.content()[:300000])
-    browser.close()
-'''
-    p = run([str(VENV_PY), '-c', code, url])
-    return analyze(site, 'playwright-stealth', url, p.stdout, p.stderr, p.returncode, 'Playwright + playwright_stealth render')
+    return _playwright_capture_tool(
+        site,
+        url,
+        tool_name='playwright-stealth',
+        stealth=True,
+        scroll_steps=0,
+        notes='Playwright + playwright_stealth render',
+    )
+
+
+def playwright_stealth_scroll_tool(site, url):
+    return _playwright_capture_tool(
+        site,
+        url,
+        tool_name='playwright-stealth-scroll',
+        stealth=True,
+        scroll_steps=4,
+        notes='Playwright + playwright_stealth render with repeated scroll capture for dynamic lists',
+    )
 
 
 def scrapy_cffi_tool(site, url):
@@ -241,7 +292,9 @@ def main():
             asdict(direct_http_tool(site, url)),
             asdict(curl_cffi_tool(site, url)),
             asdict(playwright_tool(site, url)),
+            asdict(playwright_scroll_tool(site, url)),
             asdict(playwright_stealth_tool(site, url)),
+            asdict(playwright_stealth_scroll_tool(site, url)),
             asdict(scrapy_cffi_tool(site, url)),
             asdict(agent_browser_tool(site, url)),
         ]
@@ -256,7 +309,7 @@ def main():
     out_json = OUT_DIR / 'tool-matrix-v2.json'
     out_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2))
 
-    md = ['# 7 tools × 4 sites matrix report', '', f'- Query: `{QUERY}`', f'- Generated at: {payload["generated_at"]}', '']
+    md = ['# 9 tools × 4 sites matrix report', '', f'- Query: `{QUERY}`', f'- Generated at: {payload["generated_at"]}', '']
     for site in site_payloads:
         md.append(f'## {site["site"]}')
         md.append('')

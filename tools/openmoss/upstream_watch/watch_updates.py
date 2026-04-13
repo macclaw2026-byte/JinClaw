@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -66,6 +67,72 @@ def write_json(path: Path, payload: object) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _with_watch_meta(
+    snapshot: Dict[str, object],
+    *,
+    fetch_status: str,
+    attempted_at: str,
+    warning: str = "",
+    used_cached_snapshot: bool = False,
+) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：为上游快照补充统一的抓取状态元数据，便于 downgrade/fallback 被下游解释。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
+    snapshot_copy = json.loads(json.dumps(snapshot, ensure_ascii=False))
+    watch_meta = dict(snapshot_copy.get("watch_meta") or {})
+    watch_meta.update(
+        {
+            "fetch_status": fetch_status,
+            "attempted_at": attempted_at,
+            "warning": warning,
+            "used_cached_snapshot": used_cached_snapshot,
+        }
+    )
+    snapshot_copy["watch_meta"] = watch_meta
+    return snapshot_copy
+
+
+def _is_github_rate_limit_error(exc: urllib.error.HTTPError) -> bool:
+    """
+    中文注解：
+    - 功能：判断当前 GitHub API 异常是否属于限流场景，用于决定是否允许走缓存降级路径。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
+    if exc.code != 403:
+        return False
+    remaining = ""
+    if exc.headers:
+        remaining = str(exc.headers.get("X-RateLimit-Remaining", "")).strip()
+    message = str(exc).lower()
+    return remaining == "0" or "rate limit" in message
+
+
+def _fallback_reason_from_exception(exc: Exception) -> str | None:
+    """
+    中文注解：
+    - 功能：将可恢复的 GitHub 拉取异常归一化成稳定原因码，供缓存降级和报表使用。
+    - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
+    if isinstance(exc, urllib.error.HTTPError) and _is_github_rate_limit_error(exc):
+        return "github_api_rate_limited"
+    if isinstance(exc, urllib.error.URLError):
+        reason = exc.reason
+        reason_text = str(reason).lower()
+        if isinstance(reason, socket.timeout) or "timed out" in reason_text or "handshake operation timed out" in reason_text:
+            return "github_api_timeout"
+        return "github_api_network_error"
+    if isinstance(exc, TimeoutError):
+        return "github_api_timeout"
+    if isinstance(exc, socket.timeout):
+        return "github_api_timeout"
+    return None
 
 
 def github_json(path: str) -> Dict[str, object] | List[Dict[str, object]]:
@@ -209,11 +276,13 @@ def render_markdown_report(items: List[Dict[str, object]]) -> str:
         snapshot = item["snapshot"]
         change = item["change"]
         intake = item["intake"]
+        watch_meta = snapshot.get("watch_meta") or {}
         lines.extend(
             [
                 f"## {snapshot['name']}",
                 f"- Repo: `{snapshot['repo']}`",
                 f"- Priority: `{snapshot['priority']}`",
+                f"- Fetch status: `{watch_meta.get('fetch_status', 'fresh')}`",
                 f"- Status: `{change['status']}`",
                 f"- Changed: `{change['changed']}`",
                 f"- Changed fields: `{', '.join(change['changed_fields']) or 'none'}`",
@@ -224,6 +293,8 @@ def render_markdown_report(items: List[Dict[str, object]]) -> str:
                 "",
             ]
         )
+        if watch_meta.get("warning"):
+            lines.extend([f"- Fetch warning: `{watch_meta['warning']}`", ""])
     return "\n".join(lines).strip() + "\n"
 
 
@@ -238,9 +309,36 @@ def run_once() -> Dict[str, object]:
     previous_state = read_json(STATE_PATH, {"repos": {}})
     items = []
     next_state = {"checked_at": utc_now_iso(), "repos": {}}
+    degraded_sources: List[Dict[str, object]] = []
     for source in config.get("sources", []):
-        snapshot = fetch_repo_snapshot(source)
         previous = previous_state.get("repos", {}).get(source["id"], {})
+        attempted_at = utc_now_iso()
+        try:
+            snapshot = _with_watch_meta(
+                fetch_repo_snapshot(source),
+                fetch_status="fresh",
+                attempted_at=attempted_at,
+            )
+        except Exception as exc:
+            fallback_reason = _fallback_reason_from_exception(exc)
+            if fallback_reason and previous:
+                snapshot = _with_watch_meta(
+                    previous,
+                    fetch_status=f"cached_due_to_{fallback_reason.removeprefix('github_api_')}",
+                    attempted_at=attempted_at,
+                    warning=fallback_reason,
+                    used_cached_snapshot=True,
+                )
+                degraded_sources.append(
+                    {
+                        "id": source["id"],
+                        "repo": source["repo"],
+                        "reason": fallback_reason,
+                        "used_cached_snapshot": True,
+                    }
+                )
+            else:
+                raise
         change = classify_change(previous, snapshot)
         intake = build_intake_note(source, change)
         items.append({"source": source, "snapshot": snapshot, "change": change, "intake": intake})
@@ -255,6 +353,9 @@ def run_once() -> Dict[str, object]:
         "checked_at": next_state["checked_at"],
         "repo_count": len(items),
         "changed": [item["snapshot"]["repo"] for item in items if item["change"]["changed"]],
+        "fetch_mode": "cached_fallback" if degraded_sources else "fresh",
+        "degraded": bool(degraded_sources),
+        "degraded_sources": degraded_sources,
         "report_path": str(REPORTS_ROOT / "latest-report.md"),
         "state_path": str(STATE_PATH),
     }
