@@ -56,15 +56,42 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         validation_route_type='crawl4ai',
         required_fields=None,
         stretch_fields=None,
+        time_sensitivity='normal',
+        release_governance=None,
     ):
         registry = build_acquisition_adapter_registry(self._capabilities())
+        governance = dict(release_governance or {})
+        if not governance:
+            governance = {
+                'mode': 'fresh_strict' if time_sensitivity == 'fresh' else 'standard_guarded',
+                'auto_release_requires_release_ready': True,
+                'auto_release_requires_trusted_ready': bool(time_sensitivity == 'fresh'),
+                'allow_guarded_medium_trust_with_disclosure': bool(time_sensitivity != 'fresh'),
+                'allow_guarded_low_trust_release': False,
+                'allow_session_snapshot_for_fresh': True,
+                'allow_snapshot_only_for_fresh': False,
+                'requires_human_confirmation_for_guarded': False,
+                'guarded_release_requires_disclosure': True,
+                'preferred_blocking_actions': {
+                    'missing_required_fields': 'capture_missing_required_fields_before_release',
+                    'needs_review': 'review_field_level_conflicts_before_release',
+                    'guarded_low_trust': 'seek_higher_trust_source_before_release',
+                    'guarded_medium_trust': 'capture_higher_trust_source_before_release',
+                    'freshness_gap': 'rerun_fresher_route_before_release',
+                    'human_confirmation': 'ask_user_to_confirm_guarded_release',
+                },
+            }
         return {
             'enabled': True,
             'adapter_registry': registry,
+            'target_profile': {
+                'time_sensitivity': time_sensitivity,
+            },
             'delivery_requirements': {
                 'required_fields_by_site': {'amazon': list(required_fields or ['title', 'price', 'link'])},
                 'stretch_fields_by_site': {'amazon': list(stretch_fields or ['rating', 'reviews'])},
             },
+            'release_governance': governance,
             'route_candidates': [
                 {
                     'route_id': primary_route_id,
@@ -159,12 +186,16 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         self.assertEqual(summary['overall_summary']['synthesis_status'], 'ready')
         self.assertEqual(summary['overall_summary']['release_readiness_status'], 'ready')
         self.assertEqual(summary['overall_summary']['trusted_release_status'], 'guarded_medium_trust')
+        self.assertEqual(summary['overall_summary']['governed_release_status'], 'guarded_release_with_disclosure')
         self.assertEqual(summary['overall_summary']['validation_diversity_status'], 'independent_family_validation')
         self.assertEqual(summary['site_consensus'][0]['validation_status'], 'cross_validated_independent')
         self.assertEqual(summary['site_synthesized_outputs'][0]['trust_posture'], 'guarded_medium_trust_sources')
+        self.assertEqual(summary['site_synthesized_outputs'][0]['governed_release_status'], 'guarded_release_with_disclosure')
         self.assertEqual(summary['site_synthesized_outputs'][0]['final_fields']['title'], 'Wireless Mouse')
         self.assertEqual(summary['site_synthesized_outputs'][0]['field_provenance']['price']['confidence'], 'cross_validated_independent')
         self.assertTrue(summary['site_synthesized_outputs'][0]['release_ready'])
+        self.assertTrue(summary['site_synthesized_outputs'][0]['governed_release_ready'])
+        self.assertIn('include_guarded_release_disclosure', summary['recommended_next_actions'])
         self.assertFalse(summary['planned_but_not_executed_route_ids'])
         self.assertEqual(summary['route_runs'][0]['evidence_ref'], '/tmp/crawler-tool-matrix.json')
         self.assertIn('Synthesis status: `ready`', render_acquisition_execution_summary_markdown(summary))
@@ -230,6 +261,7 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
                 validation_route_type='static_fetch',
                 required_fields=['title', 'price', 'link'],
                 stretch_fields=['rating'],
+                time_sensitivity='fresh',
             ),
             report_path='/tmp/crawler-tool-matrix.json',
         )
@@ -239,7 +271,9 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         self.assertEqual(price_provenance['resolution_basis'], 'source_trust_priority')
         self.assertEqual(price_provenance['selected_source_trust_tier'], 'official_source')
         self.assertEqual(summary['overall_summary']['trusted_release_status'], 'trusted_ready')
+        self.assertEqual(summary['overall_summary']['governed_release_status'], 'auto_release_allowed')
         self.assertTrue(summary['site_synthesized_outputs'][0]['trusted_release_ready'])
+        self.assertTrue(summary['site_synthesized_outputs'][0]['governed_release_ready'])
 
     def test_execution_summary_marks_low_trust_browser_release_as_guarded(self):
         payload = self._report_payload(primary_tool='playwright-stealth', validation_tool='playwright')
@@ -256,14 +290,19 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
                 validation_route_type='browser_render',
                 required_fields=['title', 'price', 'link'],
                 stretch_fields=['rating'],
+                time_sensitivity='fresh',
             ),
             report_path='/tmp/crawler-tool-matrix.json',
         )
         self.assertEqual(summary['overall_summary']['release_readiness_status'], 'ready')
         self.assertEqual(summary['overall_summary']['trusted_release_status'], 'guarded_low_trust')
+        self.assertEqual(summary['overall_summary']['governed_release_status'], 'needs_higher_trust_source')
         self.assertEqual(summary['site_synthesized_outputs'][0]['trust_posture'], 'guarded_low_trust_sources')
+        self.assertEqual(summary['site_synthesized_outputs'][0]['freshness_posture'], 'snapshot_only')
         self.assertFalse(summary['site_synthesized_outputs'][0]['trusted_release_ready'])
+        self.assertFalse(summary['site_synthesized_outputs'][0]['governed_release_ready'])
         self.assertIn('seek_higher_trust_source_before_release', summary['recommended_next_actions'])
+        self.assertIn('rerun_fresher_route_before_release', summary['recommended_next_actions'])
 
     def test_execution_summary_allows_release_when_only_stretch_fields_are_missing(self):
         payload = self._report_payload()
@@ -281,6 +320,7 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         )
         self.assertEqual(summary['overall_summary']['synthesis_status'], 'partial')
         self.assertEqual(summary['overall_summary']['release_readiness_status'], 'ready')
+        self.assertEqual(summary['overall_summary']['governed_release_status'], 'guarded_release_with_disclosure')
         self.assertEqual(summary['overall_summary']['required_field_gap_total'], 0)
         self.assertEqual(summary['site_synthesized_outputs'][0]['missing_required_fields'], [])
         self.assertFalse(summary['recommended_next_actions'].count('capture_missing_required_fields_before_release'))
@@ -299,10 +339,41 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
             report_path='/tmp/crawler-tool-matrix.json',
         )
         self.assertEqual(summary['overall_summary']['release_readiness_status'], 'missing_required_fields')
+        self.assertEqual(summary['overall_summary']['governed_release_status'], 'blocked_release_readiness')
         self.assertGreater(summary['overall_summary']['required_field_gap_total'], 0)
         self.assertIn('capture_missing_required_fields_before_release', summary['recommended_next_actions'])
         self.assertIn('price', summary['site_synthesized_outputs'][0]['missing_required_fields'])
         self.assertFalse(summary['site_synthesized_outputs'][0]['release_ready'])
+        self.assertFalse(summary['site_synthesized_outputs'][0]['governed_release_ready'])
+
+    def test_execution_summary_requires_user_confirmation_for_strict_guarded_release(self):
+        summary = build_acquisition_execution_summary(
+            'test-acq-guarded-confirm',
+            'Collect public Amazon pricing evidence',
+            self._report_payload(),
+            self._acquisition_hand(
+                release_governance={
+                    'mode': 'strict_reviewed',
+                    'auto_release_requires_release_ready': True,
+                    'auto_release_requires_trusted_ready': True,
+                    'allow_guarded_medium_trust_with_disclosure': False,
+                    'allow_guarded_low_trust_release': False,
+                    'allow_session_snapshot_for_fresh': True,
+                    'allow_snapshot_only_for_fresh': False,
+                    'requires_human_confirmation_for_guarded': True,
+                    'guarded_release_requires_disclosure': True,
+                    'preferred_blocking_actions': {
+                        'guarded_medium_trust': 'capture_higher_trust_source_before_release',
+                        'human_confirmation': 'ask_user_to_confirm_guarded_release',
+                    },
+                },
+            ),
+            report_path='/tmp/crawler-tool-matrix.json',
+        )
+        self.assertEqual(summary['overall_summary']['governed_release_status'], 'guarded_requires_human_confirmation')
+        self.assertTrue(summary['overall_summary']['requires_human_confirmation'])
+        self.assertFalse(summary['site_synthesized_outputs'][0]['governed_release_ready'])
+        self.assertIn('ask_user_to_confirm_guarded_release', summary['recommended_next_actions'])
 
     def test_verifier_accepts_complete_acquisition_summary(self):
         task_id = 'test-acq-summary-verifier'
@@ -344,6 +415,7 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         self.assertEqual(snapshot['acquisition_hand']['execution_synthesis_status'], 'ready')
         self.assertEqual(snapshot['acquisition_hand']['release_readiness_status'], 'ready')
         self.assertEqual(snapshot['acquisition_hand']['trusted_release_status'], 'guarded_medium_trust')
+        self.assertEqual(snapshot['acquisition_hand']['governed_release_status'], 'guarded_release_with_disclosure')
         self.assertEqual(snapshot['acquisition_hand']['validation_diversity_status'], 'independent_family_validation')
         self.assertEqual(snapshot['acquisition_hand']['required_field_gap_total'], 0)
         self.assertEqual(snapshot['acquisition_hand']['synthesized_sites_total'], 1)

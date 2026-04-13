@@ -288,12 +288,45 @@ def build_acquisition_consensus_schema(
     }
 
 
+def build_acquisition_release_governance_schema(
+    *,
+    mode: str = "standard_guarded",
+    auto_release_requires_release_ready: bool = True,
+    auto_release_requires_trusted_ready: bool = False,
+    allow_guarded_medium_trust_with_disclosure: bool = True,
+    allow_guarded_low_trust_release: bool = False,
+    allow_session_snapshot_for_fresh: bool = True,
+    allow_snapshot_only_for_fresh: bool = False,
+    requires_human_confirmation_for_guarded: bool = False,
+    guarded_release_requires_disclosure: bool = True,
+    preferred_blocking_actions: Dict[str, str] | None = None,
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：构造 acquisition release governance schema。
+    - 设计意图：把“什么结果能自动交付、什么结果只能 guarded 交付、什么时候必须补抓或人工确认”显式写成规则契约。
+    """
+    return {
+        "mode": str(mode).strip() or "standard_guarded",
+        "auto_release_requires_release_ready": bool(auto_release_requires_release_ready),
+        "auto_release_requires_trusted_ready": bool(auto_release_requires_trusted_ready),
+        "allow_guarded_medium_trust_with_disclosure": bool(allow_guarded_medium_trust_with_disclosure),
+        "allow_guarded_low_trust_release": bool(allow_guarded_low_trust_release),
+        "allow_session_snapshot_for_fresh": bool(allow_session_snapshot_for_fresh),
+        "allow_snapshot_only_for_fresh": bool(allow_snapshot_only_for_fresh),
+        "requires_human_confirmation_for_guarded": bool(requires_human_confirmation_for_guarded),
+        "guarded_release_requires_disclosure": bool(guarded_release_requires_disclosure),
+        "preferred_blocking_actions": dict(preferred_blocking_actions or {}),
+    }
+
+
 def build_acquisition_hand_schema(
     *,
     task_id: str,
     enabled: bool,
     target_profile: Dict[str, Any] | None = None,
     delivery_requirements: Dict[str, Any] | None = None,
+    release_governance: Dict[str, Any] | None = None,
     governance_binding: Dict[str, Any] | None = None,
     challenge_assessment: Dict[str, Any] | None = None,
     routing_policy: Dict[str, Any] | None = None,
@@ -318,6 +351,7 @@ def build_acquisition_hand_schema(
         "enabled": bool(enabled),
         "target_profile": dict(target_profile or {}),
         "delivery_requirements": dict(delivery_requirements or {}),
+        "release_governance": dict(release_governance or {}),
         "governance_binding": dict(governance_binding or {}),
         "challenge_assessment": dict(challenge_assessment or {}),
         "routing_policy": dict(routing_policy or {}),
@@ -446,6 +480,10 @@ def build_acquisition_site_synthesis_schema(
     release_ready: bool = False,
     trust_posture: str = "",
     trusted_release_ready: bool = False,
+    freshness_posture: str = "",
+    governed_release_status: str = "",
+    governed_release_ready: bool = False,
+    governance_blockers: List[str] | None = None,
     cross_validated_fields: List[str] | None = None,
     conflicted_fields: List[str] | None = None,
     supporting_route_ids: List[str] | None = None,
@@ -471,6 +509,10 @@ def build_acquisition_site_synthesis_schema(
         "release_ready": bool(release_ready),
         "trust_posture": str(trust_posture).strip(),
         "trusted_release_ready": bool(trusted_release_ready),
+        "freshness_posture": str(freshness_posture).strip(),
+        "governed_release_status": str(governed_release_status).strip(),
+        "governed_release_ready": bool(governed_release_ready),
+        "governance_blockers": list(governance_blockers or []),
         "cross_validated_fields": list(cross_validated_fields or []),
         "conflicted_fields": list(conflicted_fields or []),
         "supporting_route_ids": list(supporting_route_ids or []),

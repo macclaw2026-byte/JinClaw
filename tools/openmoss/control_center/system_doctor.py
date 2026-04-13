@@ -2092,6 +2092,8 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
             delivery_requirements = acquisition_hand.get('delivery_requirements', {}) or {}
             if not (delivery_requirements.get('required_fields_by_site', {}) or {}):
                 errors.append('acquisition_chain_missing_delivery_requirements')
+            if not (acquisition_hand.get('release_governance', {}) or {}).get('mode'):
+                errors.append('acquisition_chain_missing_release_governance')
             sample_tool_labels = [
                 str(item.get('tool_label', '')).strip()
                 for item in (probe_plan.get('route_plan', []) or [])[:2]
@@ -2143,6 +2145,8 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
                     errors.append('acquisition_chain_missing_release_readiness_status')
                 if not str((sample_summary.get('overall_summary', {}) or {}).get('trusted_release_status', '')).strip():
                     errors.append('acquisition_chain_missing_trusted_release_status')
+                if not str((sample_summary.get('overall_summary', {}) or {}).get('governed_release_status', '')).strip():
+                    errors.append('acquisition_chain_missing_governed_release_status')
 
             contract = TaskContract.from_dict({
                 'task_id': task_id,
@@ -2200,6 +2204,10 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
         ),
         'source_trust_contract': not any(
             item in {'acquisition_chain_missing_trusted_release_status'}
+            for item in errors
+        ),
+        'release_governance_contract': not any(
+            item in {'acquisition_chain_missing_release_governance', 'acquisition_chain_missing_governed_release_status'}
             for item in errors
         ),
         'browser_execution_contract': not any(
