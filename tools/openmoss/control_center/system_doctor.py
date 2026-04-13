@@ -82,6 +82,14 @@ GSTACK_REQUIRED_FILES = [
     WORKSPACE_ROOT / 'tools/openmoss/control_center/coding_session_adapter.py',
     WORKSPACE_ROOT / 'tools/openmoss/control_center/acp_dispatch_builder.py',
 ]
+ACQUISITION_REQUIRED_FILES = [
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/acquisition_hand_builder.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/acquisition_adapter_registry.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/acquisition_result_normalizer.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/challenge_classifier.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/crawler_probe_runner.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/task_status_snapshot.py',
+]
 GSTACK_LIFECYCLE = ['think', 'plan', 'build', 'review', 'test', 'ship', 'reflect']
 DOCTOR_RESOLUTION_REQUIRED_FIELDS = [
     "scope",
@@ -2017,6 +2025,120 @@ def _run_gstack_integration_checks() -> Dict[str, object]:
     }
 
 
+def _run_acquisition_integration_checks() -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：校验 acquisition hand 是否已经被 canonical doctor 监控到位。
+    - 输入角色：直接消费 acquisition hand 的合同、上下文、dispatch 与状态快照链路。
+    - 输出角色：返回给 `run_system_doctor` 的 integration health，作为医生是否真的看得到抓取之手的证据。
+    """
+    errors = []
+    for path in ACQUISITION_REQUIRED_FILES:
+        if not path.exists():
+            errors.append(f'missing_required_file:{path}')
+
+    if str(CONTROL_CENTER_ROOT) not in sys.path:
+        sys.path.insert(0, str(CONTROL_CENTER_ROOT))
+    from orchestrator import build_control_center_package
+    from context_builder import build_stage_context
+    from coding_session_adapter import build_coding_session_payload
+    from acp_dispatch_builder import build_acp_dispatch_request
+    from task_contract import TaskContract
+
+    def _run_case(task_id: str, goal: str) -> None:
+        task_path = task_dir(task_id)
+        if task_path.exists():
+            shutil.rmtree(task_path)
+        try:
+            package = build_control_center_package(task_id, goal, source='system-doctor')
+            control_center = (package.get('metadata', {}) or {}).get('control_center', {}) or {}
+            acquisition_hand = control_center.get('acquisition_hand', {}) or {}
+            if not acquisition_hand.get('enabled'):
+                errors.append('acquisition_chain_disabled_in_package')
+            if not acquisition_hand.get('route_candidates'):
+                errors.append('acquisition_chain_missing_route_candidates')
+            if not ((acquisition_hand.get('execution_strategy', {}) or {}).get('primary_route_id')):
+                errors.append('acquisition_chain_missing_primary_route')
+
+            contract = TaskContract.from_dict({
+                'task_id': task_id,
+                'user_goal': package['goal'],
+                'done_definition': package['done_definition'],
+                'allowed_tools': package.get('allowed_tools', []),
+                'forbidden_actions': package.get('forbidden_actions', []),
+                'stages': package['stages'],
+                'metadata': package['metadata'],
+            })
+            create_task_from_contract(contract)
+            state = {
+                'current_stage': 'execute',
+                'status': 'running',
+                'next_action': 'start_stage:execute',
+                'blockers': [],
+                'stages': {'execute': {'attempts': 1, 'completed_subtasks': []}},
+                'metadata': {},
+            }
+            stage_context = build_stage_context(task_id, 'execute', contract.to_dict(), state)
+            if not ((stage_context.get('acquisition_hand', {}) or {}).get('enabled')):
+                errors.append('acquisition_chain_missing_stage_context')
+            payload = build_coding_session_payload(contract.to_dict(), stage_context)
+            if 'Acquisition hand:' not in str(payload.get('base_prompt', '')):
+                errors.append('acquisition_chain_runtime_prompt_missing_summary')
+            request = build_acp_dispatch_request(contract.to_dict(), stage_context)
+            if not ((request.get('metadata', {}) or {}).get('acquisition_enabled')):
+                errors.append('acquisition_chain_dispatch_missing_enable_marker')
+            snapshot = build_task_status_snapshot(task_id)
+            snapshot_hand = snapshot.get('acquisition_hand', {}) or {}
+            if not snapshot_hand.get('enabled'):
+                errors.append('acquisition_chain_snapshot_missing_enable_marker')
+            if not snapshot_hand.get('primary_route'):
+                errors.append('acquisition_chain_snapshot_missing_primary_route')
+        finally:
+            if task_path.exists():
+                shutil.rmtree(task_path)
+
+    _run_case(
+        'doctor-acquisition-chain',
+        'Collect current public marketplace pricing data, compare multiple sources, and return structured evidence with citations',
+    )
+    return {
+        'single_doctor_rule': True,
+        'authoritative_doctor': 'tools/openmoss/control_center/system_doctor.py',
+        'required_files_checked': len(ACQUISITION_REQUIRED_FILES),
+        'required_files': [str(path.relative_to(WORKSPACE_ROOT)) for path in ACQUISITION_REQUIRED_FILES],
+        'acquisition_chain': 'ok' if not errors else 'error',
+        'errors': errors,
+        'ok': not errors,
+    }
+
+
+def _run_integration_health_checks() -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：聚合所有已注册集成的 doctor 健康检查结果，继续保持 single-doctor 结构。
+    - 输入角色：消费 gstack 与 acquisition hand 两条集成检查。
+    - 输出角色：供 system doctor 与 ops doctor 统一展示。
+    """
+    gstack = _run_gstack_integration_checks()
+    acquisition_hand = _run_acquisition_integration_checks()
+    errors = list(gstack.get('errors', []) or []) + list(acquisition_hand.get('errors', []) or [])
+    return {
+        'single_doctor_rule': True,
+        'authoritative_doctor': 'tools/openmoss/control_center/system_doctor.py',
+        'registered_integrations': _build_doctor_coverage_bundle().get('registered_integrations', []),
+        'required_files_checked': int(gstack.get('required_files_checked', 0) or 0)
+        + int(acquisition_hand.get('required_files_checked', 0) or 0),
+        'lifecycle': GSTACK_LIFECYCLE,
+        'gstack': gstack,
+        'acquisition_hand': acquisition_hand,
+        'coding_chain': gstack.get('coding_chain', 'unknown'),
+        'noncoding_chain': gstack.get('noncoding_chain', 'unknown'),
+        'acquisition_chain': acquisition_hand.get('acquisition_chain', 'unknown'),
+        'errors': errors,
+        'ok': bool(gstack.get('ok')) and bool(acquisition_hand.get('ok')),
+    }
+
+
 def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds: int = 600) -> Dict[str, object]:
     """
     中文注解：
@@ -2154,7 +2276,7 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
         escalation_after_seconds=max(300, escalation_after_seconds),
     )
     task_incidents = _reconcile_task_incidents(task_incident_candidates, idle_after_seconds=idle_after_seconds)
-    integration_health = _run_gstack_integration_checks()
+    integration_health = _run_integration_health_checks()
     crawler_profile = control_plane.get("crawler_capability_profile", {}) or {}
     crawler_summary = crawler_profile.get("summary", {}) or {}
     acquisition_market = build_acquisition_adapter_registry(build_capability_registry())

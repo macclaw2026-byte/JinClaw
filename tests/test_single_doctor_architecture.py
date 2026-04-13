@@ -19,6 +19,8 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertTrue(bundle['single_doctor_rule'])
         self.assertEqual(bundle['authoritative_doctor'], 'tools/openmoss/control_center/system_doctor.py')
         self.assertTrue(bundle['registered_integrations'])
+        names = [item.get('name') for item in bundle['registered_integrations']]
+        self.assertIn('acquisition-hand', names)
 
     def test_control_plane_exposes_doctor_coverage(self):
         plane = build_control_plane(stale_after_seconds=300, escalation_after_seconds=900)
@@ -35,6 +37,8 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertTrue(integration.get('ok'))
         self.assertEqual(integration.get('coding_chain'), 'ok')
         self.assertEqual(integration.get('noncoding_chain'), 'ok')
+        self.assertEqual(integration.get('acquisition_chain'), 'ok')
+        self.assertTrue((integration.get('acquisition_hand', {}) or {}).get('ok'))
 
 
 if __name__ == '__main__':
