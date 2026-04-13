@@ -2043,6 +2043,7 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
     from context_builder import build_stage_context
     from coding_session_adapter import build_coding_session_payload
     from acp_dispatch_builder import build_acp_dispatch_request
+    from crawler_probe_runner import _derive_probe_execution_plan
     from task_contract import TaskContract
 
     def _run_case(task_id: str, goal: str) -> None:
@@ -2059,6 +2060,20 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
                 errors.append('acquisition_chain_missing_route_candidates')
             if not ((acquisition_hand.get('execution_strategy', {}) or {}).get('primary_route_id')):
                 errors.append('acquisition_chain_missing_primary_route')
+            enabled_adapters = [
+                item
+                for item in ((acquisition_hand.get('adapter_registry', {}) or {}).get('adapters', []) or [])
+                if bool((item or {}).get('enabled'))
+            ]
+            if enabled_adapters and not any(str((item or {}).get('execution_tool_id', '')).strip() for item in enabled_adapters):
+                errors.append('acquisition_chain_missing_execution_binding_registry')
+            probe_plan = _derive_probe_execution_plan(
+                goal,
+                control_center.get('crawler', {}) or {},
+                acquisition_hand,
+            )
+            if not [str(item).strip() for item in probe_plan.get('tool_ids', []) or [] if str(item).strip()]:
+                errors.append('acquisition_chain_missing_local_probe_plan')
 
             contract = TaskContract.from_dict({
                 'task_id': task_id,

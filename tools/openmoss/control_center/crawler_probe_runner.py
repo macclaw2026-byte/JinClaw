@@ -82,6 +82,18 @@ DEFAULT_TOOL_ORDER = [
     "agent_browser",
 ]
 
+FULL_MATRIX_REQUEST_TOKENS = [
+    "7个工具",
+    "7 tools",
+    "七个工具",
+    "all known tools",
+    "all tools",
+    "所有已知工具",
+    "全部工具",
+    "首次",
+    "第一次",
+]
+
 SITE_TASK_FIELDS = {
     "amazon": ["title", "price", "rating", "reviews", "link"],
     "walmart": ["title", "price", "rating", "link"],
@@ -210,7 +222,7 @@ def _detect_requested_tools(goal: str, crawler_plan: Dict[str, Any]) -> List[str
     for canonical, aliases in TOOL_ALIASES.items():
         if any(_normalized(alias) in goal_lower for alias in aliases):
             requested.append(canonical)
-    if not requested and any(token in goal_lower for token in ["7个工具", "7 tools", "七个工具", "all known tools", "all tools", "所有已知工具", "全部工具", "首次", "第一次"]):
+    if not requested and _goal_requests_full_matrix(goal):
         requested = list(DEFAULT_TOOL_ORDER)
     selected_stack = (crawler_plan.get("selected_stack", {}) or {}).get("tools", []) or []
     fallback_ids = {str(item) for item in crawler_plan.get("fallback_stacks", []) if str(item).strip()}
@@ -228,6 +240,161 @@ def _detect_requested_tools(goal: str, crawler_plan: Dict[str, Any]) -> List[str
                 requested.append(canonical)
     ordered = [tool for tool in DEFAULT_TOOL_ORDER if tool in requested]
     return ordered or list(DEFAULT_TOOL_ORDER)
+
+
+def _goal_requests_full_matrix(goal: str) -> bool:
+    """
+    中文注解：
+    - 功能：判断用户是否显式要求“全工具矩阵”级别的探测。
+    - 设计意图：只有在用户明确要全量矩阵时，probe 才应无条件铺满所有本地工具。
+    """
+    normalized = _normalized(goal)
+    return any(token in normalized for token in FULL_MATRIX_REQUEST_TOKENS)
+
+
+def _dedupe_ordered(values: Iterable[str]) -> List[str]:
+    """
+    中文注解：
+    - 功能：对字符串序列去重并保持顺序。
+    - 设计意图：执行计划、route ids 与 tool ids 都需要稳定顺序，便于 doctor 和 verifier 对账。
+    """
+    seen: set[str] = set()
+    ordered: List[str] = []
+    for value in values:
+        text = str(value).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        ordered.append(text)
+    return ordered
+
+
+def _candidate_execution_binding(candidate: Dict[str, Any], adapters_by_id: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：把 acquisition route candidate 映射成 crawler probe 可直接执行的本地 runner 绑定。
+    - 设计意图：计划层按 adapter 思考，执行层按本地 runner 思考，这里负责把两层接起来。
+    """
+    adapter_id = str(candidate.get("adapter_id", "")).strip()
+    adapter = adapters_by_id.get(adapter_id, {})
+    tool_id = str(adapter.get("execution_tool_id", "")).strip()
+    if not tool_id or tool_id not in TOOL_RUNNERS:
+        return {}
+    runner_meta = TOOL_RUNNERS.get(tool_id, {}) or {}
+    return {
+        "route_id": str(candidate.get("route_id", "")).strip(),
+        "adapter_id": adapter_id,
+        "route_type": str(candidate.get("route_type", "")).strip(),
+        "parallel_role": str(candidate.get("parallel_role", "")).strip(),
+        "tool_id": tool_id,
+        "tool_label": str(runner_meta.get("label", "")).strip(),
+        "execution_runtime": str(adapter.get("execution_runtime", "")).strip(),
+    }
+
+
+def _derive_probe_execution_plan(
+    goal: str,
+    crawler_plan: Dict[str, Any],
+    acquisition_hand: Dict[str, Any] | None,
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：为本地 crawler probe 推导一份局部执行计划。
+    - 输入角色：消费 acquisition hand 的路由策略，以及 legacy crawler plan 的回退信息。
+    - 输出角色：告诉 probe 本轮该跑哪些本地 runner、哪些全局路线因本地不可执行而跳过。
+    """
+    legacy_tools = _detect_requested_tools(goal, crawler_plan)
+    if not acquisition_hand or not bool(acquisition_hand.get("enabled")):
+        return {
+            "source": "legacy_requested_tools",
+            "global_planned_route_ids": [],
+            "active_route_ids": [],
+            "skipped_route_ids": [],
+            "tool_ids": legacy_tools,
+            "route_plan": [],
+            "fallback_reason": "acquisition_hand_disabled",
+        }
+
+    adapter_registry = acquisition_hand.get("adapter_registry", {}) or {}
+    route_candidates = [item for item in (acquisition_hand.get("route_candidates", []) or []) if isinstance(item, dict)]
+    adapters_by_id = {
+        str(item.get("adapter_id", "")).strip(): item
+        for item in adapter_registry.get("adapters", []) or []
+        if str(item.get("adapter_id", "")).strip()
+    }
+    candidates_by_id = {
+        str(item.get("route_id", "")).strip(): item
+        for item in route_candidates
+        if str(item.get("route_id", "")).strip()
+    }
+    strategy = acquisition_hand.get("execution_strategy", {}) or {}
+    global_planned_route_ids = _dedupe_ordered(
+        [
+            str(strategy.get("primary_route_id", "")).strip(),
+            *[str(item).strip() for item in strategy.get("validation_route_ids", []) or []],
+            *[str(item).strip() for item in strategy.get("escalation_route_ids", []) or []],
+        ]
+    )
+    route_plan: List[Dict[str, Any]] = []
+    active_route_ids: List[str] = []
+    active_tool_ids: List[str] = []
+    skipped_route_ids: List[str] = []
+    full_matrix_requested = _goal_requests_full_matrix(goal)
+
+    def _append_candidate(candidate: Dict[str, Any], reason: str) -> bool:
+        binding = _candidate_execution_binding(candidate, adapters_by_id)
+        route_id = str(candidate.get("route_id", "")).strip()
+        if not binding:
+            if route_id:
+                skipped_route_ids.append(route_id)
+            return False
+        tool_id = str(binding.get("tool_id", "")).strip()
+        if tool_id in active_tool_ids or route_id in active_route_ids:
+            return False
+        route_plan.append({**binding, "reason": reason})
+        active_route_ids.append(route_id)
+        active_tool_ids.append(tool_id)
+        return True
+
+    if full_matrix_requested:
+        for candidate in route_candidates:
+            _append_candidate(candidate, "user_requested_full_matrix")
+    else:
+        for route_id in global_planned_route_ids:
+            candidate = candidates_by_id.get(route_id, {})
+            if candidate:
+                _append_candidate(candidate, "acquisition_execution_strategy")
+        desired_local_total = 2 if bool(strategy.get("allow_parallel_validation")) else 1
+        if len(active_tool_ids) < desired_local_total:
+            for candidate in route_candidates:
+                if len(active_tool_ids) >= desired_local_total:
+                    break
+                if str(candidate.get("route_id", "")).strip() in active_route_ids:
+                    continue
+                _append_candidate(candidate, "local_probe_strategy_fill")
+
+    active_tool_ids = _dedupe_ordered(active_tool_ids)
+    active_route_ids = _dedupe_ordered(active_route_ids)
+    skipped_route_ids = _dedupe_ordered(skipped_route_ids)
+    if active_tool_ids:
+        return {
+            "source": "acquisition_full_matrix" if full_matrix_requested else "acquisition_execution_strategy",
+            "global_planned_route_ids": global_planned_route_ids,
+            "active_route_ids": active_route_ids,
+            "skipped_route_ids": skipped_route_ids,
+            "tool_ids": active_tool_ids,
+            "route_plan": route_plan,
+            "fallback_reason": "",
+        }
+    return {
+        "source": "legacy_requested_tools",
+        "global_planned_route_ids": global_planned_route_ids,
+        "active_route_ids": [],
+        "skipped_route_ids": skipped_route_ids,
+        "tool_ids": legacy_tools,
+        "route_plan": [],
+        "fallback_reason": "no_local_runner_for_current_acquisition_routes",
+    }
 
 
 def _detect_query(goal: str) -> str:
@@ -519,7 +686,8 @@ def run_crawler_probe(
     - 说明：当前版本优先服务“多站点、多工具验证”型抓取任务。
     """
     requested_sites = _detect_requested_sites(goal, crawler_plan)
-    requested_tools = _detect_requested_tools(goal, crawler_plan)
+    execution_plan = _derive_probe_execution_plan(goal, crawler_plan, acquisition_hand)
+    requested_tools = [str(item) for item in execution_plan.get("tool_ids", []) if str(item).strip()]
     query = _detect_query(goal)
     output_dir = _task_crawler_dir(task_id)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -591,6 +759,7 @@ def run_crawler_probe(
         "query": query,
         "required_sites": requested_sites,
         "required_tools": requested_tools,
+        "planned_execution": execution_plan,
         "selected_stack": (crawler_plan.get("selected_stack", {}) or {}).get("stack_id", ""),
         "fallback_stacks": list(crawler_plan.get("fallback_stacks", []) or []),
         "sites": site_payloads,
@@ -638,6 +807,14 @@ def run_crawler_probe(
         "required_sites_covered": sorted({site["site"] for site in site_payloads}),
         "required_tools_requested": requested_tools,
         "attempted_tool_labels": attempted_tool_labels,
+        "planned_execution": {
+            "source": str(execution_plan.get("source", "")).strip(),
+            "global_planned_route_ids": [str(item) for item in execution_plan.get("global_planned_route_ids", []) if str(item).strip()],
+            "active_route_ids": [str(item) for item in execution_plan.get("active_route_ids", []) if str(item).strip()],
+            "skipped_route_ids": [str(item) for item in execution_plan.get("skipped_route_ids", []) if str(item).strip()],
+            "active_tool_ids": requested_tools,
+            "fallback_reason": str(execution_plan.get("fallback_reason", "")).strip(),
+        },
         "all_sites_attempted": sorted({site["site"] for site in site_payloads}) == sorted(requested_sites),
     }
     acquisition_summary: Dict[str, Any] = {}
@@ -666,6 +843,7 @@ def run_crawler_probe(
         "acquisition_summary": acquisition_summary,
         "required_sites": requested_sites,
         "required_tools": requested_tools,
+        "planned_execution": execution_plan,
         "coverage": coverage,
         "site_summaries": {site["site"]: site.get("summary", {}) for site in site_payloads},
         "site_profile_updates": site_profile_updates,

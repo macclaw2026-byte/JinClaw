@@ -102,6 +102,37 @@ def _adapter_maps(acquisition_hand: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _report_execution_plan(report_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：读取 crawler probe 回传的局部执行计划。
+    - 设计意图：当 probe 已明确记录“这次按哪些 route/tool 执行”时，summary 应优先消费这份一手证据。
+    """
+    planned_execution = report_payload.get("planned_execution", {}) or {}
+    route_plan = [item for item in (planned_execution.get("route_plan", []) or []) if isinstance(item, dict)]
+    return {
+        "source": str(planned_execution.get("source", "")).strip(),
+        "global_planned_route_ids": _unique_preserve(
+            [str(item).strip() for item in planned_execution.get("global_planned_route_ids", []) or [] if str(item).strip()]
+        ),
+        "active_route_ids": _unique_preserve(
+            [str(item).strip() for item in planned_execution.get("active_route_ids", []) or [] if str(item).strip()]
+        ),
+        "skipped_route_ids": _unique_preserve(
+            [str(item).strip() for item in planned_execution.get("skipped_route_ids", []) or [] if str(item).strip()]
+        ),
+        "route_plan": route_plan,
+    }
+
+
+def _planned_route_binding(tool_label: str, execution_plan: Dict[str, Any]) -> Dict[str, Any]:
+    normalized_tool = _normalized(tool_label)
+    for item in execution_plan.get("route_plan", []) or []:
+        if _normalized(str(item.get("tool_label", "")).strip()) == normalized_tool:
+            return item
+    return {}
+
+
 def _pick_adapter(tool_label: str, acquisition_hand: Dict[str, Any], maps: Dict[str, Any]) -> Dict[str, Any]:
     normalized_label = _normalized(tool_label)
     matches = list((maps.get("tool_to_adapters", {}) or {}).get(normalized_label, []))
@@ -268,6 +299,7 @@ def build_acquisition_execution_summary(
         return build_acquisition_execution_summary_schema(task_id=task_id, goal=goal)
 
     maps = _adapter_maps(acquisition_hand)
+    execution_plan = _report_execution_plan(report_payload)
     route_runs: List[Dict[str, Any]] = []
     site_consensus_rows: List[Dict[str, Any]] = []
     route_runs_by_site: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
@@ -279,9 +311,28 @@ def build_acquisition_execution_summary(
             tool_label = str(row.get("tool", "")).strip()
             if not tool_label:
                 continue
-            adapter = _pick_adapter(tool_label, acquisition_hand, maps)
-            candidate = _pick_route_candidate(adapter, acquisition_hand, maps) if adapter else {}
+            planned_binding = _planned_route_binding(tool_label, execution_plan)
+            adapter = {}
+            candidate = {}
+            if planned_binding:
+                adapter = (maps.get("adapters_by_id", {}) or {}).get(str(planned_binding.get("adapter_id", "")).strip(), {}) or {}
+                candidate = {
+                    "route_id": str(planned_binding.get("route_id", "")).strip(),
+                    "adapter_id": str(planned_binding.get("adapter_id", "")).strip(),
+                    "route_type": str(planned_binding.get("route_type", "")).strip(),
+                    "risk_level": str((adapter or {}).get("risk_level", "medium")).strip() or "medium",
+                    "parallel_role": str(planned_binding.get("parallel_role", "")).strip(),
+                }
+            else:
+                adapter = _pick_adapter(tool_label, acquisition_hand, maps)
+                candidate = _pick_route_candidate(adapter, acquisition_hand, maps) if adapter else {}
             normalized_output = row.get("normalized_task_output", {}) or {}
+            notes = [str(item) for item in ((row.get("false_positive", {}) or {}).get("reasons", []) or []) if str(item).strip()]
+            if planned_binding:
+                if str(planned_binding.get("parallel_role", "")).strip():
+                    notes.append(f"planned_role:{str(planned_binding.get('parallel_role', '')).strip()}")
+                if str(execution_plan.get("source", "")).strip():
+                    notes.append(f"execution_plan_source:{str(execution_plan.get('source', '')).strip()}")
             route_run = build_acquisition_route_result_schema(
                 site=site_id,
                 route_id=str(candidate.get("route_id", "")).strip() or f"executed:{_normalized(tool_label)}",
@@ -298,7 +349,7 @@ def build_acquisition_execution_summary(
                 route_risk=str((candidate or {}).get("risk_level", (adapter or {}).get("risk_level", "medium"))).strip() or "medium",
                 preferred_site_match=site_id in ((adapter or {}).get("preferred_sites", []) or []),
                 task_fields=dict(normalized_output.get("fields", {}) or {}),
-                notes=[str(item) for item in ((row.get("false_positive", {}) or {}).get("reasons", []) or []) if str(item).strip()],
+                notes=notes,
             )
             route_runs.append(route_run)
             route_runs_by_site[site_id].append(route_run)
@@ -306,9 +357,10 @@ def build_acquisition_execution_summary(
     for site_id, site_route_runs in route_runs_by_site.items():
         site_consensus_rows.append(_site_consensus(site_id, site_route_runs, acquisition_hand))
 
-    planned_route_ids = _planned_route_ids(acquisition_hand)
+    planned_route_ids = execution_plan.get("active_route_ids") or _planned_route_ids(acquisition_hand)
     executed_route_ids = _unique_preserve([str(item.get("route_id", "")).strip() for item in route_runs if str(item.get("route_id", "")).strip()])
     planned_but_not_executed = [route_id for route_id in planned_route_ids if route_id not in set(executed_route_ids)]
+    global_skipped_route_ids = execution_plan.get("skipped_route_ids", []) or []
 
     sites_total = len(site_consensus_rows)
     sites_clear_winner = sum(1 for item in site_consensus_rows if item.get("decision") == "clear_winner")
@@ -329,6 +381,11 @@ def build_acquisition_execution_summary(
             *(
                 ["record_planned_vs_executed_route_gap"]
                 if planned_but_not_executed
+                else []
+            ),
+            *(
+                ["review_global_routes_skipped_by_local_probe"]
+                if global_skipped_route_ids
                 else []
             ),
             *(
@@ -373,6 +430,9 @@ def build_acquisition_execution_summary(
             "sites_needs_review": sites_needs_review,
             "sites_blocked": sites_blocked,
             "route_gap_count": len(planned_but_not_executed),
+            "global_planned_route_ids": execution_plan.get("global_planned_route_ids", []) or _planned_route_ids(acquisition_hand),
+            "global_skipped_route_ids": global_skipped_route_ids,
+            "execution_plan_source": str(execution_plan.get("source", "")).strip(),
             "planned_route_coverage_ratio": round(
                 len(set(planned_route_ids).intersection(set(executed_route_ids))) / max(1, len(planned_route_ids)),
                 3,
