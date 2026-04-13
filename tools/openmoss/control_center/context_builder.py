@@ -54,7 +54,14 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
     mission = _load_json(MISSIONS_ROOT / f"{task_id}.json")
     summary = _load_json(SUMMARIES_ROOT / f"{task_id}.json")
     live_approval = _load_json(APPROVALS_ROOT / f"{task_id}.json")
+    control_center = (contract.get("metadata", {}) or {}).get("control_center", {}) or {}
     selected_plan = mission.get("selected_plan", {})
+    governance_contract = mission.get("governance", {}) or control_center.get("governance", {})
+    plan_reviews = mission.get("plan_reviews", {}) or control_center.get("plan_reviews", {})
+    operating_discipline = mission.get("operating_discipline", {}) or control_center.get("operating_discipline", {})
+    protocol_pack = mission.get("protocol_pack", {}) or control_center.get("protocol_pack", {})
+    knowledge_basis = mission.get("knowledge_basis", {}) or control_center.get("knowledge_basis", {})
+    readiness_dashboard = mission.get("readiness_dashboard", {}) or control_center.get("readiness_dashboard", {})
     topology = mission.get("topology", {}) or build_topology(mission.get("intent", {}), selected_plan)
     fractal = mission.get("fractal_loops", {}) or build_fractal_loops(mission.get("intent", {}), selected_plan, topology)
     htn = mission.get("htn", {}) or build_htn_tree(mission.get("intent", {}), selected_plan, topology, fractal)
@@ -72,6 +79,7 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
         dict.fromkeys([str(item) for item in contract.get("allowed_tools", []) if str(item).strip()] + crawler_tools)
     )
     stage_contract = next((item for item in contract.get("stages", []) if item.get("name") == stage_name), {})
+    stage_verification_guidance = stage_contract.get("verification_guidance", {}) or {}
     stage_state = state.get("stages", {}).get(stage_name, {})
     stage_attempts = int(stage_state.get("attempts", 0) or 0)
     subtask_cursor = int(stage_state.get("subtask_cursor", max(stage_attempts - 1, 0)) or 0)
@@ -88,6 +96,13 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
             "crawler": crawler,
             "crawler_capability_profile": crawler_capability_profile.get("summary", {}),
             "governance": governance,
+            "governance_contract": governance_contract,
+            "plan_reviews": plan_reviews,
+            "operating_discipline": operating_discipline,
+            "protocol_pack": protocol_pack,
+            "knowledge_basis": knowledge_basis,
+            "readiness_dashboard": readiness_dashboard,
+            "verification_guidance": stage_verification_guidance,
             "topology": topology,
             "fractal_focus": fractal_focus,
             "htn_focus": htn_focus,
@@ -153,6 +168,13 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
             "sites": crawler_capability_profile.get("sites", []),
         },
         "governance": governance,
+        "governance_contract": governance_contract,
+        "plan_reviews": plan_reviews,
+        "operating_discipline": operating_discipline,
+        "protocol_pack": protocol_pack,
+        "knowledge_basis": knowledge_basis,
+        "readiness_dashboard": readiness_dashboard,
+        "verification_guidance": stage_verification_guidance,
         "summary": {
             "current_stage": state.get("current_stage", "") or summary.get("current_stage", ""),
             "status": state.get("status", "") or summary.get("status", ""),
@@ -161,7 +183,7 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
             "pending_approvals": summary.get("pending_approvals", live_approval.get("pending", mission.get("approval", {}).get("pending", []))),
         },
         "allowed_tools": merged_allowed_tools,
-        "coding_methodology": mission.get("coding_methodology", {}) or contract.get("metadata", {}).get("control_center", {}).get("coding_methodology", {}),
+        "coding_methodology": mission.get("coding_methodology", {}) or control_center.get("coding_methodology", {}),
         "signature": signature,
         "cache_hit": False,
     }

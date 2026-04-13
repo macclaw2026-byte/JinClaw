@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import json
 from typing import Dict, Any
 
 
@@ -32,14 +33,29 @@ def _coding_methodology_from_contract(contract: Dict[str, Any]) -> Dict[str, Any
     }
 
 
+def _control_center_from_contract(contract: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = contract.get('metadata', {}) or {}
+    return metadata.get('control_center', {}) or {}
+
+
 def _base_task_prompt(contract: Dict[str, Any], stage_context: Dict[str, Any] | None = None) -> str:
     stage_context = stage_context or {}
+    control_center = _control_center_from_contract(contract)
     goal = str(contract.get('user_goal', '') or '')
     done_definition = str(contract.get('done_definition', '') or '')
     stage_name = str(stage_context.get('stage_name', '') or '')
     stage_goal = str(stage_context.get('stage_goal', '') or '')
     selected_plan = stage_context.get('selected_plan', {}) or {}
     summary = str(selected_plan.get('summary', '') or '')
+    governance = stage_context.get('governance_contract', {}) or control_center.get('governance', {}) or {}
+    plan_reviews = stage_context.get('plan_reviews', {}) or control_center.get('plan_reviews', {}) or {}
+    operating_discipline = stage_context.get('operating_discipline', {}) or control_center.get('operating_discipline', {}) or {}
+    protocol_pack = stage_context.get('protocol_pack', {}) or control_center.get('protocol_pack', {}) or {}
+    knowledge_basis = stage_context.get('knowledge_basis', {}) or control_center.get('knowledge_basis', {}) or {}
+    readiness_dashboard = stage_context.get('readiness_dashboard', {}) or control_center.get('readiness_dashboard', {}) or {}
+    verification_guidance = stage_context.get('verification_guidance', {}) or {}
+    must_fix = plan_reviews.get('must_fix_before_execute', []) or []
+    pending_direction = plan_reviews.get('pending_direction_confirmations', []) or []
     pieces = [
         'JinClaw coding execution request',
         f'Goal: {goal}',
@@ -51,12 +67,34 @@ def _base_task_prompt(contract: Dict[str, Any], stage_context: Dict[str, Any] | 
         pieces.append(f'Stage goal: {stage_goal}')
     if summary:
         pieces.append(f'Selected plan summary: {summary}')
+    if governance:
+        pieces.append(f"Governance tier: {governance.get('tier', 'standard')}")
+    if protocol_pack:
+        pieces.append(f"Protocol pack: {protocol_pack.get('pack_id', '')}")
+    if must_fix:
+        pieces.append(f'Must-fix before execute: {json.dumps(must_fix, ensure_ascii=False)}')
+    if pending_direction:
+        pieces.append(f'Pending direction confirmations: {json.dumps(pending_direction, ensure_ascii=False)}')
+    enabled_rules = (operating_discipline.get('enabled_rule_keys', []) or [])[:8]
+    if enabled_rules:
+        pieces.append(f'Operating discipline: {json.dumps(enabled_rules, ensure_ascii=False)}')
+    if knowledge_basis:
+        pieces.append(f"Knowledge basis: {json.dumps({'recommended_basis': knowledge_basis.get('recommended_basis', ''), 'known_uncertainties': knowledge_basis.get('known_uncertainties', [])}, ensure_ascii=False)}")
+    if readiness_dashboard:
+        pieces.append(f"Readiness dashboard: {json.dumps({'plan_readiness': readiness_dashboard.get('plan_readiness', {}), 'execute_readiness': readiness_dashboard.get('execute_readiness', {}), 'pending_decisions': readiness_dashboard.get('pending_decisions', [])}, ensure_ascii=False)}")
+    if verification_guidance:
+        pieces.append(f'Verification guidance: {json.dumps(verification_guidance, ensure_ascii=False)}')
     pieces.append('Return a concise completion report with evidence, unresolved risks, and recommended next step.')
     return '\n'.join(pieces)
 
 
 def build_coding_session_payload(contract: Dict[str, Any], stage_context: Dict[str, Any] | None = None) -> Dict[str, Any]:
     methodology = _coding_methodology_from_contract(contract)
+    control_center = _control_center_from_contract(contract)
+    stage_context = stage_context or {}
+    governance = stage_context.get('governance_contract', {}) or control_center.get('governance', {}) or {}
+    protocol_pack = stage_context.get('protocol_pack', {}) or control_center.get('protocol_pack', {}) or {}
+    operating_discipline = stage_context.get('operating_discipline', {}) or control_center.get('operating_discipline', {}) or {}
     base_prompt = _base_task_prompt(contract, stage_context)
     if methodology.get('enabled') and methodology.get('prompt_text'):
         final_prompt = f"{methodology.get('prompt_text').rstrip()}\n\n{base_prompt}"
@@ -70,4 +108,7 @@ def build_coding_session_payload(contract: Dict[str, Any], stage_context: Dict[s
         'recommended_runtime': 'acp',
         'recommended_mode': 'session',
         'requires_prompt_injection': bool(methodology.get('enabled')),
+        'governance': governance,
+        'protocol_pack': protocol_pack,
+        'operating_discipline': operating_discipline,
     }

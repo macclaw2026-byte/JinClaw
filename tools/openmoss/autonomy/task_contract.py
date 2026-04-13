@@ -161,6 +161,7 @@ class StageContract:
     backstop_monitor: str = ""
     miss_detection_signal: str = ""
     verifier: Dict[str, Any] = field(default_factory=dict)
+    verification_guidance: Dict[str, Any] = field(default_factory=dict)
     execution_policy: Dict[str, Any] = field(default_factory=dict)
 
 

@@ -90,7 +90,12 @@ def _estimate_plan_efficiency(plan: Dict[str, object], intent: Dict[str, object]
     return efficiency
 
 
-def _score_plan(plan: Dict[str, object], intent: Dict[str, object], capabilities: Dict[str, object]) -> Dict[str, object]:
+def _score_plan(
+    plan: Dict[str, object],
+    intent: Dict[str, object],
+    capabilities: Dict[str, object],
+    knowledge_basis: Dict[str, object] | None = None,
+) -> Dict[str, object]:
     """
     中文注解：
     - 功能：实现 `_score_plan` 对应的处理逻辑。
@@ -98,6 +103,7 @@ def _score_plan(plan: Dict[str, object], intent: Dict[str, object], capabilities
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
     """
     external_actions = plan.get("external_actions", [])
+    knowledge_basis = knowledge_basis or {}
     task_types = [str(item) for item in intent.get("task_types", [])]
     risk_level = str(intent.get("risk_level", ""))
     local_skill_matches = len(plan.get("skills", []))
@@ -125,7 +131,43 @@ def _score_plan(plan: Dict[str, object], intent: Dict[str, object], capabilities
     safety_penalty = round(plan_risk * 1.8, 2)
     strategy_bias = doctor_strategy_bias(intent, plan)
     strategy_bonus = float(strategy_bias.get("score_adjustment", 0.0) or 0.0)
-    score = 10 + local_skill_matches + confidence_bonus + browser_bonus + image_pipeline_bonus - local_first_penalty - external_penalty - install_penalty + history_bonus + necessity_bonus - necessity_penalty - confidence_gate_penalty + efficiency_bonus - safety_penalty + strategy_bonus
+    recommended_basis = str(knowledge_basis.get("recommended_basis", "")).strip()
+    layer1_count = len([item for item in knowledge_basis.get("layer1_candidates", []) if str(item).strip()])
+    layer3_count = len([item for item in knowledge_basis.get("layer3_observations", []) if str(item).strip()])
+    uncertainty_count = len([item for item in knowledge_basis.get("known_uncertainties", []) if str(item).strip()])
+    knowledge_bonus = 0.0
+    knowledge_penalty = 0.0
+    if layer1_count:
+        knowledge_bonus += min(layer1_count, 3) * 0.6
+    if layer3_count:
+        knowledge_bonus += min(layer3_count, 2) * 0.5
+    if recommended_basis == "layer1+layer3":
+        knowledge_bonus += 0.8
+    if recommended_basis == "layer1+layer2+layer3" and external_actions:
+        knowledge_bonus += 0.6
+    if uncertainty_count and external_actions:
+        knowledge_penalty += min(uncertainty_count, 3) * 0.5
+    if external_actions and not layer1_count:
+        knowledge_penalty += 1.0
+    score = (
+        10
+        + local_skill_matches
+        + confidence_bonus
+        + browser_bonus
+        + image_pipeline_bonus
+        - local_first_penalty
+        - external_penalty
+        - install_penalty
+        + history_bonus
+        + necessity_bonus
+        - necessity_penalty
+        - confidence_gate_penalty
+        + efficiency_bonus
+        - safety_penalty
+        + strategy_bonus
+        + knowledge_bonus
+        - knowledge_penalty
+    )
     rationale = []
     if local_skill_matches:
         rationale.append("matches existing local skills")
@@ -145,6 +187,14 @@ def _score_plan(plan: Dict[str, object], intent: Dict[str, object], capabilities
         rationale.append("keeps the useful external ideas while rebuilding the capability locally")
     if history_profile.get("active_weight", 0):
         rationale.append(f"scene-aware historical success rate {historical_success_rate:.2f}")
+    if recommended_basis:
+        rationale.append(f"knowledge basis recommends {recommended_basis}")
+    if layer1_count:
+        rationale.append("has layer1 tried-and-true support")
+    if layer3_count:
+        rationale.append("includes first-principles observations for this task")
+    if uncertainty_count and external_actions:
+        rationale.append("still carries knowledge uncertainty for external actions")
     rationale.extend([str(item) for item in strategy_bias.get("rationale", []) if str(item).strip()])
     if external_actions:
         if necessity.get("required"):
@@ -162,25 +212,39 @@ def _score_plan(plan: Dict[str, object], intent: Dict[str, object], capabilities
         "efficiency_score": plan_efficiency,
         "risk_score": plan_risk,
         "doctor_strategy_bias": strategy_bias,
+        "knowledge_basis_summary": {
+            "recommended_basis": recommended_basis,
+            "layer1_count": layer1_count,
+            "layer3_count": layer3_count,
+            "uncertainty_count": uncertainty_count,
+            "knowledge_bonus": round(knowledge_bonus, 2),
+            "knowledge_penalty": round(knowledge_penalty, 2),
+        },
     }
 
 
-def judge_proposals(intent: Dict[str, object], capabilities: Dict[str, object], candidate_plans: List[Dict[str, object]]) -> Dict[str, object]:
+def judge_proposals(
+    intent: Dict[str, object],
+    capabilities: Dict[str, object],
+    candidate_plans: List[Dict[str, object]],
+    knowledge_basis: Dict[str, object] | None = None,
+) -> Dict[str, object]:
     """
     中文注解：
     - 功能：实现 `judge_proposals` 对应的处理逻辑。
     - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
     """
-    scored = [_score_plan(plan, intent, capabilities) for plan in candidate_plans]
+    scored = [_score_plan(plan, intent, capabilities, knowledge_basis=knowledge_basis) for plan in candidate_plans]
     scored_by_id = {item["plan_id"]: item for item in scored}
-    selected_score = sorted(scored, key=lambda item: (-int(item["score"]), item["plan_id"]))[0]
+    selected_score = sorted(scored, key=lambda item: (-float(item["score"]), item["plan_id"]))[0]
     selected_plan = next(plan for plan in candidate_plans if plan.get("plan_id") == selected_score["plan_id"])
     return {
         "selected_plan": selected_plan,
         "selected_score": selected_score,
         "scores": scored,
         "why_selected": selected_score["rationale"],
+        "knowledge_basis": knowledge_basis or {},
     }
 
 
@@ -197,10 +261,16 @@ def main() -> int:
     parser.add_argument("--intent-json", required=True)
     parser.add_argument("--capabilities-json", required=True)
     parser.add_argument("--plans-json", required=True)
+    parser.add_argument("--knowledge-basis-json", default="{}")
     args = parser.parse_args()
     print(
         json.dumps(
-            judge_proposals(json.loads(args.intent_json), json.loads(args.capabilities_json), json.loads(args.plans_json)),
+            judge_proposals(
+                json.loads(args.intent_json),
+                json.loads(args.capabilities_json),
+                json.loads(args.plans_json),
+                knowledge_basis=json.loads(args.knowledge_basis_json),
+            ),
             ensure_ascii=False,
             indent=2,
         )

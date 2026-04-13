@@ -52,6 +52,7 @@ from solution_arbitrator import arbitrate_solution_path
 from topology_mapper import build_topology
 from fractal_decomposer import build_fractal_loops
 from human_checkpoint import build_human_checkpoint
+from orchestrator import _derive_knowledge_basis, _derive_plan_reviews
 
 AUTONOMY_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy")
 if str(AUTONOMY_DIR) not in __import__("sys").path:
@@ -359,9 +360,38 @@ def _ensure_cognitive_maps(mission: Dict[str, object]) -> Dict[str, object]:
     if selected_plan_changed or not mission.get("htn"):
         mission["htn"] = build_htn_tree(intent, selected_plan, mission["topology"], mission["fractal_loops"])
     mission["stpa"] = audit_mission(intent, selected_plan, mission["topology"], mission.get("approval", {}))
+    if selected_plan_changed or not mission.get("plan_reviews"):
+        mission["plan_reviews"] = _derive_plan_reviews(
+            intent,
+            candidate_plans,
+            selected_plan,
+            mission.get("governance", {}) or {},
+        )
+    if selected_plan_changed or not mission.get("resource_scout"):
+        mission["resource_scout"] = build_resource_scout_brief(
+            intent,
+            selected_plan,
+            mission.get("domain_profile", {}) or {},
+            mission.get("fetch_route", {}) or {},
+        )
+    if selected_plan_changed or not mission.get("knowledge_basis"):
+        mission["knowledge_basis"] = _derive_knowledge_basis(
+            intent,
+            selected_plan,
+            mission.get("resource_scout", {}) or {},
+            mission.get("fetch_route", {}) or {},
+        )
     arbitration = mission.get("arbitration", {})
-    if not arbitration or "necessity_proof" not in arbitration:
-        mission["arbitration"] = arbitrate_solution_path(intent, selected_plan, mission.get("approval", {}), capabilities)
+    if selected_plan_changed or not arbitration or "necessity_proof" not in arbitration:
+        mission["arbitration"] = arbitrate_solution_path(
+            intent,
+            selected_plan,
+            mission.get("approval", {}),
+            capabilities,
+            knowledge_basis=mission.get("knowledge_basis", {}) or {},
+            plan_reviews=mission.get("plan_reviews", {}) or {},
+            governance=mission.get("governance", {}) or {},
+        )
     if not mission.get("adoption_flow"):
         tool_score_map = {str(item.get("plan_id", "")): item for item in mission.get("tool_scores", {}).get("scores", [])}
         mission["adoption_flow"] = build_adoption_flow(
@@ -405,7 +435,33 @@ def _force_browser_batch_plan(mission: Dict[str, object]) -> Dict[str, object]:
     mission["fractal_loops"] = build_fractal_loops(intent, browser_plan, mission["topology"])
     mission["htn"] = build_htn_tree(intent, browser_plan, mission["topology"], mission["fractal_loops"])
     mission["stpa"] = audit_mission(intent, browser_plan, mission["topology"], mission.get("approval", {}))
-    mission["arbitration"] = arbitrate_solution_path(intent, browser_plan, mission.get("approval", {}), mission.get("capabilities", {}))
+    mission["plan_reviews"] = _derive_plan_reviews(
+        intent,
+        candidate_plans,
+        browser_plan,
+        mission.get("governance", {}) or {},
+    )
+    mission["resource_scout"] = build_resource_scout_brief(
+        intent,
+        browser_plan,
+        mission.get("domain_profile", {}) or build_domain_profile(str(mission.get("task_id", "mission")), intent),
+        mission.get("fetch_route", {}) or {},
+    )
+    mission["knowledge_basis"] = _derive_knowledge_basis(
+        intent,
+        browser_plan,
+        mission.get("resource_scout", {}) or {},
+        mission.get("fetch_route", {}) or {},
+    )
+    mission["arbitration"] = arbitrate_solution_path(
+        intent,
+        browser_plan,
+        mission.get("approval", {}),
+        mission.get("capabilities", {}),
+        knowledge_basis=mission.get("knowledge_basis", {}) or {},
+        plan_reviews=mission.get("plan_reviews", {}) or {},
+        governance=mission.get("governance", {}) or {},
+    )
     mission["adoption_flow"] = build_adoption_flow(
         str(mission.get("task_id", "mission")),
         browser_plan,
