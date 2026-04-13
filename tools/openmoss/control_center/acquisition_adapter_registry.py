@@ -39,6 +39,8 @@ CONCRETE_ADAPTER_SPECS: List[Dict[str, Any]] = [
         "cost_profile": "low",
         "structured_output_level": "high",
         "supports_parallel_validation": True,
+        "execution_tool_id": "web_search",
+        "execution_runtime": "connector",
         "notes": ["优先用于官方接口、公开结构化端点和搜索型获取。"],
     },
     {
@@ -57,6 +59,8 @@ CONCRETE_ADAPTER_SPECS: List[Dict[str, Any]] = [
         "cost_profile": "low",
         "structured_output_level": "high",
         "supports_parallel_validation": True,
+        "execution_tool_id": "web_search",
+        "execution_runtime": "connector",
         "notes": ["适合作为官方 API 不存在时的保守替代路线。"],
     },
     {
@@ -74,6 +78,8 @@ CONCRETE_ADAPTER_SPECS: List[Dict[str, Any]] = [
         "cost_profile": "low",
         "structured_output_level": "medium",
         "supports_parallel_validation": True,
+        "execution_tool_id": "curl_cffi",
+        "execution_runtime": "matrix_venv",
     },
     {
         "adapter_id": "direct_http_html",
@@ -90,6 +96,8 @@ CONCRETE_ADAPTER_SPECS: List[Dict[str, Any]] = [
         "cost_profile": "low",
         "structured_output_level": "medium",
         "supports_parallel_validation": True,
+        "execution_tool_id": "direct_http",
+        "execution_runtime": "python_runtime",
     },
     {
         "adapter_id": "scrapy_cffi_extract",
@@ -106,6 +114,8 @@ CONCRETE_ADAPTER_SPECS: List[Dict[str, Any]] = [
         "cost_profile": "medium",
         "structured_output_level": "medium",
         "supports_parallel_validation": True,
+        "execution_tool_id": "scrapy_cffi",
+        "execution_runtime": "matrix_venv",
     },
     {
         "adapter_id": "crawl4ai_cli",
@@ -122,6 +132,8 @@ CONCRETE_ADAPTER_SPECS: List[Dict[str, Any]] = [
         "cost_profile": "medium",
         "structured_output_level": "high",
         "supports_parallel_validation": True,
+        "execution_tool_id": "crawl4ai",
+        "execution_runtime": "local_cli",
     },
     {
         "adapter_id": "playwright_stealth_browser",
@@ -138,6 +150,8 @@ CONCRETE_ADAPTER_SPECS: List[Dict[str, Any]] = [
         "cost_profile": "high",
         "structured_output_level": "medium",
         "supports_parallel_validation": False,
+        "execution_tool_id": "playwright_stealth",
+        "execution_runtime": "matrix_venv",
     },
     {
         "adapter_id": "playwright_browser",
@@ -154,6 +168,8 @@ CONCRETE_ADAPTER_SPECS: List[Dict[str, Any]] = [
         "cost_profile": "high",
         "structured_output_level": "medium",
         "supports_parallel_validation": False,
+        "execution_tool_id": "playwright",
+        "execution_runtime": "matrix_venv",
     },
     {
         "adapter_id": "agent_browser_local",
@@ -170,6 +186,8 @@ CONCRETE_ADAPTER_SPECS: List[Dict[str, Any]] = [
         "cost_profile": "high",
         "structured_output_level": "medium",
         "supports_parallel_validation": False,
+        "execution_tool_id": "agent_browser",
+        "execution_runtime": "local_browser_cli",
     },
     {
         "adapter_id": "authorized_browser_session",
@@ -187,6 +205,8 @@ CONCRETE_ADAPTER_SPECS: List[Dict[str, Any]] = [
         "cost_profile": "high",
         "structured_output_level": "medium",
         "supports_parallel_validation": False,
+        "execution_tool_id": "agent_browser",
+        "execution_runtime": "approved_browser_cli",
     },
     {
         "adapter_id": "patchright_browser",
@@ -324,11 +344,11 @@ def _tool_existence_map(capabilities: Dict[str, Any]) -> Dict[str, bool]:
         if not name:
             continue
         value = bool(item.get("exists"))
-        exists[name] = value
+        exists[name] = bool(exists.get(name)) or value
         for alias in item.get("provides", []) or []:
             alias_name = str(alias).strip()
             if alias_name:
-                exists[alias_name] = value
+                exists[alias_name] = bool(exists.get(alias_name)) or value
     return exists
 
 
@@ -412,6 +432,8 @@ def build_acquisition_adapter_registry(capabilities: Dict[str, Any]) -> Dict[str
                 selection_state=_selection_state(enabled, detected, runtime_ready, auth_requirement),
                 tools=[str(item) for item in spec.get("tool_requirements", []) if str(item).strip()],
                 tool_labels=[str(item) for item in spec.get("tool_labels", []) if str(item).strip()],
+                execution_tool_id=str(spec.get("execution_tool_id", "")).strip(),
+                execution_runtime=str(spec.get("execution_runtime", "")).strip(),
                 best_for=[str(item) for item in spec.get("best_for", []) if str(item).strip()],
                 strengths=[str(item) for item in spec.get("strengths", []) if str(item).strip()],
                 limits=[str(item) for item in spec.get("limits", []) if str(item).strip()],

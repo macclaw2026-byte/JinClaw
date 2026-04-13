@@ -19,11 +19,15 @@ from __future__ import annotations
 import importlib.util
 import json
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Dict, List
 
 from crawler_capability_profile import build_crawler_capability_profile
 from paths import GENERATED_CAPABILITIES_ROOT, PROMOTED_CAPABILITIES_ROOT, SKILLS_ROOT, TOOLS_ROOT, WORKSPACE_ROOT
+
+TOOLS_BIN_ROOT = TOOLS_ROOT / "bin"
+MATRIX_VENV_PYTHON = TOOLS_ROOT / "matrix-venv" / "bin" / "python"
 
 
 def _safe_read_text(path: Path) -> str:
@@ -49,6 +53,41 @@ def _python_package_exists(name: str) -> bool:
         return importlib.util.find_spec(name) is not None
     except (ModuleNotFoundError, ValueError):
         return False
+
+
+def _probe_python_runtime_packages(runtime_python: Path, package_names: List[str]) -> Dict[str, bool]:
+    """
+    中文注解：
+    - 功能：使用指定 Python runtime 探测一组包是否存在。
+    - 设计意图：很多 acquisition 执行器依赖 `matrix-venv`，不能只看当前解释器环境。
+    """
+    results = {str(name).strip(): False for name in package_names if str(name).strip()}
+    if not runtime_python.exists() or not results:
+        return results
+    probe_code = (
+        "import importlib.util, json, sys;"
+        "mods=[m for m in sys.argv[1:] if m.strip()];"
+        "print(json.dumps({m:(importlib.util.find_spec(m) is not None) for m in mods}))"
+    )
+    try:
+        proc = subprocess.run(
+            [str(runtime_python), "-c", probe_code, *results.keys()],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return results
+    if proc.returncode != 0:
+        return results
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        return results
+    for name in list(results.keys()):
+        results[name] = bool(payload.get(name))
+    return results
 
 
 def _detect_skill_tags(name: str, body: str) -> List[str]:
@@ -132,20 +171,40 @@ def _scan_tools() -> List[Dict[str, object]]:
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
     """
     tools = []
-    for candidate in [
-        TOOLS_ROOT / "agent-browser-local",
-        TOOLS_ROOT / "crawl4ai",
-        TOOLS_ROOT / "openmoss",
+    for name, candidate in [
+        ("agent-browser-local", TOOLS_ROOT / "agent-browser-local"),
+        ("crawl4ai", TOOLS_BIN_ROOT / "crawl4ai"),
+        ("openmoss", TOOLS_ROOT / "openmoss"),
     ]:
         tools.append(
             {
-                "name": candidate.name,
+                "name": name,
                 "path": str(candidate),
                 "exists": candidate.exists(),
             }
         )
+    python_candidate = next(
+        (
+            path
+            for path in [
+                MATRIX_VENV_PYTHON,
+                Path(shutil.which("python") or ""),
+                Path(shutil.which("python3") or ""),
+            ]
+            if str(path) and path.exists()
+        ),
+        None,
+    )
+    tools.append(
+        {
+            "name": "python",
+            "path": str(python_candidate) if python_candidate else "",
+            "exists": bool(python_candidate and python_candidate.exists()),
+            "provides": ["scrapy", "direct-http-html"],
+            "runtime": "matrix_venv" if python_candidate == MATRIX_VENV_PYTHON else "system",
+        }
+    )
     for binary, aliases in {
-        "python": ["scrapy"],
         "node": ["crawlee"],
         "curl": ["direct-http-html"],
         "chromedriver": ["selenium"],
@@ -159,7 +218,7 @@ def _scan_tools() -> List[Dict[str, object]]:
                 "provides": aliases,
             }
         )
-    for package_name in [
+    package_names = [
         "curl_cffi",
         "playwright",
         "playwright_stealth",
@@ -173,14 +232,24 @@ def _scan_tools() -> List[Dict[str, object]]:
         "undetected_chromedriver",
         "selenium",
         "seleniumbase",
-    ]:
-        exists = _python_package_exists(package_name)
+    ]
+    matrix_runtime_packages = _probe_python_runtime_packages(MATRIX_VENV_PYTHON, package_names)
+    for package_name in package_names:
+        exists_in_current = _python_package_exists(package_name)
+        exists_in_matrix = bool(matrix_runtime_packages.get(package_name))
+        exists = exists_in_current or exists_in_matrix
+        runtime_channels = []
+        if exists_in_current:
+            runtime_channels.append("current_env")
+        if exists_in_matrix:
+            runtime_channels.append("matrix_venv")
         tools.append(
             {
                 "name": package_name,
                 "path": package_name,
                 "exists": exists,
                 "kind": "python_package",
+                "runtime_channels": runtime_channels,
             }
         )
     return tools
