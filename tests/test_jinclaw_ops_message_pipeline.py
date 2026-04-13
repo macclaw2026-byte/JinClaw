@@ -177,6 +177,66 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                 payload = jinclaw_ops.doctor_payload()
             self.assertIn('telegram_user_message_without_substantive_reply', payload['issues'])
 
+    def test_upgrade_check_surfaces_degraded_watch_run_metadata(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            state_path = tmp / 'state.json'
+            report_path = tmp / 'latest-report.md'
+
+            self._write_json(
+                state_path,
+                {
+                    'checked_at': '2026-04-13T18:00:00+00:00',
+                    'repos': {
+                        'playwright': {
+                            'repo': 'microsoft/playwright',
+                            'pushed_at': '2026-04-13T16:45:00Z',
+                            'latest_release': {'tag_name': 'v1.59.1'},
+                        }
+                    },
+                },
+            )
+            report_path.write_text('# cached report\n', encoding='utf-8')
+
+            watch_payload = {
+                'checked_at': '2026-04-13T18:10:00+00:00',
+                'repo_count': 1,
+                'fetch_mode': 'cached_fallback',
+                'degraded': True,
+                'degraded_sources': [
+                    {
+                        'id': 'playwright',
+                        'repo': 'microsoft/playwright',
+                        'reason': 'github_api_rate_limited',
+                        'used_cached_snapshot': True,
+                    }
+                ],
+            }
+
+            with patch.object(
+                jinclaw_ops,
+                'run_cmd',
+                return_value={
+                    'ok': True,
+                    'returncode': 0,
+                    'stdout': json.dumps(watch_payload, ensure_ascii=False),
+                    'stderr': '',
+                },
+            ), patch.object(jinclaw_ops, 'doctor_payload', return_value={'ok': True}), patch.object(
+                jinclaw_ops, 'git_summary', return_value={'branch': 'test'}
+            ), patch.object(
+                jinclaw_ops, 'UPSTREAM_WATCH_STATE_PATH', state_path
+            ), patch.object(
+                jinclaw_ops, 'UPSTREAM_WATCH_REPORT_PATH', report_path
+            ):
+                payload = jinclaw_ops.upgrade_check_payload()
+
+            self.assertTrue(payload['watch_run']['ok'])
+            self.assertTrue(payload['watch_run']['degraded'])
+            self.assertEqual(payload['watch_run']['fetch_mode'], 'cached_fallback')
+            self.assertEqual(payload['watch_run']['repo_count'], 1)
+            self.assertEqual(payload['watch_run']['degraded_sources'][0]['reason'], 'github_api_rate_limited')
+
 
 if __name__ == '__main__':
     unittest.main()

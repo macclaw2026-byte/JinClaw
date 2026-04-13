@@ -38,7 +38,9 @@ from site_tool_matrix_v2 import (  # type: ignore
     crawl4ai_tool,
     curl_cffi_tool,
     direct_http_tool,
+    playwright_scroll_tool,
     playwright_stealth_tool,
+    playwright_stealth_scroll_tool,
     playwright_tool,
     scrapy_cffi_tool,
 )
@@ -57,7 +59,9 @@ TOOL_RUNNERS = {
     "direct_http": {"label": "direct-http-html", "runner": direct_http_tool},
     "curl_cffi": {"label": "curl-cffi", "runner": curl_cffi_tool},
     "playwright": {"label": "playwright", "runner": playwright_tool},
+    "playwright_scroll": {"label": "playwright-scroll", "runner": playwright_scroll_tool},
     "playwright_stealth": {"label": "playwright-stealth", "runner": playwright_stealth_tool},
+    "playwright_stealth_scroll": {"label": "playwright-stealth-scroll", "runner": playwright_stealth_scroll_tool},
     "scrapy_cffi": {"label": "scrapy-cffi", "runner": scrapy_cffi_tool},
     "agent_browser": {"label": "local-agent-browser-cli", "runner": agent_browser_tool},
 }
@@ -67,7 +71,9 @@ TOOL_ALIASES = {
     "direct_http": ["direct-http", "direct_http", "http static", "http_static", "direct-http-html"],
     "curl_cffi": ["curl_cffi", "curl-cffi"],
     "playwright": ["playwright"],
+    "playwright_scroll": ["playwright-scroll", "playwright scroll", "scroll-browser"],
     "playwright_stealth": ["playwright_stealth", "playwright-stealth", "playwright stealth", "stealth"],
+    "playwright_stealth_scroll": ["playwright-stealth-scroll", "playwright stealth scroll", "stealth-scroll"],
     "scrapy_cffi": ["scrapy_cffi", "scrapy-cffi", "scrapy + curl_cffi", "scrapy+curl_cffi", "scrapy"],
     "agent_browser": ["agent-browser", "agent browser", "agent_browser", "local-agent-browser-cli", "local agent browser"],
 }
@@ -77,7 +83,9 @@ DEFAULT_TOOL_ORDER = [
     "direct_http",
     "curl_cffi",
     "playwright",
+    "playwright_scroll",
     "playwright_stealth",
+    "playwright_stealth_scroll",
     "scrapy_cffi",
     "agent_browser",
 ]
@@ -85,6 +93,8 @@ DEFAULT_TOOL_ORDER = [
 FULL_MATRIX_REQUEST_TOKENS = [
     "7个工具",
     "7 tools",
+    "9个工具",
+    "9 tools",
     "七个工具",
     "all known tools",
     "all tools",
@@ -239,7 +249,9 @@ def _detect_requested_tools(goal: str, crawler_plan: Dict[str, Any]) -> List[str
             if lowered == canonical or lowered in [_normalized(alias) for alias in aliases]:
                 requested.append(canonical)
     ordered = [tool for tool in DEFAULT_TOOL_ORDER if tool in requested]
-    return ordered or list(DEFAULT_TOOL_ORDER)
+    extras = [tool for tool in requested if tool not in DEFAULT_TOOL_ORDER]
+    resolved = [*ordered, *extras]
+    return resolved or list(DEFAULT_TOOL_ORDER)
 
 
 def _goal_requests_full_matrix(goal: str) -> bool:
@@ -289,6 +301,7 @@ def _candidate_execution_binding(candidate: Dict[str, Any], adapters_by_id: Dict
         "tool_id": tool_id,
         "tool_label": str(runner_meta.get("label", "")).strip(),
         "execution_runtime": str(adapter.get("execution_runtime", "")).strip(),
+        "execution_profile": str(adapter.get("execution_profile", "")).strip(),
     }
 
 

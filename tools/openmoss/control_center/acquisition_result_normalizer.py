@@ -550,6 +550,8 @@ def build_acquisition_execution_summary(
                     notes.append(f"planned_role:{str(planned_binding.get('parallel_role', '')).strip()}")
                 if str(execution_plan.get("source", "")).strip():
                     notes.append(f"execution_plan_source:{str(execution_plan.get('source', '')).strip()}")
+                if str(planned_binding.get("execution_profile", "")).strip():
+                    notes.append(f"execution_profile:{str(planned_binding.get('execution_profile', '')).strip()}")
             route_run = build_acquisition_route_result_schema(
                 site=site_id,
                 route_id=str(candidate.get("route_id", "")).strip() or f"executed:{_normalized(tool_label)}",

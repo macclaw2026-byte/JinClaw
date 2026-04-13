@@ -2066,8 +2066,13 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
                 for item in ((acquisition_hand.get('adapter_registry', {}) or {}).get('adapters', []) or [])
                 if bool((item or {}).get('enabled'))
             ]
+            browser_enabled_adapters = [
+                item for item in enabled_adapters if str((item or {}).get('route_type', '')).strip() == 'browser_render'
+            ]
             if enabled_adapters and not any(str((item or {}).get('execution_tool_id', '')).strip() for item in enabled_adapters):
                 errors.append('acquisition_chain_missing_execution_binding_registry')
+            if browser_enabled_adapters and not any(str((item or {}).get('execution_profile', '')).strip() for item in browser_enabled_adapters):
+                errors.append('acquisition_chain_missing_browser_execution_profiles')
             probe_plan = _derive_probe_execution_plan(
                 goal,
                 control_center.get('crawler', {}) or {},
@@ -2169,6 +2174,10 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
         'required_files': [str(path.relative_to(WORKSPACE_ROOT)) for path in ACQUISITION_REQUIRED_FILES],
         'field_synthesis_contract': not any(
             item in {'acquisition_chain_missing_site_synthesis_summary', 'acquisition_chain_missing_synthesis_status'}
+            for item in errors
+        ),
+        'browser_execution_contract': not any(
+            item in {'acquisition_chain_missing_browser_execution_profiles'}
             for item in errors
         ),
         'acquisition_chain': 'ok' if not errors else 'error',
@@ -2345,6 +2354,19 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
     crawler_profile = control_plane.get("crawler_capability_profile", {}) or {}
     crawler_summary = crawler_profile.get("summary", {}) or {}
     acquisition_market = build_acquisition_adapter_registry(build_capability_registry())
+    browser_adapters = [
+        item
+        for item in (acquisition_market.get("adapters", []) or [])
+        if str((item or {}).get("route_type", "")).strip() == "browser_render"
+    ]
+    browser_runtime_ready = [item for item in browser_adapters if bool((item or {}).get("runtime_ready"))]
+    browser_profiles = sorted(
+        {
+            str((item or {}).get("execution_profile", "")).strip()
+            for item in browser_runtime_ready
+            if str((item or {}).get("execution_profile", "")).strip()
+        }
+    )
     crawler_attention_sites = [
         {
             "site": site.get("site", ""),
@@ -2386,6 +2408,9 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
                 "stability_score": float(crawler_summary.get("stability_score", 0.0) or 0.0),
                 "available_adapter_total": int(acquisition_market.get("available_adapter_total", 0) or 0),
                 "observed_only_adapter_total": len(acquisition_market.get("observed_only_adapter_ids", []) or []),
+                "browser_adapter_total": len(browser_adapters),
+                "browser_runtime_ready_total": len(browser_runtime_ready),
+                "browser_execution_profiles": browser_profiles[:8],
                 "available_adapter_ids": (acquisition_market.get("available_adapter_ids", []) or [])[:10],
             },
             "attention_sites": crawler_attention_sites,

@@ -106,7 +106,9 @@ class AcquisitionExecutionPlanningTest(unittest.TestCase):
                 'curl_cffi_http',
                 'scrapy_cffi_extract',
                 'crawl4ai_cli',
+                'playwright_scroll_browser',
                 'playwright_browser',
+                'playwright_stealth_scroll_browser',
                 'playwright_stealth_browser',
             ]:
                 self.assertIn(adapter_id, adapter_registry['available_adapter_ids'])
@@ -175,6 +177,52 @@ class AcquisitionExecutionPlanningTest(unittest.TestCase):
         self.assertEqual(plan['active_route_ids'], ['validate:curl', 'backup:direct'])
         self.assertEqual(plan['tool_ids'], ['curl_cffi', 'direct_http'])
         self.assertIn('primary:official', plan['skipped_route_ids'])
+
+    def test_probe_execution_plan_supports_browser_scroll_variants(self):
+        capabilities = {
+            'tools': [
+                {'name': 'playwright', 'exists': True},
+                {'name': 'playwright_stealth', 'exists': True},
+            ],
+            'crawler_capability_profile': {'sites': []},
+        }
+        registry = build_acquisition_adapter_registry(capabilities)
+        acquisition_hand = {
+            'enabled': True,
+            'adapter_registry': registry,
+            'route_candidates': [
+                {
+                    'route_id': 'primary:stealth-scroll',
+                    'adapter_id': 'playwright_stealth_scroll_browser',
+                    'route_type': 'browser_render',
+                    'parallel_role': 'primary_delivery',
+                },
+                {
+                    'route_id': 'validate:plain-scroll',
+                    'adapter_id': 'playwright_scroll_browser',
+                    'route_type': 'browser_render',
+                    'parallel_role': 'validation_probe',
+                },
+            ],
+            'execution_strategy': {
+                'mode': 'dual_validation',
+                'primary_route_id': 'primary:stealth-scroll',
+                'validation_route_ids': ['validate:plain-scroll'],
+                'escalation_route_ids': [],
+                'allow_parallel_validation': True,
+            },
+        }
+
+        plan = _derive_probe_execution_plan(
+            'Collect dynamic browser evidence and compare scroll-based routes',
+            {'selected_stack': {}, 'fallback_stacks': []},
+            acquisition_hand,
+        )
+
+        self.assertEqual(plan['source'], 'acquisition_execution_strategy')
+        self.assertEqual(plan['active_route_ids'], ['primary:stealth-scroll', 'validate:plain-scroll'])
+        self.assertEqual(plan['tool_ids'], ['playwright_stealth_scroll', 'playwright_scroll'])
+        self.assertEqual(plan['route_plan'][0]['execution_profile'], 'stealth_scroll_capture')
 
 
 if __name__ == '__main__':

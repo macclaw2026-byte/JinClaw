@@ -120,10 +120,14 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
     def test_adapter_registry_exposes_enabled_and_observed_only_adapters(self):
         registry = build_acquisition_adapter_registry(self._capabilities())
         self.assertIn('curl_cffi_http', registry['available_adapter_ids'])
+        self.assertIn('playwright_stealth_scroll_browser', registry['available_adapter_ids'])
         self.assertIn('playwright_stealth_browser', registry['available_adapter_ids'])
+        self.assertIn('playwright_scroll_browser', registry['available_adapter_ids'])
         self.assertIn('patchright_browser', registry['observed_only_adapter_ids'])
         self.assertEqual(registry['route_to_enabled_adapter_ids']['static_fetch'][0], 'curl_cffi_http')
         self.assertIn('direct_http_html', registry['stack_to_enabled_adapter_ids']['http_static'])
+        adapters_by_id = {item['adapter_id']: item for item in registry['adapters']}
+        self.assertEqual(adapters_by_id['playwright_stealth_scroll_browser']['execution_profile'], 'stealth_scroll_capture')
 
     def test_execution_summary_reports_cross_route_validation(self):
         summary = build_acquisition_execution_summary(

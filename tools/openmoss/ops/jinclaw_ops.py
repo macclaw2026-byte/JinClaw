@@ -386,6 +386,8 @@ def _doctor_runtime_summary() -> Dict[str, Any]:
             "sites_production_ready": int(adapter_coverage.get("sites_production_ready", 0) or 0),
             "sites_attention_required": int(adapter_coverage.get("sites_attention_required", 0) or 0),
             "available_adapter_total": int(adapter_coverage.get("available_adapter_total", 0) or 0),
+            "browser_runtime_ready_total": int(adapter_coverage.get("browser_runtime_ready_total", 0) or 0),
+            "browser_execution_profiles": list(adapter_coverage.get("browser_execution_profiles", []) or []),
             "attention_sites_total": len(acquisition_health.get("attention_sites", []) or []),
             "stability_score": float(adapter_coverage.get("stability_score", 0.0) or 0.0),
         },
@@ -716,6 +718,7 @@ def upgrade_check_payload() -> Dict[str, Any]:
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
     """
     watch_run = run_cmd(["python3", str(UPSTREAM_WATCH_SCRIPT), "--once"], timeout=60)
+    watch_run_payload = parse_json_output(watch_run)
     doctor = doctor_payload()
     upstream_watch_state = read_json(UPSTREAM_WATCH_STATE_PATH, {})
     changed: List[Dict[str, Any]] = []
@@ -735,6 +738,10 @@ def upgrade_check_payload() -> Dict[str, Any]:
             "returncode": watch_run.get("returncode"),
             "stdout": watch_run.get("stdout"),
             "stderr": watch_run.get("stderr"),
+            "fetch_mode": watch_run_payload.get("fetch_mode", ""),
+            "degraded": bool(watch_run_payload.get("degraded")),
+            "degraded_sources": watch_run_payload.get("degraded_sources") or [],
+            "repo_count": watch_run_payload.get("repo_count"),
         },
         "doctor": doctor,
         "git": git_summary(),

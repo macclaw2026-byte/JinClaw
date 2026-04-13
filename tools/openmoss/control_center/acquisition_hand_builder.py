@@ -180,8 +180,14 @@ def _derive_route_candidates(
         if route_type == "human_checkpoint":
             score = max(score, 20.0 if _challenge_severity_rank(challenge) >= 2 else 5.0)
         rationale = [str(item) for item in (score_payload.get("rationale", []) or []) if str(item).strip()]
+        adapter = adapters_by_id.get(adapter_id, {})
+        execution_profile = str(adapter.get("execution_profile", "")).strip()
+        if route_type == str(challenge.get("recommended_route", "")).strip():
+            score += 8
+        if route_type == "browser_render" and execution_profile in {"stealth_scroll_capture", "scroll_capture"}:
+            score += 4 if _challenge_severity_rank(challenge) >= 1 else 2
         candidate = _make_route_candidate(
-            adapter=adapters_by_id.get(adapter_id, {}),
+            adapter=adapter,
             route_type=route_type,
             source=source,
             priority_score=score,
