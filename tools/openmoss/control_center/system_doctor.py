@@ -2046,6 +2046,7 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
     from crawler_probe_runner import _derive_probe_execution_plan
     from acquisition_result_normalizer import build_acquisition_execution_summary
     from task_contract import TaskContract
+    from action_executor import _dispatch_prompt
 
     def _run_case(task_id: str, goal: str) -> None:
         task_path = task_dir(task_id)
@@ -2186,12 +2187,26 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
             stage_context = build_stage_context(task_id, 'execute', contract.to_dict(), state)
             if not ((stage_context.get('acquisition_hand', {}) or {}).get('enabled')):
                 errors.append('acquisition_chain_missing_stage_context')
+            response_handoff = stage_context.get('response_handoff', {}) or {}
+            if not str(response_handoff.get('status', '')).strip():
+                errors.append('acquisition_chain_missing_response_handoff_status')
+            if bool((stage_context.get('acquisition_hand', {}) or {}).get('enabled')) and not str(
+                response_handoff.get('response_mode', '')
+            ).strip():
+                errors.append('acquisition_chain_missing_response_handoff_mode')
             payload = build_coding_session_payload(contract.to_dict(), stage_context)
             if 'Acquisition hand:' not in str(payload.get('base_prompt', '')):
                 errors.append('acquisition_chain_runtime_prompt_missing_summary')
+            if 'Response handoff:' not in str(payload.get('base_prompt', '')):
+                errors.append('acquisition_chain_runtime_prompt_missing_response_handoff')
             request = build_acp_dispatch_request(contract.to_dict(), stage_context)
             if not ((request.get('metadata', {}) or {}).get('acquisition_enabled')):
                 errors.append('acquisition_chain_dispatch_missing_enable_marker')
+            if not str((request.get('metadata', {}) or {}).get('response_handoff_status', '')).strip():
+                errors.append('acquisition_chain_dispatch_missing_response_handoff_status')
+            runtime_prompt = _dispatch_prompt(task_id, 'execute')
+            if 'response_handoff:' not in runtime_prompt:
+                errors.append('acquisition_chain_runtime_dispatch_missing_response_handoff')
             snapshot = build_task_status_snapshot(task_id)
             snapshot_hand = snapshot.get('acquisition_hand', {}) or {}
             if not snapshot_hand.get('enabled'):
@@ -2261,6 +2276,16 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
                 'acquisition_chain_snapshot_missing_answer_response_mode',
                 'acquisition_chain_authoritative_summary_missing_answer_mode',
                 'acquisition_chain_receipt_missing_answer_mode',
+            }
+            for item in errors
+        ),
+        'response_handoff_contract': not any(
+            item in {
+                'acquisition_chain_missing_response_handoff_status',
+                'acquisition_chain_missing_response_handoff_mode',
+                'acquisition_chain_runtime_prompt_missing_response_handoff',
+                'acquisition_chain_dispatch_missing_response_handoff_status',
+                'acquisition_chain_runtime_dispatch_missing_response_handoff',
             }
             for item in errors
         ),

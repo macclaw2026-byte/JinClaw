@@ -277,6 +277,7 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
         f"knowledge_basis: {json.dumps(stage_context.get('knowledge_basis', {}), ensure_ascii=False)}",
         f"readiness_dashboard: {json.dumps(stage_context.get('readiness_dashboard', {}), ensure_ascii=False)}",
         f"acquisition_hand: {json.dumps(stage_context.get('acquisition_hand', {}), ensure_ascii=False)}",
+        f"response_handoff: {json.dumps(stage_context.get('response_handoff', {}), ensure_ascii=False)}",
         f"execution_summary: {json.dumps(stage_context.get('summary', {}), ensure_ascii=False)}",
         f"allowed_tools: {json.dumps(stage_context.get('allowed_tools', []), ensure_ascii=False)}",
         f"business_verification_requirements: {json.dumps(verifier_requirements, ensure_ascii=False)}",

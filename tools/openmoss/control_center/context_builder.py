@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Dict
 
 from cache_store import cache_get, cache_put
+from control_center_schemas import build_acquisition_response_handoff_schema
 from crawler_capability_profile import build_crawler_capability_profile
 from governance_runtime import build_governance_bundle
 from htn_planner import build_htn_tree, select_htn_focus_by_cursor
@@ -41,6 +42,85 @@ def _load_json(path: Path) -> Dict[str, object]:
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _derive_response_handoff(
+    stage_name: str,
+    acquisition_hand: Dict[str, object],
+    state: Dict[str, object],
+) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：把 acquisition 计划层或执行层结果整理成 runtime 可直接消费的回答交付合同。
+    - 输入角色：消费 acquisition_hand 与 state.metadata.crawler_execution。
+    - 输出角色：供 stage context、dispatch prompt、doctor 一致消费。
+    """
+    acquisition_hand = acquisition_hand or {}
+    if not bool(acquisition_hand.get("enabled")):
+        return build_acquisition_response_handoff_schema(enabled=False)
+    metadata = state.get("metadata", {}) or {}
+    crawler_execution = metadata.get("crawler_execution", {}) or {}
+    overall_summary = ((crawler_execution.get("acquisition_summary", {}) or {}).get("overall_summary", {}) or {})
+    answer_synthesis = overall_summary.get("answer_synthesis", {}) or {}
+    release_disclosure = overall_summary.get("release_disclosure", {}) or {}
+    release_governance = acquisition_hand.get("release_governance", {}) or {}
+    delivery_requirements = acquisition_hand.get("delivery_requirements", {}) or {}
+    if answer_synthesis:
+        return build_acquisition_response_handoff_schema(
+            enabled=True,
+            contract_source="execution_answer_synthesis",
+            status=str(answer_synthesis.get("status", "")).strip(),
+            response_mode=str(answer_synthesis.get("response_mode", "")).strip(),
+            governance_mode=str(release_governance.get("mode", "")).strip(),
+            answerable=bool(answer_synthesis.get("answerable")),
+            must_use_authoritative_snapshot=True,
+            requires_disclosure=bool(answer_synthesis.get("requires_disclosure")),
+            requires_user_confirmation=bool(answer_synthesis.get("requires_user_confirmation")),
+            preview_lines=[
+                str(item).strip()
+                for item in (answer_synthesis.get("user_visible_lines", []) or [])[:3]
+                if str(item).strip()
+            ],
+            disclosure_lines=[
+                str(item).strip()
+                for item in (release_disclosure.get("user_visible_lines", []) or [])[:3]
+                if str(item).strip()
+            ],
+            blocker_reasons=[
+                str(item).strip()
+                for item in (answer_synthesis.get("blocker_reasons", []) or [])[:4]
+                if str(item).strip()
+            ],
+            recommended_next_actions=[
+                str(item).strip()
+                for item in (answer_synthesis.get("recommended_next_actions", []) or [])[:4]
+                if str(item).strip()
+            ],
+            required_fields_by_site=delivery_requirements.get("required_fields_by_site", {}) or {},
+            answerable_site_total=int(answer_synthesis.get("answerable_site_total", 0) or 0),
+        )
+    preferred_actions = release_governance.get("preferred_blocking_actions", {}) or {}
+    recommended = []
+    for key in ["missing_required_fields", "needs_review", "freshness_gap", "human_confirmation"]:
+        value = str(preferred_actions.get(key, "")).strip()
+        if value:
+            recommended.append(value)
+    if stage_name in {"execute", "verify"} and not recommended:
+        recommended.append("capture_required_fields_before_answer")
+    return build_acquisition_response_handoff_schema(
+        enabled=True,
+        contract_source="planned_release_governance",
+        status="planned",
+        response_mode="pending_capture",
+        governance_mode=str(release_governance.get("mode", "")).strip(),
+        answerable=False,
+        must_use_authoritative_snapshot=True,
+        requires_disclosure=False,
+        requires_user_confirmation=False,
+        blocker_reasons=["answer_not_captured_yet"],
+        recommended_next_actions=recommended[:4],
+        required_fields_by_site=delivery_requirements.get("required_fields_by_site", {}) or {},
+    )
 
 
 def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, object], state: Dict[str, object]) -> Dict[str, object]:
@@ -63,6 +143,7 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
     knowledge_basis = mission.get("knowledge_basis", {}) or control_center.get("knowledge_basis", {})
     readiness_dashboard = mission.get("readiness_dashboard", {}) or control_center.get("readiness_dashboard", {})
     acquisition_hand = mission.get("acquisition_hand", {}) or control_center.get("acquisition_hand", {})
+    response_handoff = _derive_response_handoff(stage_name, acquisition_hand, state)
     topology = mission.get("topology", {}) or build_topology(mission.get("intent", {}), selected_plan)
     fractal = mission.get("fractal_loops", {}) or build_fractal_loops(mission.get("intent", {}), selected_plan, topology)
     htn = mission.get("htn", {}) or build_htn_tree(mission.get("intent", {}), selected_plan, topology, fractal)
@@ -108,6 +189,7 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
             "knowledge_basis": knowledge_basis,
             "readiness_dashboard": readiness_dashboard,
             "acquisition_hand": acquisition_hand,
+            "response_handoff": response_handoff,
             "verification_guidance": stage_verification_guidance,
             "topology": topology,
             "fractal_focus": fractal_focus,
@@ -181,6 +263,7 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
         "knowledge_basis": knowledge_basis,
         "readiness_dashboard": readiness_dashboard,
         "acquisition_hand": acquisition_hand,
+        "response_handoff": response_handoff,
         "verification_guidance": stage_verification_guidance,
         "summary": {
             "current_stage": state.get("current_stage", "") or summary.get("current_stage", ""),

@@ -531,6 +531,48 @@ def build_acquisition_release_disclosure_schema(
     }
 
 
+def build_acquisition_response_handoff_schema(
+    *,
+    enabled: bool = False,
+    contract_source: str = "",
+    status: str = "",
+    response_mode: str = "",
+    governance_mode: str = "",
+    answerable: bool = False,
+    must_use_authoritative_snapshot: bool = True,
+    requires_disclosure: bool = False,
+    requires_user_confirmation: bool = False,
+    preview_lines: List[str] | None = None,
+    disclosure_lines: List[str] | None = None,
+    blocker_reasons: List[str] | None = None,
+    recommended_next_actions: List[str] | None = None,
+    required_fields_by_site: Dict[str, List[str]] | None = None,
+    answerable_site_total: int = 0,
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：构造 acquisition response handoff schema。
+    - 设计意图：把 acquisition 最终回答约束整理成 runtime、reply chain、doctor 都能直接消费的一份交付合同。
+    """
+    return {
+        "enabled": bool(enabled),
+        "contract_source": str(contract_source).strip(),
+        "status": str(status).strip(),
+        "response_mode": str(response_mode).strip(),
+        "governance_mode": str(governance_mode).strip(),
+        "answerable": bool(answerable),
+        "must_use_authoritative_snapshot": bool(must_use_authoritative_snapshot),
+        "requires_disclosure": bool(requires_disclosure),
+        "requires_user_confirmation": bool(requires_user_confirmation),
+        "preview_lines": list(preview_lines or []),
+        "disclosure_lines": list(disclosure_lines or []),
+        "blocker_reasons": list(blocker_reasons or []),
+        "recommended_next_actions": list(recommended_next_actions or []),
+        "required_fields_by_site": dict(required_fields_by_site or {}),
+        "answerable_site_total": int(answerable_site_total or 0),
+    }
+
+
 def build_acquisition_answer_synthesis_schema(
     *,
     scope: str = "site",
