@@ -472,14 +472,24 @@ def verify_acquisition_summary_complete(spec: Dict[str, Any]) -> Dict[str, Any]:
     if not summary_path.exists() or not summary_path.is_file():
         return {"ok": False, "status": "acquisition_summary_missing", "task_id": task_id, "path": str(summary_path)}
     payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    version = str(payload.get("version", "")).strip()
     route_runs = payload.get("route_runs", []) or []
     site_consensus = payload.get("site_consensus", []) or []
+    site_synthesized_outputs = payload.get("site_synthesized_outputs", []) or []
     overall = payload.get("overall_summary", {}) or {}
     missing_fields = [
         field
         for field in ["consensus_status", "sites_total", "route_gap_count"]
         if field not in overall
     ]
+    if version.endswith("-v2"):
+        missing_fields.extend(
+            [
+                field
+                for field in ["synthesis_status", "synthesized_sites_total", "conflicted_field_total", "missing_field_total"]
+                if field not in overall and field not in missing_fields
+            ]
+        )
     invalid_route_runs = []
     for index, item in enumerate(route_runs, start=1):
         missing = [
@@ -489,17 +499,38 @@ def verify_acquisition_summary_complete(spec: Dict[str, Any]) -> Dict[str, Any]:
         ]
         if missing:
             invalid_route_runs.append({"index": index, "missing": missing})
-    ok = bool(route_runs) and bool(site_consensus) and not missing_fields and not invalid_route_runs
+    invalid_synthesized_outputs = []
+    if version.endswith("-v2"):
+        for index, item in enumerate(site_synthesized_outputs, start=1):
+            missing = [
+                field
+                for field in ["site", "synthesis_status", "final_fields", "field_provenance"]
+                if field not in item
+            ]
+            if missing:
+                invalid_synthesized_outputs.append({"index": index, "missing": missing})
+    ok = (
+        bool(route_runs)
+        and bool(site_consensus)
+        and (not version.endswith("-v2") or bool(site_synthesized_outputs))
+        and not missing_fields
+        and not invalid_route_runs
+        and not invalid_synthesized_outputs
+    )
     return {
         "ok": ok,
         "status": "ok" if ok else "acquisition_summary_incomplete",
         "task_id": task_id,
         "path": str(summary_path),
+        "version": version,
         "route_run_count": len(route_runs),
         "site_consensus_count": len(site_consensus),
+        "site_synthesized_output_count": len(site_synthesized_outputs),
         "missing_fields": missing_fields,
         "invalid_route_runs": invalid_route_runs,
+        "invalid_synthesized_outputs": invalid_synthesized_outputs,
         "consensus_status": str(overall.get("consensus_status", "")).strip(),
+        "synthesis_status": str(overall.get("synthesis_status", "")).strip(),
     }
 
 

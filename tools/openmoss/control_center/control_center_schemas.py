@@ -365,6 +365,70 @@ def build_acquisition_route_result_schema(
     }
 
 
+def build_acquisition_field_provenance_schema(
+    *,
+    field_name: str,
+    selected_value: Any = "",
+    selected_route_id: str = "",
+    selected_adapter_id: str = "",
+    selected_tool_label: str = "",
+    confidence: str = "single_route",
+    supporting_route_ids: List[str] | None = None,
+    disagreeing_route_ids: List[str] | None = None,
+    supporting_values: List[Any] | None = None,
+    notes: List[str] | None = None,
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：构造字段级 provenance schema。
+    - 设计意图：不仅要知道最终字段值是什么，还要知道它来自哪条路线、有没有交叉验证、是否存在冲突。
+    """
+    return {
+        "field_name": str(field_name).strip(),
+        "selected_value": selected_value,
+        "selected_route_id": str(selected_route_id).strip(),
+        "selected_adapter_id": str(selected_adapter_id).strip(),
+        "selected_tool_label": str(selected_tool_label).strip(),
+        "confidence": str(confidence).strip() or "single_route",
+        "supporting_route_ids": list(supporting_route_ids or []),
+        "disagreeing_route_ids": list(disagreeing_route_ids or []),
+        "supporting_values": list(supporting_values or []),
+        "notes": list(notes or []),
+    }
+
+
+def build_acquisition_site_synthesis_schema(
+    *,
+    site: str,
+    synthesis_status: str = "blocked",
+    final_fields: Dict[str, Any] | None = None,
+    field_provenance: Dict[str, Dict[str, Any]] | None = None,
+    missing_fields: List[str] | None = None,
+    cross_validated_fields: List[str] | None = None,
+    conflicted_fields: List[str] | None = None,
+    supporting_route_ids: List[str] | None = None,
+    recommended_next_actions: List[str] | None = None,
+    notes: List[str] | None = None,
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：构造站点级字段融合输出 schema。
+    - 设计意图：让 acquisition hand 的最终交付不只是“站点赢家”，而是“站点最佳结构化结果 + 每个字段的证据说明”。
+    """
+    return {
+        "site": str(site).strip(),
+        "synthesis_status": str(synthesis_status).strip() or "blocked",
+        "final_fields": dict(final_fields or {}),
+        "field_provenance": dict(field_provenance or {}),
+        "missing_fields": list(missing_fields or []),
+        "cross_validated_fields": list(cross_validated_fields or []),
+        "conflicted_fields": list(conflicted_fields or []),
+        "supporting_route_ids": list(supporting_route_ids or []),
+        "recommended_next_actions": list(recommended_next_actions or []),
+        "notes": list(notes or []),
+    }
+
+
 def build_acquisition_execution_summary_schema(
     *,
     task_id: str,
@@ -376,16 +440,17 @@ def build_acquisition_execution_summary_schema(
     planned_but_not_executed_route_ids: List[str] | None = None,
     route_runs: List[Dict[str, Any]] | None = None,
     site_consensus: List[Dict[str, Any]] | None = None,
+    site_synthesized_outputs: List[Dict[str, Any]] | None = None,
     overall_summary: Dict[str, Any] | None = None,
     recommended_next_actions: List[str] | None = None,
 ) -> Dict[str, Any]:
     """
     中文注解：
     - 功能：构造 acquisition 执行摘要 schema。
-    - 设计意图：让 runtime、verifier、doctor 都围绕同一份执行后证据理解“计划了什么、实际跑了什么、哪条路线赢了”。
+    - 设计意图：让 runtime、verifier、doctor 都围绕同一份执行后证据理解“计划了什么、实际跑了什么、哪条路线赢了，以及最终字段如何被融合出来”。
     """
     return {
-        "version": "acquisition-execution-summary-v1",
+        "version": "acquisition-execution-summary-v2",
         "task_id": str(task_id).strip(),
         "goal": goal,
         "generated_at": generated_at,
@@ -395,6 +460,7 @@ def build_acquisition_execution_summary_schema(
         "planned_but_not_executed_route_ids": list(planned_but_not_executed_route_ids or []),
         "route_runs": list(route_runs or []),
         "site_consensus": list(site_consensus or []),
+        "site_synthesized_outputs": list(site_synthesized_outputs or []),
         "overall_summary": dict(overall_summary or {}),
         "recommended_next_actions": list(recommended_next_actions or []),
     }

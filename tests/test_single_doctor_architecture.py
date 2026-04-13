@@ -39,6 +39,7 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertEqual(integration.get('noncoding_chain'), 'ok')
         self.assertEqual(integration.get('acquisition_chain'), 'ok')
         self.assertTrue((integration.get('acquisition_hand', {}) or {}).get('ok'))
+        self.assertTrue((integration.get('acquisition_hand', {}) or {}).get('field_synthesis_contract'))
 
 
 if __name__ == '__main__':
