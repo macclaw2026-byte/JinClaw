@@ -479,7 +479,7 @@ def verify_acquisition_summary_complete(spec: Dict[str, Any]) -> Dict[str, Any]:
     overall = payload.get("overall_summary", {}) or {}
     missing_fields = [
         field
-        for field in ["consensus_status", "sites_total", "route_gap_count"]
+        for field in ["consensus_status", "sites_total", "route_gap_count", "validation_diversity_status"]
         if field not in overall
     ]
     if version.endswith("-v2"):
@@ -494,7 +494,7 @@ def verify_acquisition_summary_complete(spec: Dict[str, Any]) -> Dict[str, Any]:
     for index, item in enumerate(route_runs, start=1):
         missing = [
             field
-            for field in ["route_id", "adapter_id", "source_url", "retrieved_at", "status", "field_coverage", "evidence_ref"]
+            for field in ["route_id", "adapter_id", "source_url", "retrieved_at", "status", "field_coverage", "validation_family", "evidence_ref"]
             if item.get(field, "") in {"", None} and field not in {"field_coverage"}
         ]
         if missing:

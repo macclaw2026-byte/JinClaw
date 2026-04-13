@@ -27,6 +27,7 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         return {
             'tools': [
                 {'name': 'python', 'exists': True, 'provides': ['scrapy']},
+                {'name': 'crawl4ai', 'exists': True},
                 {'name': 'curl_cffi', 'exists': True},
                 {'name': 'playwright', 'exists': True},
                 {'name': 'playwright_stealth', 'exists': True},
@@ -44,7 +45,7 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
             },
         }
 
-    def _acquisition_hand(self):
+    def _acquisition_hand(self, *, validation_adapter_id='crawl4ai_cli', validation_route_id='validate:crawl4ai', validation_route_type='crawl4ai'):
         registry = build_acquisition_adapter_registry(self._capabilities())
         return {
             'enabled': True,
@@ -57,20 +58,20 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
                     'risk_level': 'low',
                 },
                 {
-                    'route_id': 'validate:direct',
-                    'adapter_id': 'direct_http_html',
-                    'route_type': 'static_fetch',
-                    'risk_level': 'low',
+                    'route_id': validation_route_id,
+                    'adapter_id': validation_adapter_id,
+                    'route_type': validation_route_type,
+                    'risk_level': 'low' if validation_route_type != 'browser_render' else 'high',
                 },
             ],
             'execution_strategy': {
                 'primary_route_id': 'primary:curl',
-                'validation_route_ids': ['validate:direct'],
+                'validation_route_ids': [validation_route_id],
                 'escalation_route_ids': [],
             },
         }
 
-    def _report_payload(self):
+    def _report_payload(self, *, validation_tool='crawl4ai-cli'):
         return {
             'generated_at': '2026-04-13T12:00:00+00:00',
             'sites': [
@@ -96,7 +97,7 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
                             'false_positive': {'reasons': []},
                         },
                         {
-                            'tool': 'direct-http-html',
+                            'tool': validation_tool,
                             'status': 'usable',
                             'arbitration_score': 76,
                             'normalized_task_output': {
@@ -128,6 +129,7 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         self.assertIn('direct_http_html', registry['stack_to_enabled_adapter_ids']['http_static'])
         adapters_by_id = {item['adapter_id']: item for item in registry['adapters']}
         self.assertEqual(adapters_by_id['playwright_stealth_scroll_browser']['execution_profile'], 'stealth_scroll_capture')
+        self.assertEqual(adapters_by_id['curl_cffi_http']['validation_family'], 'http_fetch')
 
     def test_execution_summary_reports_cross_route_validation(self):
         summary = build_acquisition_execution_summary(
@@ -139,15 +141,34 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         )
         self.assertEqual(summary['overall_summary']['consensus_status'], 'cross_route_validated')
         self.assertEqual(summary['overall_summary']['synthesis_status'], 'ready')
-        self.assertEqual(summary['site_consensus'][0]['validation_status'], 'cross_validated')
+        self.assertEqual(summary['overall_summary']['validation_diversity_status'], 'independent_family_validation')
+        self.assertEqual(summary['site_consensus'][0]['validation_status'], 'cross_validated_independent')
         self.assertEqual(summary['site_synthesized_outputs'][0]['final_fields']['title'], 'Wireless Mouse')
-        self.assertEqual(summary['site_synthesized_outputs'][0]['field_provenance']['price']['confidence'], 'cross_validated')
+        self.assertEqual(summary['site_synthesized_outputs'][0]['field_provenance']['price']['confidence'], 'cross_validated_independent')
         self.assertFalse(summary['planned_but_not_executed_route_ids'])
         self.assertEqual(summary['route_runs'][0]['evidence_ref'], '/tmp/crawler-tool-matrix.json')
         self.assertIn('Synthesis status: `ready`', render_acquisition_execution_summary_markdown(summary))
 
+    def test_execution_summary_marks_same_family_validation_as_weaker(self):
+        summary = build_acquisition_execution_summary(
+            'test-acq-same-family',
+            'Collect public Amazon pricing evidence',
+            self._report_payload(validation_tool='direct-http-html'),
+            self._acquisition_hand(
+                validation_adapter_id='direct_http_html',
+                validation_route_id='validate:direct',
+                validation_route_type='static_fetch',
+            ),
+            report_path='/tmp/crawler-tool-matrix.json',
+        )
+        self.assertEqual(summary['overall_summary']['consensus_status'], 'clear_winner')
+        self.assertEqual(summary['overall_summary']['validation_diversity_status'], 'same_family_validation_only')
+        self.assertEqual(summary['site_consensus'][0]['validation_status'], 'cross_validated_same_family')
+        self.assertEqual(summary['site_synthesized_outputs'][0]['field_provenance']['price']['confidence'], 'cross_validated_same_family')
+        self.assertIn('capture_independent_validation_family_before_release', summary['recommended_next_actions'])
+
     def test_execution_summary_records_field_level_conflict_resolution(self):
-        payload = self._report_payload()
+        payload = self._report_payload(validation_tool='direct-http-html')
         payload['sites'][0]['tool_results'][0]['arbitration_score'] = 120
         payload['sites'][0]['tool_results'][1]['arbitration_score'] = 40
         payload['sites'][0]['tool_results'][1]['normalized_task_output']['fields']['price'] = '24.99'
@@ -155,7 +176,11 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
             'test-acq-conflict',
             'Collect public Amazon pricing evidence',
             payload,
-            self._acquisition_hand(),
+            self._acquisition_hand(
+                validation_adapter_id='direct_http_html',
+                validation_route_id='validate:direct',
+                validation_route_type='static_fetch',
+            ),
             report_path='/tmp/crawler-tool-matrix.json',
         )
         self.assertEqual(summary['overall_summary']['consensus_status'], 'needs_review')
@@ -204,6 +229,7 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         self.assertEqual(result['site_synthesized_output_count'], 1)
         snapshot = build_task_status_snapshot(task_id)
         self.assertEqual(snapshot['acquisition_hand']['execution_synthesis_status'], 'ready')
+        self.assertEqual(snapshot['acquisition_hand']['validation_diversity_status'], 'independent_family_validation')
         self.assertEqual(snapshot['acquisition_hand']['synthesized_sites_total'], 1)
 
 

@@ -71,6 +71,8 @@ class AcquisitionHandUpgradeTest(unittest.TestCase):
         self.assertTrue(hand['execution_strategy']['primary_route_id'])
         self.assertIn('route_id', hand['result_consensus']['required_provenance_fields'])
         self.assertIn('source_url', hand['result_consensus']['required_provenance_fields'])
+        self.assertIn('validation_family', hand['result_consensus']['required_provenance_fields'])
+        self.assertGreaterEqual(int(hand['result_consensus']['minimum_validation_family_count']), 1)
         self.assertTrue(hand['compatibility']['crawler_enabled'])
         self.assertTrue(set(hand['recommended_tools']).issubset(set(package['allowed_tools'])))
 

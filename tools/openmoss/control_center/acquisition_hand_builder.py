@@ -99,6 +99,23 @@ def _challenge_severity_rank(challenge: Dict[str, Any]) -> int:
     }.get(str(challenge.get("severity", "none")).strip().lower(), 0)
 
 
+def _candidate_validation_family(candidate: Dict[str, Any]) -> str:
+    """
+    中文注解：
+    - 功能：读取 route candidate 的验证家族；缺失时回退到 route_type。
+    - 设计意图：后续执行策略与结果共识都要区分“真正独立的验证”与“同家族换皮验证”。
+    """
+    return str(candidate.get("validation_family", "")).strip() or str(candidate.get("route_type", "")).strip() or "unknown"
+
+
+def _candidate_priority_key(candidate: Dict[str, Any]) -> tuple[float, int, str]:
+    return (
+        -float(candidate.get("priority_score", 0.0) or 0.0),
+        RISK_RANK.get(str(candidate.get("risk_level", "medium")).strip(), 2),
+        str(candidate.get("route_id", "")).strip(),
+    )
+
+
 def _make_route_candidate(
     *,
     adapter: Dict[str, Any] | None,
@@ -133,6 +150,7 @@ def _make_route_candidate(
         "priority_bucket": _risk_bucket(priority_score),
         "risk_level": risk_level,
         "anti_bot_readiness": str(adapter.get("anti_bot_readiness", "medium")).strip() or "medium",
+        "validation_family": str(adapter.get("validation_family", "")).strip() or route_type or "unknown",
         "tools": [str(item) for item in adapter.get("tools", []) if str(item).strip()],
         "requires_review": requires_review,
         "can_run_parallel": can_run_parallel,
@@ -171,16 +189,17 @@ def _derive_route_candidates(
         if fingerprint in seen_fingerprints:
             return
         seen_fingerprints.add(fingerprint)
-        score_payload = score_map.get(adapter_id, {})
+        adapter = adapters_by_id.get(adapter_id, {})
+        stack_score_key = str(adapter.get("stack_id", "")).strip() or adapter_id
+        score_payload = score_map.get(stack_score_key, {})
         score = float(score_payload.get("score", 0.0) or 0.0)
         if route_type == str(fetch_route.get("current_route", "")).strip():
             score += 10
-        if adapter_id == str((crawler.get("selected_stack", {}) or {}).get("stack_id", "")).strip():
+        if stack_score_key == str((crawler.get("selected_stack", {}) or {}).get("stack_id", "")).strip():
             score += 15
         if route_type == "human_checkpoint":
             score = max(score, 20.0 if _challenge_severity_rank(challenge) >= 2 else 5.0)
         rationale = [str(item) for item in (score_payload.get("rationale", []) or []) if str(item).strip()]
-        adapter = adapters_by_id.get(adapter_id, {})
         execution_profile = str(adapter.get("execution_profile", "")).strip()
         if route_type == str(challenge.get("recommended_route", "")).strip():
             score += 8
@@ -231,40 +250,52 @@ def _derive_route_candidates(
 
     ordered = sorted(
         candidates,
-        key=lambda item: (
-            -float(item.get("priority_score", 0.0) or 0.0),
-            RISK_RANK.get(str(item.get("risk_level", "medium")).strip(), 2),
-            str(item.get("route_type", "")),
-        ),
+        key=_candidate_priority_key,
     )
-    primary_assigned = False
-    validation_assigned = False
-    escalation_assigned = False
-    primary_adapter_id = ""
-    primary_route_type = ""
+    primary = next((item for item in ordered if str(item.get("route_type", "")).strip() != "human_checkpoint"), {})
+    primary_route_id = str(primary.get("route_id", "")).strip()
+    primary_adapter_id = str(primary.get("adapter_id", "")).strip()
+    primary_route_type = str(primary.get("route_type", "")).strip()
+    primary_family = _candidate_validation_family(primary)
+    validation_pool = [
+        item
+        for item in ordered
+        if str(item.get("route_id", "")).strip() != primary_route_id
+        and bool(item.get("can_run_parallel"))
+        and str(item.get("route_type", "")).strip() not in {"browser_render", "authorized_session", "human_checkpoint"}
+        and (
+            (primary_adapter_id and str(item.get("adapter_id", "")).strip() != primary_adapter_id)
+            or (not primary_adapter_id and str(item.get("route_type", "")).strip() != primary_route_type)
+        )
+    ]
+    diverse_validation_pool = [
+        item for item in validation_pool if _candidate_validation_family(item) and _candidate_validation_family(item) != primary_family
+    ]
+    validation = sorted(diverse_validation_pool or validation_pool, key=_candidate_priority_key)[0] if (diverse_validation_pool or validation_pool) else {}
+    validation_route_id = str(validation.get("route_id", "")).strip()
+    escalation_pool = [
+        item
+        for item in ordered
+        if str(item.get("route_id", "")).strip() not in {primary_route_id, validation_route_id}
+    ]
+    escalation = escalation_pool[0] if escalation_pool else {}
+    escalation_route_id = str(escalation.get("route_id", "")).strip()
+
     for item in ordered:
-        route_type = str(item.get("route_type", "")).strip()
-        if not primary_assigned and route_type != "human_checkpoint":
+        route_id = str(item.get("route_id", "")).strip()
+        if route_id and route_id == primary_route_id:
             item["parallel_role"] = "primary_delivery"
-            primary_assigned = True
-            primary_adapter_id = str(item.get("adapter_id", "")).strip()
-            primary_route_type = route_type
             continue
-        if (
-            not validation_assigned
-            and bool(item.get("can_run_parallel"))
-            and route_type not in {"browser_render", "authorized_session"}
-            and (
-                (primary_adapter_id and str(item.get("adapter_id", "")).strip() != primary_adapter_id)
-                or (not primary_adapter_id and route_type != primary_route_type)
-            )
-        ):
+        if route_id and route_id == validation_route_id:
             item["parallel_role"] = "validation_probe"
-            validation_assigned = True
+            item["validation_relationship"] = (
+                "independent_family"
+                if _candidate_validation_family(item) and _candidate_validation_family(item) != primary_family
+                else "same_family_backup"
+            )
             continue
-        if not escalation_assigned:
+        if route_id and route_id == escalation_route_id:
             item["parallel_role"] = "escalation_backup"
-            escalation_assigned = True
             continue
         item["parallel_role"] = "reserve"
     return ordered
@@ -282,6 +313,16 @@ def _derive_execution_strategy(
     primary = next((item for item in route_candidates if item.get("parallel_role") == "primary_delivery"), {})
     validation = [item for item in route_candidates if item.get("parallel_role") == "validation_probe"]
     escalation = [item for item in route_candidates if item.get("parallel_role") == "escalation_backup"]
+    validation_families = _dedupe_strings(
+        [
+            _candidate_validation_family(item)
+            for item in [primary, *validation]
+            if item and _candidate_validation_family(item) != "unknown"
+        ]
+    )
+    validation_diversity_status = "no_validation"
+    if validation:
+        validation_diversity_status = "independent_family" if len(validation_families) >= 2 else "same_family_only"
     severity_rank = _challenge_severity_rank(challenge)
     mode = "single_route"
     if validation and severity_rank >= 2:
@@ -298,12 +339,17 @@ def _derive_execution_strategy(
     ]
     if bool(challenge.get("requires_human_checkpoint")):
         stop_conditions.append("pause_for_human_checkpoint_instead_of_forcing_progress")
+    if validation and len(validation_families) < 2:
+        stop_conditions.append("capture_independent_validation_family_before_release")
     return {
         "mode": mode,
         "primary_route_id": str(primary.get("route_id", "")).strip(),
         "validation_route_ids": [str(item.get("route_id", "")).strip() for item in validation if str(item.get("route_id", "")).strip()],
         "escalation_route_ids": [str(item.get("route_id", "")).strip() for item in escalation if str(item.get("route_id", "")).strip()],
         "allow_parallel_validation": allow_parallel,
+        "validation_families": validation_families,
+        "validation_family_count": len(validation_families),
+        "validation_diversity_status": validation_diversity_status,
         "stop_conditions": _dedupe_strings(stop_conditions),
     }
 
@@ -321,13 +367,16 @@ def _derive_result_consensus(
     """
     fresh_weight = 5 if _goal_time_sensitivity(goal) == "fresh" else 3
     challenge_rank = _challenge_severity_rank(challenge)
-    route_diversity_required = len([item for item in route_candidates if item.get("route_type") != "human_checkpoint"]) >= 2
+    live_candidates = [item for item in route_candidates if item.get("route_type") != "human_checkpoint"]
+    validation_families = _dedupe_strings([_candidate_validation_family(item) for item in live_candidates if _candidate_validation_family(item) != "unknown"])
+    route_diversity_required = len(live_candidates) >= 2
     comparison_axes = [
         {"name": "source_trust", "weight": 5, "why": "优先官方/结构化/已验证来源。"},
         {"name": "field_completeness", "weight": 5, "why": "最终结果要尽量覆盖任务要求字段。"},
         {"name": "freshness", "weight": fresh_weight, "why": "时效敏感任务必须提高 freshness 权重。"},
         {"name": "site_readiness", "weight": 4 if challenge_rank >= 2 else 3, "why": "遇到反爬/风控时，优先已验证可用路线。"},
         {"name": "cross_route_agreement", "weight": 4 if route_diversity_required else 2, "why": "多路线结果越一致，可信度越高。"},
+        {"name": "validation_family_diversity", "weight": 4 if len(validation_families) >= 2 else 2, "why": "优先不同证据家族形成的交叉验证，而不是同家族换壳确认。"},
         {"name": "route_risk", "weight": 3, "why": "质量接近时优先低风险路线。"},
         {"name": "cost_efficiency", "weight": 2, "why": "避免每次都直接升级到高成本浏览器链。"},
     ]
@@ -346,10 +395,13 @@ def _derive_result_consensus(
             "retrieved_at",
             "status",
             "field_coverage",
+            "validation_family",
             "evidence_ref",
         ],
         must_compare_when_multiple_routes=len(route_candidates) >= 2,
         route_diversity_required=route_diversity_required,
+        minimum_validation_family_count=2 if route_diversity_required and len(validation_families) >= 2 else 1,
+        prefer_independent_validation=len(validation_families) >= 2,
         prefer_low_risk_when_quality_similar=True,
         prefer_verified_site_route=challenge_rank >= 2,
         knowledge_basis_hint=str(knowledge_basis.get("recommended_basis", "")).strip(),
@@ -449,16 +501,19 @@ def build_acquisition_hand(
                 "route_id": str(primary_route.get("route_id", "")).strip(),
                 "route_type": str(primary_route.get("route_type", "")).strip(),
                 "adapter_id": str(primary_route.get("adapter_id", "")).strip(),
+                "validation_family": _candidate_validation_family(primary_route) if primary_route else "",
             },
             "validation_routes": [
                 {
                     "route_id": str(item.get("route_id", "")).strip(),
                     "route_type": str(item.get("route_type", "")).strip(),
                     "adapter_id": str(item.get("adapter_id", "")).strip(),
+                    "validation_family": _candidate_validation_family(item),
                 }
                 for item in validation_routes
                 if item
             ],
+            "validation_diversity_status": str(execution_strategy.get("validation_diversity_status", "")).strip(),
             "recommended_tools": recommended_tools,
         },
     )

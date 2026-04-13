@@ -11,6 +11,7 @@ if str(CONTROL_CENTER) not in sys.path:
 
 import capability_registry as capability_registry_module  # noqa: E402
 from acquisition_adapter_registry import build_acquisition_adapter_registry  # noqa: E402
+from acquisition_hand_builder import _derive_route_candidates  # noqa: E402
 from crawler_probe_runner import _derive_probe_execution_plan  # noqa: E402
 
 
@@ -223,6 +224,46 @@ class AcquisitionExecutionPlanningTest(unittest.TestCase):
         self.assertEqual(plan['active_route_ids'], ['primary:stealth-scroll', 'validate:plain-scroll'])
         self.assertEqual(plan['tool_ids'], ['playwright_stealth_scroll', 'playwright_scroll'])
         self.assertEqual(plan['route_plan'][0]['execution_profile'], 'stealth_scroll_capture')
+        self.assertEqual(plan['route_plan'][0]['validation_family'], 'browser_render')
+
+    def test_route_candidates_prefer_independent_validation_family_when_available(self):
+        capabilities = {
+            'tools': [
+                {'name': 'python', 'exists': True, 'provides': ['scrapy']},
+                {'name': 'crawl4ai', 'exists': True},
+                {'name': 'curl_cffi', 'exists': True},
+            ],
+            'crawler_capability_profile': {'sites': []},
+        }
+        registry = build_acquisition_adapter_registry(capabilities)
+        route_candidates = _derive_route_candidates(
+            {
+                'current_route': 'static_fetch',
+                'route_ladder': ['static_fetch', 'crawl4ai'],
+            },
+            {
+                'selected_stack': {'stack_id': 'http_static'},
+                'fallback_stacks': ['crawl4ai_extract'],
+                'scores': [
+                    {'stack_id': 'http_static', 'score': 82, 'rationale': ['cheap and stable']},
+                    {'stack_id': 'crawl4ai_extract', 'score': 61, 'rationale': ['better extraction']},
+                ],
+            },
+            registry,
+            {
+                'severity': 'medium',
+                'requires_human_checkpoint': False,
+                'recommended_route': 'static_fetch',
+            },
+        )
+
+        primary = next(item for item in route_candidates if item.get('parallel_role') == 'primary_delivery')
+        validation = next(item for item in route_candidates if item.get('parallel_role') == 'validation_probe')
+        self.assertEqual(primary['adapter_id'], 'curl_cffi_http')
+        self.assertEqual(primary['validation_family'], 'http_fetch')
+        self.assertEqual(validation['adapter_id'], 'crawl4ai_cli')
+        self.assertEqual(validation['validation_family'], 'content_extraction')
+        self.assertEqual(validation['validation_relationship'], 'independent_family')
 
 
 if __name__ == '__main__':

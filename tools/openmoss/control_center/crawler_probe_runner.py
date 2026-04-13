@@ -297,6 +297,7 @@ def _candidate_execution_binding(candidate: Dict[str, Any], adapters_by_id: Dict
         "route_id": str(candidate.get("route_id", "")).strip(),
         "adapter_id": adapter_id,
         "route_type": str(candidate.get("route_type", "")).strip(),
+        "validation_family": str(adapter.get("validation_family", "")).strip() or str(candidate.get("validation_family", "")).strip(),
         "parallel_role": str(candidate.get("parallel_role", "")).strip(),
         "tool_id": tool_id,
         "tool_label": str(runner_meta.get("label", "")).strip(),

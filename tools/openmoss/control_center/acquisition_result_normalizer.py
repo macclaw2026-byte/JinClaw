@@ -202,6 +202,21 @@ def _route_quality_score(route_run: Dict[str, Any], acquisition_hand: Dict[str, 
     )
 
 
+def _route_validation_family(route_run: Dict[str, Any]) -> str:
+    return str(route_run.get("validation_family", "")).strip() or str(route_run.get("route_type", "")).strip() or "unknown"
+
+
+def _route_families_for_ids(route_runs: List[Dict[str, Any]], route_ids: List[str]) -> List[str]:
+    route_id_set = {str(item).strip() for item in route_ids if str(item).strip()}
+    return _unique_preserve(
+        [
+            _route_validation_family(route_run)
+            for route_run in route_runs
+            if str(route_run.get("route_id", "")).strip() in route_id_set and _route_validation_family(route_run) != "unknown"
+        ]
+    )
+
+
 def _field_agreement(winner_fields: Dict[str, Any], other_fields: Dict[str, Any]) -> Dict[str, int]:
     shared_keys = [
         key
@@ -355,22 +370,34 @@ def _field_provenance_for_site(
                 if str(route_id).strip()
             ]
         )
+        supporting_families = _route_families_for_ids(surviving, selected.get("supporting_route_ids", []) or [])
+        disagreeing_families = _route_families_for_ids(surviving, disagreeing_route_ids)
 
         confidence = "single_route"
         notes: List[str] = []
         if len(grouped_rows) == 1:
             if len(selected.get("supporting_route_ids", []) or []) >= 2:
-                confidence = "cross_validated"
+                confidence = "cross_validated_independent" if len(supporting_families) >= 2 else "cross_validated_same_family"
                 cross_validated_fields.append(field_name)
-                notes.append("至少两条路线对该字段给出了相同值。")
+                if len(supporting_families) >= 2:
+                    notes.append("至少两条不同验证家族的路线对该字段给出了相同值。")
+                else:
+                    notes.append("至少两条路线对该字段给出了相同值，但仍属于同一验证家族。")
             else:
                 notes.append("当前字段只有单路线证据。")
         else:
             lead = float(selected.get("group_score", 0.0) or 0.0) - float(grouped_rows[1].get("group_score", 0.0) or 0.0)
             if len(selected.get("supporting_route_ids", []) or []) >= 2 and lead >= 15:
-                confidence = "resolved_multi_route_majority"
+                confidence = (
+                    "resolved_multi_route_majority_independent"
+                    if len(supporting_families) >= 2
+                    else "resolved_multi_route_majority_same_family"
+                )
                 cross_validated_fields.append(field_name)
-                notes.append("存在冲突，但多数路线支持当前值。")
+                if len(supporting_families) >= 2:
+                    notes.append("存在冲突，但不同验证家族的多数路线支持当前值。")
+                else:
+                    notes.append("存在冲突，但多数支持仍来自同一验证家族。")
             elif lead >= 40:
                 confidence = "resolved_by_best_evidence"
                 conflicted_fields.append(field_name)
@@ -389,7 +416,9 @@ def _field_provenance_for_site(
             selected_tool_label=str(selected_route.get("tool_label", "")).strip(),
             confidence=confidence,
             supporting_route_ids=selected.get("supporting_route_ids", []) or [],
+            supporting_validation_families=supporting_families,
             disagreeing_route_ids=disagreeing_route_ids,
+            disagreeing_validation_families=disagreeing_families,
             supporting_values=selected.get("supporting_values", []) or [],
             notes=notes,
         )
@@ -451,6 +480,7 @@ def _site_consensus(site: str, route_runs: List[Dict[str, Any]], acquisition_han
         ),
     )
     winner = ranked[0]
+    compared_families = _unique_preserve([_route_validation_family(item) for item in ranked if _route_validation_family(item) != "unknown"])
     validation_status = "single_route_only"
     requires_review = False
     notes: List[str] = []
@@ -467,8 +497,12 @@ def _site_consensus(site: str, route_runs: List[Dict[str, Any]], acquisition_han
             notes.append("多路线在共享字段上出现冲突。")
             recommended_next_actions.append("review_conflicting_route_outputs_before_release")
         elif any(item.get("equal_fields", 0) > 0 for item in agreements):
-            validation_status = "cross_validated"
-            notes.append("至少存在一条路线与赢家在共享字段上达成一致。")
+            if len(compared_families) >= 2:
+                validation_status = "cross_validated_independent"
+                notes.append("至少存在一条不同验证家族的路线与赢家在共享字段上达成一致。")
+            else:
+                validation_status = "cross_validated_same_family"
+                notes.append("存在路线与赢家达成一致，但仍属于同一验证家族。")
         else:
             validation_status = "weak_validation"
             notes.append("存在多路线，但共享字段不足，验证强度有限。")
@@ -478,14 +512,18 @@ def _site_consensus(site: str, route_runs: List[Dict[str, Any]], acquisition_han
         requires_review = True
         notes.append("赢家路线只有 partial 质量，建议保守处理。")
         recommended_next_actions.append("improve_field_coverage_before_release")
+    if len(ranked) >= 2 and len(compared_families) < 2:
+        recommended_next_actions.append("capture_independent_validation_family_before_release")
 
     return {
         "site": site,
         "decision": "clear_winner" if not requires_review else "needs_review",
         "validation_status": validation_status,
+        "validation_families": compared_families,
         "winner": {
             "route_id": str(winner.get("route_id", "")).strip(),
             "adapter_id": str(winner.get("adapter_id", "")).strip(),
+            "validation_family": _route_validation_family(winner),
             "tool_label": str(winner.get("tool_label", "")).strip(),
             "status": str(winner.get("status", "")).strip(),
             "field_coverage": float(winner.get("field_coverage", 0.0) or 0.0),
@@ -537,6 +575,8 @@ def build_acquisition_execution_summary(
                     "route_id": str(planned_binding.get("route_id", "")).strip(),
                     "adapter_id": str(planned_binding.get("adapter_id", "")).strip(),
                     "route_type": str(planned_binding.get("route_type", "")).strip(),
+                    "validation_family": str(planned_binding.get("validation_family", "")).strip()
+                    or str((adapter or {}).get("validation_family", "")).strip(),
                     "risk_level": str((adapter or {}).get("risk_level", "medium")).strip() or "medium",
                     "parallel_role": str(planned_binding.get("parallel_role", "")).strip(),
                 }
@@ -557,6 +597,8 @@ def build_acquisition_execution_summary(
                 route_id=str(candidate.get("route_id", "")).strip() or f"executed:{_normalized(tool_label)}",
                 adapter_id=str((adapter or {}).get("adapter_id", "")).strip(),
                 route_type=str((candidate or {}).get("route_type", "")).strip() or str((adapter or {}).get("route_type", "")).strip(),
+                validation_family=str((candidate or {}).get("validation_family", "")).strip()
+                or str((adapter or {}).get("validation_family", "")).strip(),
                 tool_label=tool_label,
                 status=str(row.get("status", "")).strip() or "failed",
                 source_url=source_url,
@@ -591,17 +633,43 @@ def build_acquisition_execution_summary(
     sites_total = len(site_consensus_rows)
     sites_clear_winner = sum(1 for item in site_consensus_rows if item.get("decision") == "clear_winner")
     sites_needs_review = sum(1 for item in site_consensus_rows if bool(item.get("requires_review")))
-    sites_cross_validated = sum(1 for item in site_consensus_rows if item.get("validation_status") == "cross_validated")
+    sites_cross_validated = sum(
+        1
+        for item in site_consensus_rows
+        if str(item.get("validation_status", "")).strip() in {"cross_validated_independent", "cross_validated_same_family"}
+    )
+    independent_validation_sites_total = sum(
+        1 for item in site_consensus_rows if str(item.get("validation_status", "")).strip() == "cross_validated_independent"
+    )
+    same_family_validation_sites_total = sum(
+        1 for item in site_consensus_rows if str(item.get("validation_status", "")).strip() == "cross_validated_same_family"
+    )
     sites_blocked = sum(1 for item in site_consensus_rows if item.get("decision") == "insufficient_evidence")
     synthesized_sites_total = sum(1 for item in site_synthesized_outputs if (item.get("final_fields", {}) or {}))
     cross_validated_field_total = sum(len(item.get("cross_validated_fields", []) or []) for item in site_synthesized_outputs)
     conflicted_field_total = sum(len(item.get("conflicted_fields", []) or []) for item in site_synthesized_outputs)
     missing_field_total = sum(len(item.get("missing_fields", []) or []) for item in site_synthesized_outputs)
+    validation_family_count = len(
+        _unique_preserve(
+            [
+                _route_validation_family(item)
+                for item in route_runs
+                if _route_validation_family(item) != "unknown"
+            ]
+        )
+    )
+    validation_diversity_status = "no_validation"
+    if independent_validation_sites_total:
+        validation_diversity_status = "independent_family_validation"
+    elif same_family_validation_sites_total:
+        validation_diversity_status = "same_family_validation_only"
+    elif sites_cross_validated:
+        validation_diversity_status = "mixed_validation_strength"
 
     consensus_status = "insufficient_evidence"
     if sites_needs_review:
         consensus_status = "needs_review"
-    elif sites_total and sites_clear_winner == sites_total and sites_cross_validated:
+    elif sites_total and sites_clear_winner == sites_total and independent_validation_sites_total:
         consensus_status = "cross_route_validated"
     elif sites_total and sites_clear_winner == sites_total:
         consensus_status = "clear_winner"
@@ -629,6 +697,11 @@ def build_acquisition_execution_summary(
             *(
                 ["persist_winning_route_into_learning"]
                 if consensus_status in {"clear_winner", "cross_route_validated"}
+                else []
+            ),
+            *(
+                ["capture_independent_validation_family_before_release"]
+                if validation_diversity_status == "same_family_validation_only"
                 else []
             ),
             *(
@@ -683,8 +756,12 @@ def build_acquisition_execution_summary(
             "sites_total": sites_total,
             "sites_clear_winner": sites_clear_winner,
             "sites_cross_validated": sites_cross_validated,
+            "independent_validation_sites_total": independent_validation_sites_total,
+            "same_family_validation_sites_total": same_family_validation_sites_total,
             "sites_needs_review": sites_needs_review,
             "sites_blocked": sites_blocked,
+            "validation_family_count": validation_family_count,
+            "validation_diversity_status": validation_diversity_status,
             "synthesized_sites_total": synthesized_sites_total,
             "cross_validated_field_total": cross_validated_field_total,
             "conflicted_field_total": conflicted_field_total,
@@ -715,6 +792,7 @@ def render_acquisition_execution_summary_markdown(summary: Dict[str, Any]) -> st
         f"- Task: `{summary.get('task_id', '')}`",
         f"- Consensus status: `{overall.get('consensus_status', '')}`",
         f"- Synthesis status: `{overall.get('synthesis_status', '')}`",
+        f"- Validation diversity: `{overall.get('validation_diversity_status', '')}`",
         f"- Planned routes: `{', '.join(summary.get('planned_route_ids', []) or [])}`",
         f"- Executed routes: `{', '.join(summary.get('executed_route_ids', []) or [])}`",
         f"- Planned but not executed: `{', '.join(summary.get('planned_but_not_executed_route_ids', []) or [])}`",
@@ -734,6 +812,7 @@ def render_acquisition_execution_summary_markdown(summary: Dict[str, Any]) -> st
                 "",
                 f"- Decision: `{site.get('decision', '')}`",
                 f"- Validation: `{site.get('validation_status', '')}`",
+                f"- Validation families: `{', '.join(site.get('validation_families', []) or [])}`",
                 f"- Synthesis: `{site.get('synthesis_status', synthesized.get('synthesis_status', ''))}`",
                 f"- Winner route: `{winner.get('route_id', '')}`",
                 f"- Winner adapter: `{winner.get('adapter_id', '')}`",
