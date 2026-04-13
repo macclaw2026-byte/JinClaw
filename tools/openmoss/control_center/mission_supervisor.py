@@ -71,7 +71,7 @@ def _apply_repair(task_id: str, evidence: Dict[str, Any]) -> Dict[str, Any]:
     reason = str(evidence.get("reason", "unknown"))
     repaired = False
     new_next_action = str(state.next_action)
-    if evidence.get("progress_state") == "reanimated_completed_task":
+    if evidence.get("progress_state") in {"reanimated_completed_task", "satisfied_without_live_execution", "satisfied_waiting_residue", "satisfied_redundant_dispatch"}:
         state.status = "completed"
         state.blockers = []
         state.metadata.pop("active_execution", None)

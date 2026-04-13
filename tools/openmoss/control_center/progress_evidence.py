@@ -564,10 +564,32 @@ def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> 
         )
     )
     completion_guards = run_liveness.get("completion_guards", {}) or {}
+    business_goal_satisfied = business_outcome.get("goal_satisfied") is True
+    user_visible_result_confirmed = business_outcome.get("user_visible_result_confirmed") is True
     reanimated_completed = bool(
         summary_says_completed
         and int(completion_guards.get("present_count", 0) or 0) > 0
         and status in {"planning", "running", "recovering", "waiting_external", "verifying"}
+    )
+    dormant_satisfied = bool(
+        int(completion_guards.get("present_count", 0) or 0) > 0
+        and business_goal_satisfied
+        and user_visible_result_confirmed
+        and not has_active_execution
+        and status in {"planning", "running", "recovering", "waiting_external", "verifying"}
+    )
+    satisfied_redundant_dispatch = bool(
+        int(completion_guards.get("present_count", 0) or 0) > 0
+        and business_goal_satisfied
+        and user_visible_result_confirmed
+        and bool(milestone_stats.get("all_required_completed"))
+        and status in {"planning", "running", "recovering", "waiting_external", "verifying"}
+        and current_stage == "plan"
+        and (
+            next_action.startswith("poll_run:")
+            or next_action.startswith("start_stage:plan")
+            or status == "waiting_external"
+        )
     )
 
     evidence = {
@@ -581,8 +603,8 @@ def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> 
         "idle_seconds": idle_seconds,
         "stale_after_seconds": stale_after_seconds,
         "recent_event_types": event_types,
-        "business_goal_satisfied": business_outcome.get("goal_satisfied") is True,
-        "user_visible_result_confirmed": business_outcome.get("user_visible_result_confirmed") is True,
+        "business_goal_satisfied": business_goal_satisfied,
+        "user_visible_result_confirmed": user_visible_result_confirmed,
         "milestone_stats": milestone_stats,
         "run_liveness": run_liveness,
         "task_summary": {
@@ -610,10 +632,31 @@ def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> 
         )
         return evidence
 
+    if run_liveness.get("satisfied_waiting_residue") is True:
+        evidence["progress_state"] = "satisfied_waiting_residue"
+        evidence["needs_intervention"] = True
+        evidence["reason"] = str(
+            run_liveness.get("satisfied_waiting_residue_reason")
+            or "waiting_external_residue_with_satisfied_business_outcome"
+        )
+        return evidence
+
     if reanimated_completed:
         evidence["progress_state"] = "reanimated_completed_task"
         evidence["needs_intervention"] = True
         evidence["reason"] = "completed_summary_and_workspace_guards_conflict_with_live_runtime_state"
+        return evidence
+
+    if dormant_satisfied:
+        evidence["progress_state"] = "satisfied_without_live_execution"
+        evidence["needs_intervention"] = True
+        evidence["reason"] = "business_outcome_satisfied_and_confirmed_without_live_runtime_execution"
+        return evidence
+
+    if satisfied_redundant_dispatch:
+        evidence["progress_state"] = "satisfied_redundant_dispatch"
+        evidence["needs_intervention"] = True
+        evidence["reason"] = "business_outcome_already_satisfied_but_plan_stage_re_dispatched"
         return evidence
 
     if goal_conformance.get("ok") is False:

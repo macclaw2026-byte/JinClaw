@@ -270,9 +270,17 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
         f"project_control: {json.dumps(((stage_context.get('governance', {}) or {}).get('project_control', {})), ensure_ascii=False)}",
         f"permission_decision: {json.dumps(((stage_context.get('governance', {}) or {}).get('permission_decision', {})), ensure_ascii=False)}",
         f"governance: {json.dumps(stage_context.get('governance', {}), ensure_ascii=False)}",
+        f"governance_contract: {json.dumps(stage_context.get('governance_contract', {}), ensure_ascii=False)}",
+        f"plan_reviews: {json.dumps(stage_context.get('plan_reviews', {}), ensure_ascii=False)}",
+        f"operating_discipline: {json.dumps(stage_context.get('operating_discipline', {}), ensure_ascii=False)}",
+        f"protocol_pack: {json.dumps(stage_context.get('protocol_pack', {}), ensure_ascii=False)}",
+        f"knowledge_basis: {json.dumps(stage_context.get('knowledge_basis', {}), ensure_ascii=False)}",
+        f"readiness_dashboard: {json.dumps(stage_context.get('readiness_dashboard', {}), ensure_ascii=False)}",
+        f"acquisition_hand: {json.dumps(stage_context.get('acquisition_hand', {}), ensure_ascii=False)}",
         f"execution_summary: {json.dumps(stage_context.get('summary', {}), ensure_ascii=False)}",
         f"allowed_tools: {json.dumps(stage_context.get('allowed_tools', []), ensure_ascii=False)}",
         f"business_verification_requirements: {json.dumps(verifier_requirements, ensure_ascii=False)}",
+        f"verification_guidance: {json.dumps(stage_context.get('verification_guidance', {}), ensure_ascii=False)}",
         "Instruction: this is a background runtime execution request, not a user-facing status conversation.",
         "Instruction: do not reply with a status-only summary before acting. Use approved tools, make the next concrete move, and then report concise verification evidence.",
         "Browser execution rule: do not exceed the global JinClaw browser budget of 3 open tabs for the active task/session.",
@@ -572,10 +580,18 @@ def _build_crawler_business_outcome(task_id: str, artifacts: Dict[str, Dict], su
     evidence = {
         "crawler_report_path": artifacts.get("report_json_path", ""),
         "crawler_report_markdown_path": artifacts.get("report_md_path", ""),
+        "acquisition_summary_path": artifacts.get("acquisition_summary_json_path", ""),
+        "acquisition_summary_markdown_path": artifacts.get("acquisition_summary_md_path", ""),
         "crawler_required_sites": artifacts.get("required_sites", []),
         "crawler_required_tools": artifacts.get("required_tools", []),
         "crawler_coverage": coverage,
-        "attachments": [artifacts.get("report_md_path", ""), artifacts.get("report_json_path", "")],
+        "acquisition_overall_summary": (artifacts.get("acquisition_summary", {}) or {}).get("overall_summary", {}),
+        "attachments": [
+            artifacts.get("report_md_path", ""),
+            artifacts.get("report_json_path", ""),
+            artifacts.get("acquisition_summary_md_path", ""),
+            artifacts.get("acquisition_summary_json_path", ""),
+        ],
     }
     return write_business_outcome(
         task_id,
@@ -596,6 +612,8 @@ def _persist_crawler_execution_metadata(task_id: str, payload: Dict) -> None:
         for item in [
             execution.get("report_md_path", ""),
             execution.get("report_json_path", ""),
+            execution.get("acquisition_summary_md_path", ""),
+            execution.get("acquisition_summary_json_path", ""),
             execution.get("retro_md_path", ""),
             execution.get("retro_json_path", ""),
             execution.get("evolution_json_path", ""),
@@ -617,21 +635,24 @@ def _run_local_crawler_stage(task_id: str, stage_name: str) -> Dict | None:
     """
     contract = load_contract(task_id)
     crawler = contract.metadata.get("control_center", {}).get("crawler", {}) or {}
+    acquisition_hand = contract.metadata.get("control_center", {}).get("acquisition_hand", {}) or {}
     if not bool(crawler.get("enabled")):
         return None
     if str(crawler.get("execution_mode", "")).strip() not in {"site_tool_matrix_probe", "adaptive_fetch", "adaptive_research_crawl"}:
         return None
 
     if stage_name == "execute":
-        artifacts = run_crawler_probe(task_id, contract.user_goal, crawler)
+        artifacts = run_crawler_probe(task_id, contract.user_goal, crawler, acquisition_hand)
         _persist_crawler_execution_metadata(task_id, artifacts)
         complete_execute_milestones(task_id, summary="crawler matrix probe completed")
+        consensus = ((artifacts.get("acquisition_summary", {}) or {}).get("overall_summary", {}) or {}).get("consensus_status", "")
         business_outcome = _build_crawler_business_outcome(
             task_id,
             artifacts,
             summary=(
                 f"Completed crawler matrix probe for sites {', '.join(artifacts.get('required_sites', []))} "
                 f"with tools {', '.join(artifacts.get('required_tools', []))}."
+                + (f" Acquisition consensus: {consensus}." if str(consensus).strip() else "")
             ),
         )
         completion = complete_stage_internal(

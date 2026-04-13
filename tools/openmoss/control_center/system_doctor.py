@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from adaptive_fetch_router import build_fetch_route
+from acquisition_adapter_registry import build_acquisition_adapter_registry
 from control_plane_builder import build_control_plane
 from execution_governor import build_project_crawler_gate, classify_blocked_runtime_state, summarize_governance_attention
 from paths import CONTROL_CENTER_RUNTIME_ROOT, FETCH_ROUTES_ROOT
@@ -41,6 +42,7 @@ from route_guardrails import persist_route, reroot_route_if_needed
 from problem_solver import solve_problem
 from task_receipt_engine import emit_route_receipt
 from task_status_snapshot import build_task_status_snapshot
+from capability_registry import build_capability_registry
 from memory_writeback_runtime import record_memory_writeback
 from governance_runtime import _build_doctor_coverage_bundle
 from orchestrator import build_control_center_package
@@ -775,6 +777,7 @@ def _build_task_incident_report(candidate: Dict[str, object]) -> Dict[str, objec
         "task_status_snapshot": {
             "governance": status_snapshot.get("governance", {}) or {},
             "authoritative_summary": status_snapshot.get("authoritative_summary", {}),
+            "acquisition_hand": status_snapshot.get("acquisition_hand", {}) or {},
         },
         "signal_excerpt": signal_text[-4000:] if signal_text else "",
         "matched_durable_rule": {
@@ -1596,6 +1599,21 @@ def diagnose_task(task_id: str, *, idle_after_seconds: int = 180) -> Dict[str, o
         diagnosis["reason"] = "reanimated_completed_task"
         diagnosis["stuck_escalation"] = _stuck_escalation_plan(task_id, diagnosis)
         return diagnosis
+    if evidence.get("progress_state") == "satisfied_without_live_execution":
+        diagnosis["stuck"] = True
+        diagnosis["reason"] = "satisfied_without_live_execution"
+        diagnosis["stuck_escalation"] = _stuck_escalation_plan(task_id, diagnosis)
+        return diagnosis
+    if evidence.get("progress_state") == "satisfied_waiting_residue":
+        diagnosis["stuck"] = True
+        diagnosis["reason"] = "satisfied_waiting_residue"
+        diagnosis["stuck_escalation"] = _stuck_escalation_plan(task_id, diagnosis)
+        return diagnosis
+    if evidence.get("progress_state") == "satisfied_redundant_dispatch":
+        diagnosis["stuck"] = True
+        diagnosis["reason"] = "satisfied_redundant_dispatch"
+        diagnosis["stuck_escalation"] = _stuck_escalation_plan(task_id, diagnosis)
+        return diagnosis
     consistency = diagnosis.get("consistency", {}) or {}
     if consistency.get("inconsistency_detected"):
         diagnosis["stuck"] = True
@@ -1677,7 +1695,7 @@ def repair_task_if_possible(task_id: str, diagnosis: Dict[str, object]) -> Dict[
         save_state(state)
         log_event(task_id, "system_doctor_repaired_stale_waiting_external", diagnosis=diagnosis)
         return {"task_id": task_id, "repaired": True, "reason": "restarted_after_stale_waiting_external"}
-    if diagnosis.get("reason") == "reanimated_completed_task":
+    if diagnosis.get("reason") in {"reanimated_completed_task", "satisfied_without_live_execution", "satisfied_waiting_residue", "satisfied_redundant_dispatch"}:
         state.status = "completed"
         state.blockers = []
         state.metadata.pop("waiting_external", None)
@@ -1686,13 +1704,41 @@ def repair_task_if_possible(task_id: str, diagnosis: Dict[str, object]) -> Dict[
         state.metadata.pop("last_dispatch_at", None)
         state.metadata["doctor_reanimated_completed_repair"] = {
             "repaired_at": _utc_now_iso(),
-            "reason": "completed_summary_and_workspace_guards_conflict_with_live_runtime_state",
+            "reason": (
+                "completed_summary_and_workspace_guards_conflict_with_live_runtime_state"
+                if diagnosis.get("reason") == "reanimated_completed_task"
+                else (
+                    "business_outcome_satisfied_and_confirmed_without_live_runtime_execution"
+                    if diagnosis.get("reason") == "satisfied_without_live_execution"
+                    else (
+                        "waiting_external_residue_with_satisfied_business_outcome"
+                        if diagnosis.get("reason") == "satisfied_waiting_residue"
+                        else "business_outcome_already_satisfied_but_plan_stage_re_dispatched"
+                    )
+                )
+            ),
         }
         state.next_action = ""
         state.last_update_at = _utc_now_iso()
         save_state(state)
         log_event(task_id, "system_doctor_closed_reanimated_completed_task", diagnosis=diagnosis)
-        return {"task_id": task_id, "repaired": True, "reason": "closed_reanimated_completed_task"}
+        return {
+            "task_id": task_id,
+            "repaired": True,
+            "reason": (
+                "closed_reanimated_completed_task"
+                if diagnosis.get("reason") == "reanimated_completed_task"
+                else (
+                    "closed_satisfied_without_live_execution_task"
+                    if diagnosis.get("reason") == "satisfied_without_live_execution"
+                    else (
+                        "closed_satisfied_waiting_residue_task"
+                        if diagnosis.get("reason") == "satisfied_waiting_residue"
+                        else "closed_satisfied_redundant_dispatch_task"
+                    )
+                )
+            ),
+        }
     if diagnosis.get("reason") == "terminal_failure_requires_takeover":
         state.status = "recovering"
         state.blockers = list(dict.fromkeys([*state.blockers, "terminal_failure_detected"]))
@@ -2111,6 +2157,7 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
     integration_health = _run_gstack_integration_checks()
     crawler_profile = control_plane.get("crawler_capability_profile", {}) or {}
     crawler_summary = crawler_profile.get("summary", {}) or {}
+    acquisition_market = build_acquisition_adapter_registry(build_capability_registry())
     crawler_attention_sites = [
         {
             "site": site.get("site", ""),
@@ -2141,6 +2188,22 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
             "remediation_queue": (control_plane.get("crawler_remediation_queue", {}).get("items", []) or [])[:6],
             "remediation_plan": (control_plane.get("crawler_remediation_plan", {}).get("items", []) or [])[:6],
             "remediation_execution": (control_plane.get("crawler_remediation_execution", {}).get("items", []) or [])[:6],
+        },
+        "acquisition_health": {
+            "enabled": True,
+            "summary": crawler_summary,
+            "adapter_coverage": {
+                "sites_total": int(crawler_summary.get("sites_total", 0) or 0),
+                "sites_production_ready": int(crawler_summary.get("sites_production_ready", 0) or 0),
+                "sites_attention_required": int(crawler_summary.get("sites_attention_required", 0) or 0),
+                "stability_score": float(crawler_summary.get("stability_score", 0.0) or 0.0),
+                "available_adapter_total": int(acquisition_market.get("available_adapter_total", 0) or 0),
+                "observed_only_adapter_total": len(acquisition_market.get("observed_only_adapter_ids", []) or []),
+                "available_adapter_ids": (acquisition_market.get("available_adapter_ids", []) or [])[:10],
+            },
+            "attention_sites": crawler_attention_sites,
+            "priority_actions": (crawler_profile.get("priority_actions", []) or [])[:6],
+            "feedback": crawler_profile.get("feedback", {}) or {},
         },
         "process_incidents": process_incidents,
         "task_incidents": task_incidents,

@@ -448,6 +448,61 @@ def verify_crawler_report_complete(spec: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def verify_acquisition_summary_complete(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：验证 acquisition hand 已经把 crawler 执行结果归一化为统一的 acquisition execution summary。
+    - 设计意图：不再只检查“有没有 crawler report”，还要检查“有没有路线级证据和共识结论”。
+    """
+    task_id = str(spec.get("task_id", "")).strip()
+    contract_path = TASKS_ROOT / task_id / "contract.json"
+    state_path = TASKS_ROOT / task_id / "state.json"
+    if not contract_path.exists() or not state_path.exists():
+        return {"ok": False, "status": "task_artifact_missing", "task_id": task_id}
+    contract = json.loads(contract_path.read_text(encoding="utf-8"))
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    acquisition_hand = ((contract.get("metadata", {}) or {}).get("control_center", {}) or {}).get("acquisition_hand", {}) or {}
+    if not bool(acquisition_hand.get("enabled")):
+        return {"ok": True, "status": "not_required", "task_id": task_id}
+    execution = (state.get("metadata", {}) or {}).get("crawler_execution", {}) or {}
+    summary_raw = str(execution.get("acquisition_summary_json_path", "")).strip()
+    if not summary_raw:
+        return {"ok": False, "status": "acquisition_summary_missing", "task_id": task_id, "path": ""}
+    summary_path = Path(summary_raw).expanduser()
+    if not summary_path.exists() or not summary_path.is_file():
+        return {"ok": False, "status": "acquisition_summary_missing", "task_id": task_id, "path": str(summary_path)}
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    route_runs = payload.get("route_runs", []) or []
+    site_consensus = payload.get("site_consensus", []) or []
+    overall = payload.get("overall_summary", {}) or {}
+    missing_fields = [
+        field
+        for field in ["consensus_status", "sites_total", "route_gap_count"]
+        if field not in overall
+    ]
+    invalid_route_runs = []
+    for index, item in enumerate(route_runs, start=1):
+        missing = [
+            field
+            for field in ["route_id", "adapter_id", "source_url", "retrieved_at", "status", "field_coverage", "evidence_ref"]
+            if item.get(field, "") in {"", None} and field not in {"field_coverage"}
+        ]
+        if missing:
+            invalid_route_runs.append({"index": index, "missing": missing})
+    ok = bool(route_runs) and bool(site_consensus) and not missing_fields and not invalid_route_runs
+    return {
+        "ok": ok,
+        "status": "ok" if ok else "acquisition_summary_incomplete",
+        "task_id": task_id,
+        "path": str(summary_path),
+        "route_run_count": len(route_runs),
+        "site_consensus_count": len(site_consensus),
+        "missing_fields": missing_fields,
+        "invalid_route_runs": invalid_route_runs,
+        "consensus_status": str(overall.get("consensus_status", "")).strip(),
+    }
+
+
 def verify_crawler_retro_complete(spec: Dict[str, Any]) -> Dict[str, Any]:
     """
     中文注解：
@@ -542,6 +597,7 @@ VERIFIERS = {
     "task_conformance_ok": verify_task_conformance_ok,
     "task_stage_artifacts_ready": verify_task_stage_artifacts_ready,
     "crawler_report_complete": verify_crawler_report_complete,
+    "acquisition_summary_complete": verify_acquisition_summary_complete,
     "crawler_retro_complete": verify_crawler_retro_complete,
     "command_exit_zero": verify_command_exit_zero,
     "all": verify_all,
