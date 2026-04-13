@@ -26,6 +26,7 @@ def build_acp_dispatch_request(contract: Dict[str, Any], stage_context: Dict[str
     protocol_pack = coding_payload.get('protocol_pack', {}) or {}
     operating_discipline = coding_payload.get('operating_discipline', {}) or {}
     acquisition_hand = coding_payload.get('acquisition_hand', {}) or {}
+    response_handoff = coding_payload.get('response_handoff', {}) or {}
     metadata = contract.get('metadata', {}) or {}
     control_center = metadata.get('control_center', {}) or {}
     return {
@@ -45,6 +46,7 @@ def build_acp_dispatch_request(contract: Dict[str, Any], stage_context: Dict[str
             'JINCLAW_GOVERNANCE_TIER': str(governance.get('tier', 'standard')),
             'JINCLAW_PROTOCOL_PACK': str(protocol_pack.get('pack_id', '')),
             'JINCLAW_ACQUISITION_MODE': str((acquisition_hand.get('execution_strategy', {}) or {}).get('mode', 'disabled')),
+            'JINCLAW_RESPONSE_MODE': str(response_handoff.get('response_mode', '')),
         },
         'metadata': {
             'task_goal': contract.get('user_goal', ''),
@@ -57,5 +59,8 @@ def build_acp_dispatch_request(contract: Dict[str, Any], stage_context: Dict[str
             'operating_discipline_rules': (operating_discipline.get('enabled_rule_keys', []) or [])[:10],
             'acquisition_enabled': bool(acquisition_hand.get('enabled')),
             'acquisition_primary_route': str(((acquisition_hand.get('summary', {}) or {}).get('primary_route', {}) or {}).get('route_id', '')),
+            'response_handoff_status': str(response_handoff.get('status', '')),
+            'acquisition_response_mode': str(response_handoff.get('response_mode', '')),
+            'acquisition_requires_user_confirmation': bool(response_handoff.get('requires_user_confirmation')),
         },
     }

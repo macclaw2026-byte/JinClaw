@@ -54,6 +54,7 @@ def _base_task_prompt(contract: Dict[str, Any], stage_context: Dict[str, Any] | 
     knowledge_basis = stage_context.get('knowledge_basis', {}) or control_center.get('knowledge_basis', {}) or {}
     readiness_dashboard = stage_context.get('readiness_dashboard', {}) or control_center.get('readiness_dashboard', {}) or {}
     acquisition_hand = stage_context.get('acquisition_hand', {}) or control_center.get('acquisition_hand', {}) or {}
+    response_handoff = stage_context.get('response_handoff', {}) or {}
     verification_guidance = stage_context.get('verification_guidance', {}) or {}
     must_fix = plan_reviews.get('must_fix_before_execute', []) or []
     pending_direction = plan_reviews.get('pending_direction_confirmations', []) or []
@@ -91,6 +92,17 @@ def _base_task_prompt(contract: Dict[str, Any], stage_context: Dict[str, Any] | 
             'validation_routes': ((acquisition_hand.get('summary', {}) or {}).get('validation_routes', [])),
         }
         pieces.append(f"Acquisition hand: {json.dumps(acquisition_summary, ensure_ascii=False)}")
+    if response_handoff:
+        response_summary = {
+            'status': response_handoff.get('status', ''),
+            'response_mode': response_handoff.get('response_mode', ''),
+            'governance_mode': response_handoff.get('governance_mode', ''),
+            'requires_disclosure': response_handoff.get('requires_disclosure', False),
+            'requires_user_confirmation': response_handoff.get('requires_user_confirmation', False),
+            'required_fields_by_site': response_handoff.get('required_fields_by_site', {}),
+            'recommended_next_actions': response_handoff.get('recommended_next_actions', []),
+        }
+        pieces.append(f"Response handoff: {json.dumps(response_summary, ensure_ascii=False)}")
     if verification_guidance:
         pieces.append(f'Verification guidance: {json.dumps(verification_guidance, ensure_ascii=False)}')
     pieces.append('Return a concise completion report with evidence, unresolved risks, and recommended next step.')
@@ -105,6 +117,7 @@ def build_coding_session_payload(contract: Dict[str, Any], stage_context: Dict[s
     protocol_pack = stage_context.get('protocol_pack', {}) or control_center.get('protocol_pack', {}) or {}
     operating_discipline = stage_context.get('operating_discipline', {}) or control_center.get('operating_discipline', {}) or {}
     acquisition_hand = stage_context.get('acquisition_hand', {}) or control_center.get('acquisition_hand', {}) or {}
+    response_handoff = stage_context.get('response_handoff', {}) or {}
     base_prompt = _base_task_prompt(contract, stage_context)
     if methodology.get('enabled') and methodology.get('prompt_text'):
         final_prompt = f"{methodology.get('prompt_text').rstrip()}\n\n{base_prompt}"
@@ -122,4 +135,5 @@ def build_coding_session_payload(contract: Dict[str, Any], stage_context: Dict[s
         'protocol_pack': protocol_pack,
         'operating_discipline': operating_discipline,
         'acquisition_hand': acquisition_hand,
+        'response_handoff': response_handoff,
     }

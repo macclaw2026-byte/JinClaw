@@ -113,10 +113,16 @@ class AcquisitionHandUpgradeTest(unittest.TestCase):
         payload = build_coding_session_payload(contract, context)
         request = build_acp_dispatch_request(contract, context)
         self.assertTrue(context['acquisition_hand']['enabled'])
+        self.assertEqual(context['response_handoff']['status'], 'planned')
+        self.assertEqual(context['response_handoff']['response_mode'], 'pending_capture')
         self.assertIn('Acquisition hand:', payload['base_prompt'])
+        self.assertIn('Response handoff:', payload['base_prompt'])
         self.assertNotEqual(request['env']['JINCLAW_ACQUISITION_MODE'], 'disabled')
+        self.assertEqual(request['env']['JINCLAW_RESPONSE_MODE'], 'pending_capture')
         self.assertTrue(request['metadata']['acquisition_enabled'])
         self.assertTrue(request['metadata']['acquisition_primary_route'])
+        self.assertEqual(request['metadata']['response_handoff_status'], 'planned')
+        self.assertEqual(request['metadata']['acquisition_response_mode'], 'pending_capture')
 
 
 if __name__ == '__main__':

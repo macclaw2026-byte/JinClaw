@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from canonical_active_task import resolve_canonical_active_task
+from control_center_schemas import build_acquisition_response_handoff_schema
 from execution_governor import classify_blocked_runtime_state
 from governance_runtime import build_governance_bundle
 from paths import BROWSER_SIGNALS_ROOT, OPENMOSS_ROOT, TASK_STATUS_ROOT, WORKSPACE_ROOT
@@ -358,18 +359,15 @@ def _build_acquisition_reply_contract(snapshot: Dict[str, Any]) -> Dict[str, Any
     """
     acquisition_hand = snapshot.get("acquisition_hand", {}) or {}
     answer_synthesis = acquisition_hand.get("answer_synthesis", {}) or {}
+    release_governance = acquisition_hand.get("release_governance", {}) or {}
+    delivery_requirements = acquisition_hand.get("delivery_requirements", {}) or {}
     if not isinstance(answer_synthesis, dict) or not answer_synthesis:
-        return {
-            "enabled": False,
-            "status": "",
-            "response_mode": "",
-            "answerable": False,
-            "requires_disclosure": False,
-            "requires_user_confirmation": False,
-            "preview_lines": [],
-            "blocker_reasons": [],
-            "recommended_next_actions": [],
-        }
+        return build_acquisition_response_handoff_schema(
+            enabled=False,
+            contract_source="",
+            governance_mode=str(release_governance.get("mode", "")).strip(),
+            required_fields_by_site=delivery_requirements.get("required_fields_by_site", {}) or {},
+        )
     preview_lines: List[str] = []
     for site_answer in (answer_synthesis.get("site_answers", []) or [])[:2]:
         site = str(site_answer.get("site", "")).strip() or "current target"
@@ -381,31 +379,35 @@ def _build_acquisition_reply_contract(snapshot: Dict[str, Any]) -> Dict[str, Any
                 fields.append(f"{field_name}={value}")
         if fields:
             preview_lines.append(f"{site}: {', '.join(fields)}")
-    return {
-        "enabled": True,
-        "status": str(answer_synthesis.get("status", "")).strip(),
-        "response_mode": str(answer_synthesis.get("response_mode", "")).strip(),
-        "answerable": bool(answer_synthesis.get("answerable")),
-        "requires_disclosure": bool(answer_synthesis.get("requires_disclosure")),
-        "requires_user_confirmation": bool(answer_synthesis.get("requires_user_confirmation")),
-        "preview_lines": preview_lines,
-        "disclosure_lines": [
+    return build_acquisition_response_handoff_schema(
+        enabled=True,
+        contract_source="execution_answer_synthesis",
+        status=str(answer_synthesis.get("status", "")).strip(),
+        response_mode=str(answer_synthesis.get("response_mode", "")).strip(),
+        governance_mode=str(release_governance.get("mode", "")).strip(),
+        answerable=bool(answer_synthesis.get("answerable")),
+        must_use_authoritative_snapshot=True,
+        requires_disclosure=bool(answer_synthesis.get("requires_disclosure")),
+        requires_user_confirmation=bool(answer_synthesis.get("requires_user_confirmation")),
+        preview_lines=preview_lines,
+        disclosure_lines=[
             str(item).strip()
             for item in (answer_synthesis.get("user_visible_lines", []) or [])[:3]
             if str(item).strip()
         ],
-        "blocker_reasons": [
+        blocker_reasons=[
             str(item).strip()
             for item in (answer_synthesis.get("blocker_reasons", []) or [])[:4]
             if str(item).strip()
         ],
-        "recommended_next_actions": [
+        recommended_next_actions=[
             str(item).strip()
             for item in (answer_synthesis.get("recommended_next_actions", []) or [])[:4]
             if str(item).strip()
         ],
-        "answerable_site_total": int(answer_synthesis.get("answerable_site_total", 0) or 0),
-    }
+        required_fields_by_site=delivery_requirements.get("required_fields_by_site", {}) or {},
+        answerable_site_total=int(answer_synthesis.get("answerable_site_total", 0) or 0),
+    )
 
 
 def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: Dict[str, Any], browser_signals: Dict[str, Any]) -> str:
