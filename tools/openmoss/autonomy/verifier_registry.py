@@ -486,7 +486,14 @@ def verify_acquisition_summary_complete(spec: Dict[str, Any]) -> Dict[str, Any]:
         missing_fields.extend(
             [
                 field
-                for field in ["synthesis_status", "synthesized_sites_total", "conflicted_field_total", "missing_field_total"]
+                for field in [
+                    "synthesis_status",
+                    "synthesized_sites_total",
+                    "conflicted_field_total",
+                    "missing_field_total",
+                    "required_field_gap_total",
+                    "release_readiness_status",
+                ]
                 if field not in overall and field not in missing_fields
             ]
         )
@@ -494,7 +501,17 @@ def verify_acquisition_summary_complete(spec: Dict[str, Any]) -> Dict[str, Any]:
     for index, item in enumerate(route_runs, start=1):
         missing = [
             field
-            for field in ["route_id", "adapter_id", "source_url", "retrieved_at", "status", "field_coverage", "validation_family", "evidence_ref"]
+            for field in [
+                "route_id",
+                "adapter_id",
+                "source_url",
+                "retrieved_at",
+                "status",
+                "field_coverage",
+                "required_field_coverage",
+                "validation_family",
+                "evidence_ref",
+            ]
             if item.get(field, "") in {"", None} and field not in {"field_coverage"}
         ]
         if missing:
@@ -504,7 +521,16 @@ def verify_acquisition_summary_complete(spec: Dict[str, Any]) -> Dict[str, Any]:
         for index, item in enumerate(site_synthesized_outputs, start=1):
             missing = [
                 field
-                for field in ["site", "synthesis_status", "final_fields", "field_provenance"]
+                for field in [
+                    "site",
+                    "synthesis_status",
+                    "final_fields",
+                    "field_provenance",
+                    "required_fields",
+                    "missing_required_fields",
+                    "required_field_coverage_ratio",
+                    "release_ready",
+                ]
                 if field not in item
             ]
             if missing:

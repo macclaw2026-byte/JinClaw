@@ -31,6 +31,43 @@ RISK_RANK = {
     "high": 3,
 }
 
+SITE_CORE_FIELDS = {
+    "amazon": ["title", "price", "link"],
+    "walmart": ["title", "price", "link"],
+    "temu": ["title", "price", "link"],
+    "1688": ["title", "price", "supplier", "link"],
+    "default": ["title", "link"],
+}
+
+SITE_STRETCH_FIELDS = {
+    "amazon": ["rating", "reviews"],
+    "walmart": ["rating"],
+    "temu": ["promo"],
+    "1688": ["moq"],
+    "default": [],
+}
+
+FIELD_SIGNAL_MAP = {
+    "price": ["price", "pricing", "报价", "价格", "售价"],
+    "rating": ["rating", "score", "stars", "评分", "星级"],
+    "reviews": ["review", "reviews", "comments", "comment", "评论", "评价"],
+    "link": ["link", "url", "source", "citation", "来源", "链接"],
+    "title": ["title", "name", "product name", "商品名", "名称", "标题"],
+    "promo": ["promo", "promotion", "discount", "coupon", "优惠", "折扣"],
+    "supplier": ["supplier", "vendor", "factory", "manufacturer", "供应商", "厂家", "工厂"],
+    "moq": ["moq", "minimum order", "起订量", "最小起订量"],
+    "stock": ["stock", "inventory", "availability", "库存", "现货"],
+    "sku": ["sku", "asin", "item id", "listing id", "货号"],
+    "brand": ["brand", "品牌"],
+}
+
+SITE_ALIASES = {
+    "amazon": ["amazon", "amazon.com"],
+    "walmart": ["walmart", "walmart.com"],
+    "temu": ["temu", "temu.com"],
+    "1688": ["1688", "alibaba.com"],
+}
+
 
 def _dedupe_strings(values: List[str]) -> List[str]:
     """
@@ -59,6 +96,104 @@ def _goal_time_sensitivity(goal: str) -> str:
     if any(token in normalized for token in ["latest", "today", "current", "recent", "最新", "今天", "当前", "最近", "实时"]):
         return "fresh"
     return "normal"
+
+
+def _derive_target_sites(intent: Dict[str, Any], route_candidates: List[Dict[str, Any]]) -> List[str]:
+    """
+    中文注解：
+    - 功能：从 intent/domain/route 偏好中抽取当前任务最可能涉及的站点集合。
+    - 设计意图：delivery requirements 需要知道“按哪个站点语义”来设置核心字段与扩展字段。
+    """
+    values: List[str] = []
+    for item in intent.get("likely_platforms", []) or []:
+        text = str(item).strip().lower()
+        if text:
+            values.append(text)
+    for domain in intent.get("domains", []) or []:
+        lowered = str(domain).strip().lower()
+        for site, aliases in SITE_ALIASES.items():
+            if any(alias in lowered for alias in aliases):
+                values.append(site)
+    for candidate in route_candidates:
+        for site in candidate.get("preferred_sites", []) or []:
+            text = str(site).strip().lower()
+            if text:
+                values.append(text)
+    targets = [site for site in _dedupe_strings(values) if site in SITE_CORE_FIELDS]
+    return targets or ["default"]
+
+
+def _goal_field_signals(goal: str) -> List[str]:
+    """
+    中文注解：
+    - 功能：从用户目标里抽取显式点名的数据字段信号。
+    - 设计意图：让 acquisition hand 的交付标准优先服从“这次任务真正要什么字段”，而不是永远套固定站点模板。
+    """
+    normalized = str(goal or "").lower()
+    return [
+        field_name
+        for field_name, tokens in FIELD_SIGNAL_MAP.items()
+        if any(token in normalized for token in tokens)
+    ]
+
+
+def _derive_delivery_requirements(
+    goal: str,
+    intent: Dict[str, Any],
+    route_candidates: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：推导 acquisition hand 的交付字段要求与 release 规则。
+    - 输入角色：消费 goal/intent/route 候选，识别这次任务真正必须拿到哪些字段。
+    - 输出角色：供 execution summary、verifier、doctor 用同一份结构判断“能不能交付”。
+    """
+    target_sites = _derive_target_sites(intent, route_candidates)
+    explicit_fields = _dedupe_strings(_goal_field_signals(goal))
+    task_types = {str(item).strip().lower() for item in intent.get("task_types", []) if str(item).strip()}
+    required_fields_by_site: Dict[str, List[str]] = {}
+    stretch_fields_by_site: Dict[str, List[str]] = {}
+    field_priority: Dict[str, str] = {}
+    rationale: List[str] = []
+    for site in target_sites:
+        base_required = list(SITE_CORE_FIELDS.get(site, SITE_CORE_FIELDS["default"]))
+        base_stretch = list(SITE_STRETCH_FIELDS.get(site, SITE_STRETCH_FIELDS["default"]))
+        known_fields = _dedupe_strings([*base_required, *base_stretch, *explicit_fields])
+        if explicit_fields:
+            required = [field for field in explicit_fields if field in known_fields]
+            if not required:
+                required = list(base_required)
+            if site != "default" and "title" not in required:
+                required = ["title", *required]
+            if ("web" in task_types or "data" in task_types or intent.get("requires_external_information")) and "link" not in required:
+                required.append("link")
+            required = _dedupe_strings(required)
+            stretch = [field for field in [*base_required, *base_stretch] if field not in required]
+            rationale.append(f"目标文本显式点名字段 `{', '.join(explicit_fields)}`，因此按任务字段优先定义 `{site}` 的交付标准。")
+        else:
+            required = list(base_required)
+            stretch = [field for field in base_stretch if field not in required]
+            rationale.append(f"目标文本未显式点名字段，沿用 `{site}` 的核心字段模板。")
+        required_fields_by_site[site] = required
+        stretch_fields_by_site[site] = _dedupe_strings(stretch)
+        for field_name in required:
+            field_priority[field_name] = "required"
+        for field_name in stretch_fields_by_site[site]:
+            field_priority.setdefault(field_name, "stretch")
+    return {
+        "target_sites": target_sites,
+        "goal_field_signals": explicit_fields,
+        "required_fields_by_site": required_fields_by_site,
+        "stretch_fields_by_site": stretch_fields_by_site,
+        "field_priority": field_priority,
+        "release_rules": {
+            "block_release_when_required_fields_missing": True,
+            "allow_release_with_missing_stretch_fields": True,
+            "minimum_required_field_coverage_ratio": 1.0,
+            "freshness_preferred": _goal_time_sensitivity(goal) == "fresh",
+        },
+        "notes": _dedupe_strings(rationale),
+    }
 
 
 def _risk_bucket(score: float) -> str:
@@ -359,6 +494,7 @@ def _derive_result_consensus(
     knowledge_basis: Dict[str, Any],
     route_candidates: List[Dict[str, Any]],
     challenge: Dict[str, Any],
+    delivery_requirements: Dict[str, Any],
 ) -> Dict[str, Any]:
     """
     中文注解：
@@ -370,8 +506,12 @@ def _derive_result_consensus(
     live_candidates = [item for item in route_candidates if item.get("route_type") != "human_checkpoint"]
     validation_families = _dedupe_strings([_candidate_validation_family(item) for item in live_candidates if _candidate_validation_family(item) != "unknown"])
     route_diversity_required = len(live_candidates) >= 2
+    has_required_field_contract = any(
+        [str(field).strip() for fields in (delivery_requirements.get("required_fields_by_site", {}) or {}).values() for field in (fields or [])]
+    )
     comparison_axes = [
         {"name": "source_trust", "weight": 5, "why": "优先官方/结构化/已验证来源。"},
+        {"name": "required_field_coverage", "weight": 6 if has_required_field_contract else 4, "why": "先满足本次任务真正 required 的字段，再考虑扩展字段。"},
         {"name": "field_completeness", "weight": 5, "why": "最终结果要尽量覆盖任务要求字段。"},
         {"name": "freshness", "weight": fresh_weight, "why": "时效敏感任务必须提高 freshness 权重。"},
         {"name": "site_readiness", "weight": 4 if challenge_rank >= 2 else 3, "why": "遇到反爬/风控时，优先已验证可用路线。"},
@@ -384,6 +524,7 @@ def _derive_result_consensus(
         consensus_mode="best_evidence_wins_with_validation_bias",
         comparison_axes=comparison_axes,
         tie_breakers=[
+            "prefer_route_with_higher_required_field_coverage",
             "prefer_lower_risk_route_when_quality_is_similar",
             "prefer_verified_site_route_when_challenge_is_present",
             "prefer_route_with_clearer_provenance",
@@ -430,6 +571,7 @@ def build_acquisition_hand(
     enabled = bool(intent.get("requires_external_information") or "web" in intent.get("task_types", []) or "data" in intent.get("task_types", []))
     adapter_registry = build_acquisition_adapter_registry(capabilities)
     route_candidates = _derive_route_candidates(fetch_route, crawler, adapter_registry, challenge) if enabled else []
+    delivery_requirements = _derive_delivery_requirements(goal, intent, route_candidates) if enabled else {}
     execution_strategy = _derive_execution_strategy(route_candidates, challenge) if enabled else {
         "mode": "disabled",
         "primary_route_id": "",
@@ -438,7 +580,7 @@ def build_acquisition_hand(
         "allow_parallel_validation": False,
         "stop_conditions": [],
     }
-    result_consensus = _derive_result_consensus(goal, knowledge_basis, route_candidates, challenge) if enabled else build_acquisition_consensus_schema()
+    result_consensus = _derive_result_consensus(goal, knowledge_basis, route_candidates, challenge, delivery_requirements) if enabled else build_acquisition_consensus_schema()
     recommended_tools = _dedupe_strings(
         [tool for row in route_candidates for tool in row.get("tools", []) if str(tool).strip()]
     )
@@ -459,6 +601,7 @@ def build_acquisition_hand(
             "time_sensitivity": _goal_time_sensitivity(goal),
             "selected_plan_id": str(selected_plan.get("plan_id", "")).strip(),
         },
+        delivery_requirements=delivery_requirements,
         governance_binding={
             "tier": str(governance.get("tier", "standard")).strip() or "standard",
             "protocol_pack_id": str(protocol_pack.get("pack_id", "")).strip(),
@@ -514,6 +657,8 @@ def build_acquisition_hand(
                 if item
             ],
             "validation_diversity_status": str(execution_strategy.get("validation_diversity_status", "")).strip(),
+            "target_sites": list(delivery_requirements.get("target_sites", []) or []),
+            "required_fields_by_site": dict(delivery_requirements.get("required_fields_by_site", {}) or {}),
             "recommended_tools": recommended_tools,
         },
     )
