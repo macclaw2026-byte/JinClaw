@@ -493,6 +493,7 @@ def verify_acquisition_summary_complete(spec: Dict[str, Any]) -> Dict[str, Any]:
                     "missing_field_total",
                     "required_field_gap_total",
                     "release_readiness_status",
+                    "trusted_release_status",
                 ]
                 if field not in overall and field not in missing_fields
             ]
@@ -510,6 +511,8 @@ def verify_acquisition_summary_complete(spec: Dict[str, Any]) -> Dict[str, Any]:
                 "field_coverage",
                 "required_field_coverage",
                 "validation_family",
+                "source_trust_tier",
+                "freshness_alignment",
                 "evidence_ref",
             ]
             if item.get(field, "") in {"", None} and field not in {"field_coverage"}
@@ -530,6 +533,8 @@ def verify_acquisition_summary_complete(spec: Dict[str, Any]) -> Dict[str, Any]:
                     "missing_required_fields",
                     "required_field_coverage_ratio",
                     "release_ready",
+                    "trust_posture",
+                    "trusted_release_ready",
                 ]
                 if field not in item
             ]

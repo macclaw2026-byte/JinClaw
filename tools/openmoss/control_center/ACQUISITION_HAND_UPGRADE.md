@@ -23,6 +23,7 @@ The current phase also extends that control surface into execution evidence:
 - verifier/runtime/doctor now have a shared artifact for planned-vs-executed route gaps and site-level consensus
 - task-level `delivery_requirements` now define which fields are truly required for release versus only nice-to-have
 - acquisition summaries now expose `release_readiness_status` so doctor/runtime can tell the difference between missing critical fields and missing stretch fields
+- acquisition summaries now also expose `trusted_release_status`, making it explicit whether required fields are backed mainly by higher-trust sources or only by browser/public-fetch evidence
 
 ## New Core Structures
 
@@ -47,6 +48,7 @@ The current phase also extends that control surface into execution evidence:
     - planned-vs-executed gaps
     - per-site winner / validation status
     - required-field coverage and release readiness
+    - trust posture and trusted-release status
     - overall consensus status
 - structured `challenge` signals
   - Challenge classification now emits severity, signals, safe next routes, and anti-bot posture hints.

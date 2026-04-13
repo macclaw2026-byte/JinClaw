@@ -43,6 +43,22 @@ ROUTE_TRUST_RANK = {
     "authorized_session": 2,
 }
 
+SOURCE_TRUST_RANK = {
+    "official_source": 5,
+    "reviewed_session": 5,
+    "structured_public": 4,
+    "public_fetch": 3,
+    "content_extraction": 3,
+    "browser_observation": 1,
+}
+
+FRESHNESS_ALIGNMENT_RANK = {
+    "fresh_ready": 3,
+    "session_snapshot": 2,
+    "snapshot_only": 1,
+    "adequate": 2,
+}
+
 RISK_PENALTY = {
     "low": 0,
     "medium": 4,
@@ -185,18 +201,19 @@ def _route_quality_score(route_run: Dict[str, Any], acquisition_hand: Dict[str, 
     strategy = acquisition_hand.get("execution_strategy", {}) or {}
     primary_route_id = str(strategy.get("primary_route_id", "")).strip()
     status_rank = STATUS_RANK.get(str(route_run.get("status", "")).strip(), 0)
-    route_type = str(route_run.get("route_type", "")).strip()
-    trust_rank = ROUTE_TRUST_RANK.get(route_type, 1)
+    trust_rank = SOURCE_TRUST_RANK.get(_route_source_trust_tier(route_run), 0)
     risk_penalty = RISK_PENALTY.get(str(route_run.get("route_risk", "medium")).strip(), 4)
     preferred_site_bonus = 6 if route_run.get("preferred_site_match") else 0
     primary_bonus = 4 if str(route_run.get("route_id", "")).strip() == primary_route_id else 0
     required_field_bonus = float(route_run.get("required_field_coverage", 0.0) or 0.0) * 75
+    freshness_bonus = FRESHNESS_ALIGNMENT_RANK.get(_route_freshness_alignment(route_run, acquisition_hand), 1) * 5
     return round(
         status_rank * 100
         + float(route_run.get("field_coverage", 0.0) or 0.0) * 60
         + required_field_bonus
         + int(route_run.get("arbitration_score", 0) or 0)
-        + trust_rank * 10
+        + trust_rank * 12
+        + freshness_bonus
         + preferred_site_bonus
         + primary_bonus
         - risk_penalty,
@@ -206,6 +223,43 @@ def _route_quality_score(route_run: Dict[str, Any], acquisition_hand: Dict[str, 
 
 def _route_validation_family(route_run: Dict[str, Any]) -> str:
     return str(route_run.get("validation_family", "")).strip() or str(route_run.get("route_type", "")).strip() or "unknown"
+
+
+def _route_source_trust_tier(route_run: Dict[str, Any]) -> str:
+    route_type = str(route_run.get("route_type", "")).strip()
+    return (
+        str(route_run.get("source_trust_tier", "")).strip()
+        or {
+            "official_api": "official_source",
+            "structured_public_endpoint": "structured_public",
+            "static_fetch": "public_fetch",
+            "crawl4ai": "content_extraction",
+            "browser_render": "browser_observation",
+            "authorized_session": "reviewed_session",
+        }.get(route_type, "")
+        or "unknown"
+    )
+
+
+def _goal_time_sensitivity(acquisition_hand: Dict[str, Any]) -> str:
+    return str(((acquisition_hand.get("target_profile", {}) or {}).get("time_sensitivity", "normal"))).strip() or "normal"
+
+
+def _route_freshness_alignment(route_run: Dict[str, Any], acquisition_hand: Dict[str, Any]) -> str:
+    if _goal_time_sensitivity(acquisition_hand) != "fresh":
+        return str(route_run.get("freshness_alignment", "")).strip() or "adequate"
+    route_type = str(route_run.get("route_type", "")).strip()
+    return (
+        str(route_run.get("freshness_alignment", "")).strip()
+        or {
+            "official_api": "fresh_ready",
+            "structured_public_endpoint": "fresh_ready",
+            "authorized_session": "session_snapshot",
+            "static_fetch": "snapshot_only",
+            "crawl4ai": "snapshot_only",
+            "browser_render": "snapshot_only",
+        }.get(route_type, "snapshot_only")
+    )
 
 
 def _route_families_for_ids(route_runs: List[Dict[str, Any]], route_ids: List[str]) -> List[str]:
@@ -444,6 +498,8 @@ def _field_provenance_for_site(
         selected = grouped_rows[0]
         selected_obs = selected.get("best_observation", {}) or {}
         selected_route = selected_obs.get("route_run", {}) or {}
+        selected_source_trust_tier = _route_source_trust_tier(selected_route)
+        selected_freshness_alignment = _route_freshness_alignment(selected_route, acquisition_hand)
         disagreeing_route_ids = _unique_preserve(
             [
                 route_id
@@ -456,10 +512,12 @@ def _field_provenance_for_site(
         disagreeing_families = _route_families_for_ids(surviving, disagreeing_route_ids)
 
         confidence = "single_route"
+        resolution_basis = "single_route_observation"
         notes: List[str] = []
         if len(grouped_rows) == 1:
             if len(selected.get("supporting_route_ids", []) or []) >= 2:
                 confidence = "cross_validated_independent" if len(supporting_families) >= 2 else "cross_validated_same_family"
+                resolution_basis = "cross_route_agreement"
                 cross_validated_fields.append(field_name)
                 if len(supporting_families) >= 2:
                     notes.append("至少两条不同验证家族的路线对该字段给出了相同值。")
@@ -469,23 +527,32 @@ def _field_provenance_for_site(
                 notes.append("当前字段只有单路线证据。")
         else:
             lead = float(selected.get("group_score", 0.0) or 0.0) - float(grouped_rows[1].get("group_score", 0.0) or 0.0)
+            runner_up_route = (((grouped_rows[1] or {}).get("best_observation", {}) or {}).get("route_run", {}) or {})
+            source_trust_gap = SOURCE_TRUST_RANK.get(selected_source_trust_tier, 0) - SOURCE_TRUST_RANK.get(_route_source_trust_tier(runner_up_route), 0)
             if len(selected.get("supporting_route_ids", []) or []) >= 2 and lead >= 15:
                 confidence = (
                     "resolved_multi_route_majority_independent"
                     if len(supporting_families) >= 2
                     else "resolved_multi_route_majority_same_family"
                 )
+                resolution_basis = "multi_route_majority"
                 cross_validated_fields.append(field_name)
                 if len(supporting_families) >= 2:
                     notes.append("存在冲突，但不同验证家族的多数路线支持当前值。")
                 else:
                     notes.append("存在冲突，但多数支持仍来自同一验证家族。")
+            elif source_trust_gap >= 2:
+                confidence = "resolved_by_source_trust"
+                resolution_basis = "source_trust_priority"
+                notes.append("存在冲突，当前值优先采用来源信任层级更高的路线。")
             elif lead >= 40:
                 confidence = "resolved_by_best_evidence"
+                resolution_basis = "best_evidence_score"
                 conflicted_fields.append(field_name)
                 notes.append("存在冲突，当前值由最佳证据路线胜出。")
             else:
                 confidence = "conflict_unresolved"
+                resolution_basis = "unresolved_conflict"
                 conflicted_fields.append(field_name)
                 notes.append("字段冲突未完全消解，需要人工复核。")
 
@@ -496,6 +563,9 @@ def _field_provenance_for_site(
             selected_route_id=str(selected_route.get("route_id", "")).strip(),
             selected_adapter_id=str(selected_route.get("adapter_id", "")).strip(),
             selected_tool_label=str(selected_route.get("tool_label", "")).strip(),
+            selected_source_trust_tier=selected_source_trust_tier,
+            selected_freshness_alignment=selected_freshness_alignment,
+            resolution_basis=resolution_basis,
             confidence=confidence,
             supporting_route_ids=selected.get("supporting_route_ids", []) or [],
             supporting_validation_families=supporting_families,
@@ -535,6 +605,29 @@ def _field_provenance_for_site(
     else:
         recommended_next_actions.append("switch_route_or_pause_for_human_checkpoint")
 
+    required_trust_tiers = _unique_preserve(
+        [
+            str((field_provenance.get(field_name, {}) or {}).get("selected_source_trust_tier", "")).strip()
+            for field_name in required_fields
+            if (field_provenance.get(field_name, {}) or {}).get("selected_source_trust_tier")
+        ]
+    )
+    trust_posture = "not_ready"
+    trusted_release_ready = False
+    if release_ready:
+        if required_trust_tiers and any(tier == "browser_observation" for tier in required_trust_tiers):
+            trust_posture = "guarded_low_trust_sources"
+            recommended_next_actions.append("seek_higher_trust_source_before_release")
+            site_notes.append("核心字段当前主要来自浏览器观察类证据，建议继续寻找更高信任来源。")
+        elif required_trust_tiers and any(tier in {"public_fetch", "content_extraction"} for tier in required_trust_tiers):
+            trust_posture = "guarded_medium_trust_sources"
+            recommended_next_actions.append("capture_higher_trust_source_before_release")
+            site_notes.append("核心字段已经可交付，但主要来自公共抓取/内容提取证据。")
+        else:
+            trust_posture = "trusted_sources"
+            trusted_release_ready = True
+            site_notes.append("核心字段主要来自较高信任层级的来源。")
+
     return build_acquisition_site_synthesis_schema(
         site=site,
         synthesis_status=synthesis_status,
@@ -547,6 +640,8 @@ def _field_provenance_for_site(
         missing_stretch_fields=missing_stretch_fields,
         required_field_coverage_ratio=required_field_coverage_ratio,
         release_ready=release_ready,
+        trust_posture=trust_posture,
+        trusted_release_ready=trusted_release_ready,
         cross_validated_fields=_unique_preserve(cross_validated_fields),
         conflicted_fields=_unique_preserve(conflicted_fields),
         supporting_route_ids=_unique_preserve(
@@ -627,6 +722,8 @@ def _site_consensus(site: str, route_runs: List[Dict[str, Any]], acquisition_han
             "route_id": str(winner.get("route_id", "")).strip(),
             "adapter_id": str(winner.get("adapter_id", "")).strip(),
             "validation_family": _route_validation_family(winner),
+            "source_trust_tier": _route_source_trust_tier(winner),
+            "freshness_alignment": _route_freshness_alignment(winner, acquisition_hand),
             "tool_label": str(winner.get("tool_label", "")).strip(),
             "status": str(winner.get("status", "")).strip(),
             "field_coverage": float(winner.get("field_coverage", 0.0) or 0.0),
@@ -682,6 +779,8 @@ def build_acquisition_execution_summary(
                     "route_type": str(planned_binding.get("route_type", "")).strip(),
                     "validation_family": str(planned_binding.get("validation_family", "")).strip()
                     or str((adapter or {}).get("validation_family", "")).strip(),
+                    "source_trust_tier": str(planned_binding.get("source_trust_tier", "")).strip()
+                    or str((adapter or {}).get("source_trust_tier", "")).strip(),
                     "risk_level": str((adapter or {}).get("risk_level", "medium")).strip() or "medium",
                     "parallel_role": str(planned_binding.get("parallel_role", "")).strip(),
                 }
@@ -708,6 +807,17 @@ def build_acquisition_execution_summary(
                 route_type=str((candidate or {}).get("route_type", "")).strip() or str((adapter or {}).get("route_type", "")).strip(),
                 validation_family=str((candidate or {}).get("validation_family", "")).strip()
                 or str((adapter or {}).get("validation_family", "")).strip(),
+                source_trust_tier=str((candidate or {}).get("source_trust_tier", "")).strip()
+                or str((adapter or {}).get("source_trust_tier", "")).strip(),
+                freshness_alignment=_route_freshness_alignment(
+                    {
+                        **dict(candidate or {}),
+                        "route_type": str((candidate or {}).get("route_type", "")).strip() or str((adapter or {}).get("route_type", "")).strip(),
+                        "source_trust_tier": str((candidate or {}).get("source_trust_tier", "")).strip()
+                        or str((adapter or {}).get("source_trust_tier", "")).strip(),
+                    },
+                    acquisition_hand,
+                ),
                 tool_label=tool_label,
                 status=str(row.get("status", "")).strip() or "failed",
                 source_url=source_url,
@@ -731,8 +841,24 @@ def build_acquisition_execution_summary(
         synthesis = _field_provenance_for_site(site_id, site_route_runs, acquisition_hand)
         site_synthesized_outputs.append(synthesis)
         consensus_row = _site_consensus(site_id, site_route_runs, acquisition_hand)
+        if (
+            str(consensus_row.get("validation_status", "")).strip() == "conflict_detected"
+            and not (synthesis.get("conflicted_fields", []) or [])
+            and bool(synthesis.get("release_ready"))
+        ):
+            consensus_row["validation_status"] = "trust_resolved_conflict"
+            consensus_row["requires_review"] = False
+            consensus_row["decision"] = "clear_winner"
+            consensus_row["recommended_next_actions"] = [
+                action
+                for action in (consensus_row.get("recommended_next_actions", []) or [])
+                if str(action).strip() != "review_conflicting_route_outputs_before_release"
+            ]
+            consensus_row.setdefault("notes", []).append("原始路线存在冲突，但字段级合成已通过来源信任规则完成保守解冲突。")
         consensus_row["synthesis_status"] = str(synthesis.get("synthesis_status", "")).strip()
         consensus_row["release_ready"] = bool(synthesis.get("release_ready"))
+        consensus_row["trust_posture"] = str(synthesis.get("trust_posture", "")).strip()
+        consensus_row["trusted_release_ready"] = bool(synthesis.get("trusted_release_ready"))
         consensus_row["final_field_count"] = len((synthesis.get("final_fields", {}) or {}).keys())
         consensus_row["cross_validated_field_count"] = len(synthesis.get("cross_validated_fields", []) or [])
         consensus_row["conflicted_field_count"] = len(synthesis.get("conflicted_fields", []) or [])
@@ -761,6 +887,9 @@ def build_acquisition_execution_summary(
     sites_blocked = sum(1 for item in site_consensus_rows if item.get("decision") == "insufficient_evidence")
     synthesized_sites_total = sum(1 for item in site_synthesized_outputs if (item.get("final_fields", {}) or {}))
     sites_release_ready = sum(1 for item in site_synthesized_outputs if bool(item.get("release_ready")))
+    trusted_ready_sites_total = sum(1 for item in site_synthesized_outputs if bool(item.get("trusted_release_ready")))
+    guarded_low_trust_sites_total = sum(1 for item in site_synthesized_outputs if str(item.get("trust_posture", "")).strip() == "guarded_low_trust_sources")
+    guarded_medium_trust_sites_total = sum(1 for item in site_synthesized_outputs if str(item.get("trust_posture", "")).strip() == "guarded_medium_trust_sources")
     cross_validated_field_total = sum(len(item.get("cross_validated_fields", []) or []) for item in site_synthesized_outputs)
     conflicted_field_total = sum(len(item.get("conflicted_fields", []) or []) for item in site_synthesized_outputs)
     missing_field_total = sum(len(item.get("missing_fields", []) or []) for item in site_synthesized_outputs)
@@ -809,6 +938,14 @@ def build_acquisition_execution_summary(
     elif missing_field_total:
         release_readiness_status = "stretch_fields_missing"
 
+    trusted_release_status = "not_ready"
+    if release_readiness_status == "ready" and sites_total and trusted_ready_sites_total == sites_total:
+        trusted_release_status = "trusted_ready"
+    elif release_readiness_status == "ready" and guarded_low_trust_sites_total:
+        trusted_release_status = "guarded_low_trust"
+    elif release_readiness_status == "ready" and guarded_medium_trust_sites_total:
+        trusted_release_status = "guarded_medium_trust"
+
     recommended_next_actions = _unique_preserve(
         [
             *(
@@ -849,6 +986,16 @@ def build_acquisition_execution_summary(
             *(
                 ["capture_missing_required_fields_before_release"]
                 if required_field_gap_total
+                else []
+            ),
+            *(
+                ["seek_higher_trust_source_before_release"]
+                if trusted_release_status == "guarded_low_trust"
+                else []
+            ),
+            *(
+                ["capture_higher_trust_source_before_release"]
+                if trusted_release_status == "guarded_medium_trust"
                 else []
             ),
             *(
@@ -896,12 +1043,16 @@ def build_acquisition_execution_summary(
             "validation_diversity_status": validation_diversity_status,
             "synthesized_sites_total": synthesized_sites_total,
             "sites_release_ready": sites_release_ready,
+            "trusted_ready_sites_total": trusted_ready_sites_total,
+            "guarded_low_trust_sites_total": guarded_low_trust_sites_total,
+            "guarded_medium_trust_sites_total": guarded_medium_trust_sites_total,
             "cross_validated_field_total": cross_validated_field_total,
             "conflicted_field_total": conflicted_field_total,
             "missing_field_total": missing_field_total,
             "required_field_gap_total": required_field_gap_total,
             "stretch_field_gap_total": stretch_field_gap_total,
             "release_readiness_status": release_readiness_status,
+            "trusted_release_status": trusted_release_status,
             "route_gap_count": len(planned_but_not_executed),
             "global_planned_route_ids": execution_plan.get("global_planned_route_ids", []) or _planned_route_ids(acquisition_hand),
             "global_skipped_route_ids": global_skipped_route_ids,
@@ -929,6 +1080,7 @@ def render_acquisition_execution_summary_markdown(summary: Dict[str, Any]) -> st
         f"- Consensus status: `{overall.get('consensus_status', '')}`",
         f"- Synthesis status: `{overall.get('synthesis_status', '')}`",
         f"- Release readiness: `{overall.get('release_readiness_status', '')}`",
+        f"- Trusted release: `{overall.get('trusted_release_status', '')}`",
         f"- Validation diversity: `{overall.get('validation_diversity_status', '')}`",
         f"- Planned routes: `{', '.join(summary.get('planned_route_ids', []) or [])}`",
         f"- Executed routes: `{', '.join(summary.get('executed_route_ids', []) or [])}`",
@@ -951,8 +1103,10 @@ def render_acquisition_execution_summary_markdown(summary: Dict[str, Any]) -> st
                 f"- Validation: `{site.get('validation_status', '')}`",
                 f"- Validation families: `{', '.join(site.get('validation_families', []) or [])}`",
                 f"- Synthesis: `{site.get('synthesis_status', synthesized.get('synthesis_status', ''))}`",
+                f"- Trust posture: `{site.get('trust_posture', synthesized.get('trust_posture', ''))}`",
                 f"- Winner route: `{winner.get('route_id', '')}`",
                 f"- Winner adapter: `{winner.get('adapter_id', '')}`",
+                f"- Winner source trust: `{winner.get('source_trust_tier', '')}`",
                 f"- Winner tool: `{winner.get('tool_label', '')}`",
                 f"- Winner status: `{winner.get('status', '')}`",
                 f"- Winner field coverage: `{winner.get('field_coverage', 0.0)}`",
