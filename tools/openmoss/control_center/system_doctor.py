@@ -2044,6 +2044,7 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
     from coding_session_adapter import build_coding_session_payload
     from acp_dispatch_builder import build_acp_dispatch_request
     from crawler_probe_runner import _derive_probe_execution_plan
+    from acquisition_result_normalizer import build_acquisition_execution_summary
     from task_contract import TaskContract
 
     def _run_case(task_id: str, goal: str) -> None:
@@ -2074,6 +2075,51 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
             )
             if not [str(item).strip() for item in probe_plan.get('tool_ids', []) or [] if str(item).strip()]:
                 errors.append('acquisition_chain_missing_local_probe_plan')
+            sample_tool_labels = [
+                str(item.get('tool_label', '')).strip()
+                for item in (probe_plan.get('route_plan', []) or [])[:2]
+                if str(item.get('tool_label', '')).strip()
+            ]
+            if sample_tool_labels:
+                sample_report = {
+                    'generated_at': _utc_now_iso(),
+                    'planned_execution': probe_plan,
+                    'sites': [
+                        {
+                            'site': 'amazon',
+                            'url': 'https://www.amazon.com/s?k=doctor+acquisition+probe',
+                            'tool_results': [
+                                {
+                                    'tool': tool_label,
+                                    'status': 'usable',
+                                    'arbitration_score': 80 - index * 3,
+                                    'normalized_task_output': {
+                                        'field_completeness': 0.75,
+                                        'populated_fields': ['title', 'price', 'link'],
+                                        'fields': {
+                                            'title': 'Doctor Probe Item',
+                                            'price': '19.99',
+                                            'link': '/dp/DOCTORCHECK',
+                                        },
+                                    },
+                                    'false_positive': {'reasons': []},
+                                }
+                                for index, tool_label in enumerate(sample_tool_labels)
+                            ],
+                        }
+                    ],
+                }
+                sample_summary = build_acquisition_execution_summary(
+                    task_id,
+                    goal,
+                    sample_report,
+                    acquisition_hand,
+                    report_path='/tmp/doctor-acquisition-sample.json',
+                )
+                if not (sample_summary.get('site_synthesized_outputs', []) or []):
+                    errors.append('acquisition_chain_missing_site_synthesis_summary')
+                if not str((sample_summary.get('overall_summary', {}) or {}).get('synthesis_status', '')).strip():
+                    errors.append('acquisition_chain_missing_synthesis_status')
 
             contract = TaskContract.from_dict({
                 'task_id': task_id,
@@ -2121,6 +2167,10 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
         'authoritative_doctor': 'tools/openmoss/control_center/system_doctor.py',
         'required_files_checked': len(ACQUISITION_REQUIRED_FILES),
         'required_files': [str(path.relative_to(WORKSPACE_ROOT)) for path in ACQUISITION_REQUIRED_FILES],
+        'field_synthesis_contract': not any(
+            item in {'acquisition_chain_missing_site_synthesis_summary', 'acquisition_chain_missing_synthesis_status'}
+            for item in errors
+        ),
         'acquisition_chain': 'ok' if not errors else 'error',
         'errors': errors,
         'ok': not errors,

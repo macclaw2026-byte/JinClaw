@@ -12,7 +12,8 @@ for p in [str(CONTROL_CENTER), str(AUTONOMY)]:
         sys.path.insert(0, p)
 
 from acquisition_adapter_registry import build_acquisition_adapter_registry  # noqa: E402
-from acquisition_result_normalizer import build_acquisition_execution_summary  # noqa: E402
+from acquisition_result_normalizer import build_acquisition_execution_summary, render_acquisition_execution_summary_markdown  # noqa: E402
+from task_status_snapshot import build_task_status_snapshot  # noqa: E402
 from verifier_registry import TASKS_ROOT, run_verifier  # noqa: E402
 
 
@@ -87,6 +88,8 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
                                 'fields': {
                                     'title': 'Wireless Mouse',
                                     'price': '19.99',
+                                    'rating': '4.7',
+                                    'reviews': '1240',
                                     'link': '/dp/B000123456',
                                 },
                             },
@@ -102,6 +105,8 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
                                 'fields': {
                                     'title': 'Wireless Mouse',
                                     'price': '19.99',
+                                    'rating': '4.7',
+                                    'reviews': '1240',
                                     'link': '/dp/B000123456',
                                 },
                             },
@@ -129,9 +134,33 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
             report_path='/tmp/crawler-tool-matrix.json',
         )
         self.assertEqual(summary['overall_summary']['consensus_status'], 'cross_route_validated')
+        self.assertEqual(summary['overall_summary']['synthesis_status'], 'ready')
         self.assertEqual(summary['site_consensus'][0]['validation_status'], 'cross_validated')
+        self.assertEqual(summary['site_synthesized_outputs'][0]['final_fields']['title'], 'Wireless Mouse')
+        self.assertEqual(summary['site_synthesized_outputs'][0]['field_provenance']['price']['confidence'], 'cross_validated')
         self.assertFalse(summary['planned_but_not_executed_route_ids'])
         self.assertEqual(summary['route_runs'][0]['evidence_ref'], '/tmp/crawler-tool-matrix.json')
+        self.assertIn('Synthesis status: `ready`', render_acquisition_execution_summary_markdown(summary))
+
+    def test_execution_summary_records_field_level_conflict_resolution(self):
+        payload = self._report_payload()
+        payload['sites'][0]['tool_results'][0]['arbitration_score'] = 120
+        payload['sites'][0]['tool_results'][1]['arbitration_score'] = 40
+        payload['sites'][0]['tool_results'][1]['normalized_task_output']['fields']['price'] = '24.99'
+        summary = build_acquisition_execution_summary(
+            'test-acq-conflict',
+            'Collect public Amazon pricing evidence',
+            payload,
+            self._acquisition_hand(),
+            report_path='/tmp/crawler-tool-matrix.json',
+        )
+        self.assertEqual(summary['overall_summary']['consensus_status'], 'needs_review')
+        self.assertEqual(summary['overall_summary']['synthesis_status'], 'needs_review')
+        site_output = summary['site_synthesized_outputs'][0]
+        self.assertEqual(site_output['final_fields']['price'], '19.99')
+        self.assertIn('price', site_output['conflicted_fields'])
+        self.assertEqual(site_output['field_provenance']['price']['confidence'], 'resolved_by_best_evidence')
+        self.assertIn('review_field_level_conflicts_before_release', summary['recommended_next_actions'])
 
     def test_verifier_accepts_complete_acquisition_summary(self):
         task_id = 'test-acq-summary-verifier'
@@ -157,6 +186,7 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
             'metadata': {
                 'crawler_execution': {
                     'acquisition_summary_json_path': str(summary_path),
+                    'acquisition_summary': summary,
                 }
             }
         }
@@ -164,7 +194,13 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         (task_dir / 'state.json').write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
         result = run_verifier({'type': 'acquisition_summary_complete', 'task_id': task_id})
         self.assertTrue(result['ok'])
+        self.assertEqual(result['version'], 'acquisition-execution-summary-v2')
         self.assertEqual(result['consensus_status'], 'cross_route_validated')
+        self.assertEqual(result['synthesis_status'], 'ready')
+        self.assertEqual(result['site_synthesized_output_count'], 1)
+        snapshot = build_task_status_snapshot(task_id)
+        self.assertEqual(snapshot['acquisition_hand']['execution_synthesis_status'], 'ready')
+        self.assertEqual(snapshot['acquisition_hand']['synthesized_sites_total'], 1)
 
 
 if __name__ == '__main__':

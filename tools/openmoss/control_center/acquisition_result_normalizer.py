@@ -21,7 +21,9 @@ from typing import Any, Dict, List
 
 from control_center_schemas import (
     build_acquisition_execution_summary_schema,
+    build_acquisition_field_provenance_schema,
     build_acquisition_route_result_schema,
+    build_acquisition_site_synthesis_schema,
 )
 
 
@@ -45,6 +47,13 @@ RISK_PENALTY = {
     "low": 0,
     "medium": 4,
     "high": 8,
+}
+
+SITE_EXPECTED_FIELDS = {
+    "amazon": ["title", "price", "rating", "reviews", "link"],
+    "walmart": ["title", "price", "rating", "link"],
+    "temu": ["title", "price", "link", "promo"],
+    "1688": ["title", "price", "moq", "supplier", "link"],
 }
 
 
@@ -212,6 +221,213 @@ def _field_agreement(winner_fields: Dict[str, Any], other_fields: Dict[str, Any]
     }
 
 
+def _value_present(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, dict, tuple, set)):
+        return bool(value)
+    return True
+
+
+def _value_key(value: Any) -> str:
+    if isinstance(value, str):
+        return str(value).strip().lower()
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _field_group_score(best_quality_score: float, support_count: int) -> float:
+    return round(float(best_quality_score or 0.0) + support_count * 35.0, 3)
+
+
+def _derive_expected_fields(site: str, route_runs: List[Dict[str, Any]]) -> List[str]:
+    expected = list(SITE_EXPECTED_FIELDS.get(site, []))
+    discovered = _unique_preserve(
+        [
+            *[
+                str(key).strip()
+                for row in route_runs
+                for key in (row.get("task_fields", {}) or {}).keys()
+                if str(key).strip()
+            ],
+            *[
+                str(item).strip()
+                for row in route_runs
+                for item in (row.get("populated_fields", []) or [])
+                if str(item).strip()
+            ],
+        ]
+    )
+    return _unique_preserve([*expected, *discovered])
+
+
+def _field_provenance_for_site(
+    site: str,
+    route_runs: List[Dict[str, Any]],
+    acquisition_hand: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：对单个站点做字段级融合与 provenance 说明。
+    - 设计意图：站点级 winner 只能回答“谁赢了”，字段级 provenance 才能回答“最终每个字段为何选它”。
+    """
+    surviving = [item for item in route_runs if str(item.get("status", "")).strip() in {"usable", "partial"}]
+    expected_fields = _derive_expected_fields(site, surviving or route_runs)
+    if not surviving:
+        return build_acquisition_site_synthesis_schema(
+            site=site,
+            synthesis_status="blocked",
+            missing_fields=expected_fields,
+            recommended_next_actions=["switch_route_or_pause_for_human_checkpoint"],
+            notes=["当前站点没有 surviving route，无法进行字段级融合。"],
+        )
+
+    final_fields: Dict[str, Any] = {}
+    field_provenance: Dict[str, Dict[str, Any]] = {}
+    cross_validated_fields: List[str] = []
+    conflicted_fields: List[str] = []
+    missing_fields: List[str] = []
+
+    for field_name in expected_fields:
+        observations = []
+        for route_run in surviving:
+            value = (route_run.get("task_fields", {}) or {}).get(field_name)
+            if not _value_present(value):
+                continue
+            observations.append(
+                {
+                    "value": value,
+                    "route_run": route_run,
+                    "quality_score": _route_quality_score(route_run, acquisition_hand),
+                }
+            )
+        if not observations:
+            missing_fields.append(field_name)
+            continue
+
+        grouped: Dict[str, Dict[str, Any]] = {}
+        for obs in observations:
+            key = _value_key(obs.get("value"))
+            bucket = grouped.setdefault(
+                key,
+                {
+                    "value": obs.get("value"),
+                    "supporting_route_ids": [],
+                    "supporting_values": [],
+                    "best_observation": obs,
+                    "best_quality_score": float(obs.get("quality_score", 0.0) or 0.0),
+                },
+            )
+            route_run = obs.get("route_run", {}) or {}
+            route_id = str(route_run.get("route_id", "")).strip()
+            if route_id:
+                bucket["supporting_route_ids"].append(route_id)
+            bucket["supporting_values"].append(obs.get("value"))
+            if float(obs.get("quality_score", 0.0) or 0.0) > float(bucket.get("best_quality_score", 0.0) or 0.0):
+                bucket["best_quality_score"] = float(obs.get("quality_score", 0.0) or 0.0)
+                bucket["best_observation"] = obs
+
+        grouped_rows = []
+        for bucket in grouped.values():
+            support_count = len(_unique_preserve(bucket.get("supporting_route_ids", []) or []))
+            grouped_rows.append(
+                {
+                    **bucket,
+                    "supporting_route_ids": _unique_preserve(bucket.get("supporting_route_ids", []) or []),
+                    "group_score": _field_group_score(float(bucket.get("best_quality_score", 0.0) or 0.0), support_count),
+                }
+            )
+        grouped_rows.sort(
+            key=lambda item: (
+                -float(item.get("group_score", 0.0) or 0.0),
+                -len(item.get("supporting_route_ids", []) or []),
+            )
+        )
+        selected = grouped_rows[0]
+        selected_obs = selected.get("best_observation", {}) or {}
+        selected_route = selected_obs.get("route_run", {}) or {}
+        disagreeing_route_ids = _unique_preserve(
+            [
+                route_id
+                for bucket in grouped_rows[1:]
+                for route_id in (bucket.get("supporting_route_ids", []) or [])
+                if str(route_id).strip()
+            ]
+        )
+
+        confidence = "single_route"
+        notes: List[str] = []
+        if len(grouped_rows) == 1:
+            if len(selected.get("supporting_route_ids", []) or []) >= 2:
+                confidence = "cross_validated"
+                cross_validated_fields.append(field_name)
+                notes.append("至少两条路线对该字段给出了相同值。")
+            else:
+                notes.append("当前字段只有单路线证据。")
+        else:
+            lead = float(selected.get("group_score", 0.0) or 0.0) - float(grouped_rows[1].get("group_score", 0.0) or 0.0)
+            if len(selected.get("supporting_route_ids", []) or []) >= 2 and lead >= 15:
+                confidence = "resolved_multi_route_majority"
+                cross_validated_fields.append(field_name)
+                notes.append("存在冲突，但多数路线支持当前值。")
+            elif lead >= 40:
+                confidence = "resolved_by_best_evidence"
+                conflicted_fields.append(field_name)
+                notes.append("存在冲突，当前值由最佳证据路线胜出。")
+            else:
+                confidence = "conflict_unresolved"
+                conflicted_fields.append(field_name)
+                notes.append("字段冲突未完全消解，需要人工复核。")
+
+        final_fields[field_name] = selected.get("value")
+        field_provenance[field_name] = build_acquisition_field_provenance_schema(
+            field_name=field_name,
+            selected_value=selected.get("value"),
+            selected_route_id=str(selected_route.get("route_id", "")).strip(),
+            selected_adapter_id=str(selected_route.get("adapter_id", "")).strip(),
+            selected_tool_label=str(selected_route.get("tool_label", "")).strip(),
+            confidence=confidence,
+            supporting_route_ids=selected.get("supporting_route_ids", []) or [],
+            disagreeing_route_ids=disagreeing_route_ids,
+            supporting_values=selected.get("supporting_values", []) or [],
+            notes=notes,
+        )
+
+    synthesis_status = "blocked"
+    site_notes: List[str] = []
+    recommended_next_actions: List[str] = []
+    if final_fields:
+        synthesis_status = "ready"
+        if conflicted_fields:
+            synthesis_status = "needs_review"
+            site_notes.append("部分字段存在冲突，当前结果是保守择优后的合成视图。")
+            recommended_next_actions.append("review_field_level_conflicts_before_release")
+        elif missing_fields:
+            synthesis_status = "partial"
+            site_notes.append("已能输出结构化结果，但仍有缺失字段。")
+            recommended_next_actions.append("capture_missing_fields_via_backup_route")
+        else:
+            site_notes.append("当前站点已形成完整字段级合成结果。")
+    else:
+        recommended_next_actions.append("switch_route_or_pause_for_human_checkpoint")
+
+    return build_acquisition_site_synthesis_schema(
+        site=site,
+        synthesis_status=synthesis_status,
+        final_fields=final_fields,
+        field_provenance=field_provenance,
+        missing_fields=missing_fields,
+        cross_validated_fields=_unique_preserve(cross_validated_fields),
+        conflicted_fields=_unique_preserve(conflicted_fields),
+        supporting_route_ids=_unique_preserve(
+            [str(item.get("route_id", "")).strip() for item in surviving if str(item.get("route_id", "")).strip()]
+        ),
+        recommended_next_actions=_unique_preserve(recommended_next_actions),
+        notes=site_notes,
+    )
+
+
 def _site_consensus(site: str, route_runs: List[Dict[str, Any]], acquisition_hand: Dict[str, Any]) -> Dict[str, Any]:
     surviving = [item for item in route_runs if str(item.get("status", "")).strip() in {"usable", "partial"}]
     if not surviving:
@@ -302,6 +518,7 @@ def build_acquisition_execution_summary(
     execution_plan = _report_execution_plan(report_payload)
     route_runs: List[Dict[str, Any]] = []
     site_consensus_rows: List[Dict[str, Any]] = []
+    site_synthesized_outputs: List[Dict[str, Any]] = []
     route_runs_by_site: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
 
     for site in report_payload.get("sites", []) or []:
@@ -355,7 +572,14 @@ def build_acquisition_execution_summary(
             route_runs_by_site[site_id].append(route_run)
 
     for site_id, site_route_runs in route_runs_by_site.items():
-        site_consensus_rows.append(_site_consensus(site_id, site_route_runs, acquisition_hand))
+        synthesis = _field_provenance_for_site(site_id, site_route_runs, acquisition_hand)
+        site_synthesized_outputs.append(synthesis)
+        consensus_row = _site_consensus(site_id, site_route_runs, acquisition_hand)
+        consensus_row["synthesis_status"] = str(synthesis.get("synthesis_status", "")).strip()
+        consensus_row["final_field_count"] = len((synthesis.get("final_fields", {}) or {}).keys())
+        consensus_row["cross_validated_field_count"] = len(synthesis.get("cross_validated_fields", []) or [])
+        consensus_row["conflicted_field_count"] = len(synthesis.get("conflicted_fields", []) or [])
+        site_consensus_rows.append(consensus_row)
 
     planned_route_ids = execution_plan.get("active_route_ids") or _planned_route_ids(acquisition_hand)
     executed_route_ids = _unique_preserve([str(item.get("route_id", "")).strip() for item in route_runs if str(item.get("route_id", "")).strip()])
@@ -367,6 +591,10 @@ def build_acquisition_execution_summary(
     sites_needs_review = sum(1 for item in site_consensus_rows if bool(item.get("requires_review")))
     sites_cross_validated = sum(1 for item in site_consensus_rows if item.get("validation_status") == "cross_validated")
     sites_blocked = sum(1 for item in site_consensus_rows if item.get("decision") == "insufficient_evidence")
+    synthesized_sites_total = sum(1 for item in site_synthesized_outputs if (item.get("final_fields", {}) or {}))
+    cross_validated_field_total = sum(len(item.get("cross_validated_fields", []) or []) for item in site_synthesized_outputs)
+    conflicted_field_total = sum(len(item.get("conflicted_fields", []) or []) for item in site_synthesized_outputs)
+    missing_field_total = sum(len(item.get("missing_fields", []) or []) for item in site_synthesized_outputs)
 
     consensus_status = "insufficient_evidence"
     if sites_needs_review:
@@ -375,6 +603,14 @@ def build_acquisition_execution_summary(
         consensus_status = "cross_route_validated"
     elif sites_total and sites_clear_winner == sites_total:
         consensus_status = "clear_winner"
+
+    synthesis_status = "blocked"
+    if any(str(item.get("synthesis_status", "")).strip() == "needs_review" for item in site_synthesized_outputs):
+        synthesis_status = "needs_review"
+    elif any(str(item.get("synthesis_status", "")).strip() == "partial" for item in site_synthesized_outputs):
+        synthesis_status = "partial"
+    elif sites_total and all(str(item.get("synthesis_status", "")).strip() == "ready" for item in site_synthesized_outputs):
+        synthesis_status = "ready"
 
     recommended_next_actions = _unique_preserve(
         [
@@ -403,9 +639,25 @@ def build_acquisition_execution_summary(
                 if sites_blocked
                 else []
             ),
+            *(
+                ["review_field_level_conflicts_before_release"]
+                if conflicted_field_total
+                else []
+            ),
+            *(
+                ["capture_missing_fields_via_backup_route"]
+                if missing_field_total
+                else []
+            ),
             *[
                 str(action).strip()
                 for item in site_consensus_rows
+                for action in item.get("recommended_next_actions", []) or []
+                if str(action).strip()
+            ],
+            *[
+                str(action).strip()
+                for item in site_synthesized_outputs
                 for action in item.get("recommended_next_actions", []) or []
                 if str(action).strip()
             ],
@@ -422,13 +674,19 @@ def build_acquisition_execution_summary(
         planned_but_not_executed_route_ids=planned_but_not_executed,
         route_runs=route_runs,
         site_consensus=site_consensus_rows,
+        site_synthesized_outputs=site_synthesized_outputs,
         overall_summary={
             "consensus_status": consensus_status,
+            "synthesis_status": synthesis_status,
             "sites_total": sites_total,
             "sites_clear_winner": sites_clear_winner,
             "sites_cross_validated": sites_cross_validated,
             "sites_needs_review": sites_needs_review,
             "sites_blocked": sites_blocked,
+            "synthesized_sites_total": synthesized_sites_total,
+            "cross_validated_field_total": cross_validated_field_total,
+            "conflicted_field_total": conflicted_field_total,
+            "missing_field_total": missing_field_total,
             "route_gap_count": len(planned_but_not_executed),
             "global_planned_route_ids": execution_plan.get("global_planned_route_ids", []) or _planned_route_ids(acquisition_hand),
             "global_skipped_route_ids": global_skipped_route_ids,
@@ -454,19 +712,27 @@ def render_acquisition_execution_summary_markdown(summary: Dict[str, Any]) -> st
         "",
         f"- Task: `{summary.get('task_id', '')}`",
         f"- Consensus status: `{overall.get('consensus_status', '')}`",
+        f"- Synthesis status: `{overall.get('synthesis_status', '')}`",
         f"- Planned routes: `{', '.join(summary.get('planned_route_ids', []) or [])}`",
         f"- Executed routes: `{', '.join(summary.get('executed_route_ids', []) or [])}`",
         f"- Planned but not executed: `{', '.join(summary.get('planned_but_not_executed_route_ids', []) or [])}`",
         "",
     ]
+    synthesis_by_site = {
+        str(item.get("site", "")).strip(): item
+        for item in summary.get("site_synthesized_outputs", []) or []
+        if str(item.get("site", "")).strip()
+    }
     for site in summary.get("site_consensus", []) or []:
         winner = site.get("winner", {}) or {}
+        synthesized = synthesis_by_site.get(str(site.get("site", "")).strip(), {}) or {}
         lines.extend(
             [
                 f"## {site.get('site', '')}",
                 "",
                 f"- Decision: `{site.get('decision', '')}`",
                 f"- Validation: `{site.get('validation_status', '')}`",
+                f"- Synthesis: `{site.get('synthesis_status', synthesized.get('synthesis_status', ''))}`",
                 f"- Winner route: `{winner.get('route_id', '')}`",
                 f"- Winner adapter: `{winner.get('adapter_id', '')}`",
                 f"- Winner tool: `{winner.get('tool_label', '')}`",
@@ -474,13 +740,29 @@ def render_acquisition_execution_summary_markdown(summary: Dict[str, Any]) -> st
                 f"- Winner field coverage: `{winner.get('field_coverage', 0.0)}`",
             ]
         )
+        if synthesized.get("final_fields"):
+            lines.append("- Final fields:")
+            for key, value in (synthesized.get("final_fields", {}) or {}).items():
+                lines.append(f"  - {key}: {value}")
+        if synthesized.get("conflicted_fields"):
+            lines.append(f"- Conflicted fields: `{', '.join(synthesized.get('conflicted_fields', []) or [])}`")
+        if synthesized.get("missing_fields"):
+            lines.append(f"- Missing fields: `{', '.join(synthesized.get('missing_fields', []) or [])}`")
         if site.get("notes"):
             lines.append("- Notes:")
             for note in site.get("notes", []) or []:
                 lines.append(f"  - {note}")
+        if synthesized.get("notes"):
+            lines.append("- Synthesis notes:")
+            for note in synthesized.get("notes", []) or []:
+                lines.append(f"  - {note}")
         if site.get("recommended_next_actions"):
             lines.append("- Recommended next actions:")
             for action in site.get("recommended_next_actions", []) or []:
+                lines.append(f"  - {action}")
+        if synthesized.get("recommended_next_actions"):
+            lines.append("- Synthesis actions:")
+            for action in synthesized.get("recommended_next_actions", []) or []:
                 lines.append(f"  - {action}")
         lines.append("")
     if summary.get("recommended_next_actions"):
