@@ -439,6 +439,8 @@ def build_acquisition_field_provenance_schema(
     disagreeing_route_ids: List[str] | None = None,
     disagreeing_validation_families: List[str] | None = None,
     supporting_values: List[Any] | None = None,
+    selection_weight: float = 0.0,
+    selection_factors: Dict[str, Any] | None = None,
     notes: List[str] | None = None,
 ) -> Dict[str, Any]:
     """
@@ -461,6 +463,42 @@ def build_acquisition_field_provenance_schema(
         "disagreeing_route_ids": list(disagreeing_route_ids or []),
         "disagreeing_validation_families": list(disagreeing_validation_families or []),
         "supporting_values": list(supporting_values or []),
+        "selection_weight": round(float(selection_weight or 0.0), 3),
+        "selection_factors": dict(selection_factors or {}),
+        "notes": list(notes or []),
+    }
+
+
+def build_acquisition_answer_field_schema(
+    *,
+    field_name: str,
+    value: Any = "",
+    priority: str = "stretch",
+    confidence: str = "",
+    resolution_basis: str = "",
+    source_trust_tier: str = "",
+    freshness_alignment: str = "",
+    selection_weight: float = 0.0,
+    route_ids: List[str] | None = None,
+    validation_families: List[str] | None = None,
+    notes: List[str] | None = None,
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：构造 answer synthesis 中的字段级交付行。
+    - 设计意图：让下游回复层不必自己回溯 provenance 拼装“最终答案里每个字段该怎么展示”。
+    """
+    return {
+        "field_name": str(field_name).strip(),
+        "value": value,
+        "priority": str(priority).strip() or "stretch",
+        "confidence": str(confidence).strip(),
+        "resolution_basis": str(resolution_basis).strip(),
+        "source_trust_tier": str(source_trust_tier).strip(),
+        "freshness_alignment": str(freshness_alignment).strip(),
+        "selection_weight": round(float(selection_weight or 0.0), 3),
+        "route_ids": list(route_ids or []),
+        "validation_families": list(validation_families or []),
         "notes": list(notes or []),
     }
 
@@ -493,6 +531,66 @@ def build_acquisition_release_disclosure_schema(
     }
 
 
+def build_acquisition_answer_synthesis_schema(
+    *,
+    scope: str = "site",
+    site: str = "",
+    status: str = "blocked",
+    delivery_mode: str = "",
+    response_mode: str = "",
+    answerable: bool = False,
+    requires_disclosure: bool = False,
+    requires_user_confirmation: bool = False,
+    answer_field_count: int = 0,
+    required_field_total: int = 0,
+    stretch_field_total: int = 0,
+    required_fields: List[Dict[str, Any]] | None = None,
+    stretch_fields: List[Dict[str, Any]] | None = None,
+    missing_required_fields: List[str] | None = None,
+    missing_stretch_fields: List[str] | None = None,
+    user_visible_lines: List[str] | None = None,
+    blocker_reasons: List[str] | None = None,
+    recommended_next_actions: List[str] | None = None,
+    site_answers: List[Dict[str, Any]] | None = None,
+    answerable_site_total: int = 0,
+    ready_site_total: int = 0,
+    guarded_site_total: int = 0,
+    blocked_site_total: int = 0,
+    notes: List[str] | None = None,
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：构造 acquisition answer synthesis schema。
+    - 设计意图：把“最终答案能不能交付、该以什么模式交付、需要带什么 caveat”统一成结构化合同。
+    """
+    return {
+        "scope": str(scope).strip() or "site",
+        "site": str(site).strip(),
+        "status": str(status).strip() or "blocked",
+        "delivery_mode": str(delivery_mode).strip(),
+        "response_mode": str(response_mode).strip(),
+        "answerable": bool(answerable),
+        "requires_disclosure": bool(requires_disclosure),
+        "requires_user_confirmation": bool(requires_user_confirmation),
+        "answer_field_count": int(answer_field_count or 0),
+        "required_field_total": int(required_field_total or 0),
+        "stretch_field_total": int(stretch_field_total or 0),
+        "required_fields": list(required_fields or []),
+        "stretch_fields": list(stretch_fields or []),
+        "missing_required_fields": list(missing_required_fields or []),
+        "missing_stretch_fields": list(missing_stretch_fields or []),
+        "user_visible_lines": list(user_visible_lines or []),
+        "blocker_reasons": list(blocker_reasons or []),
+        "recommended_next_actions": list(recommended_next_actions or []),
+        "site_answers": list(site_answers or []),
+        "answerable_site_total": int(answerable_site_total or 0),
+        "ready_site_total": int(ready_site_total or 0),
+        "guarded_site_total": int(guarded_site_total or 0),
+        "blocked_site_total": int(blocked_site_total or 0),
+        "notes": list(notes or []),
+    }
+
+
 def build_acquisition_site_synthesis_schema(
     *,
     site: str,
@@ -513,6 +611,7 @@ def build_acquisition_site_synthesis_schema(
     governed_release_ready: bool = False,
     governance_blockers: List[str] | None = None,
     release_disclosure: Dict[str, Any] | None = None,
+    answer_synthesis: Dict[str, Any] | None = None,
     cross_validated_fields: List[str] | None = None,
     conflicted_fields: List[str] | None = None,
     supporting_route_ids: List[str] | None = None,
@@ -543,6 +642,7 @@ def build_acquisition_site_synthesis_schema(
         "governed_release_ready": bool(governed_release_ready),
         "governance_blockers": list(governance_blockers or []),
         "release_disclosure": dict(release_disclosure or {}),
+        "answer_synthesis": dict(answer_synthesis or {}),
         "cross_validated_fields": list(cross_validated_fields or []),
         "conflicted_fields": list(conflicted_fields or []),
         "supporting_route_ids": list(supporting_route_ids or []),

@@ -397,6 +397,7 @@ def _doctor_runtime_summary() -> Dict[str, Any]:
             "source_trust_contract": bool(acquisition_integration.get("source_trust_contract")),
             "release_governance_contract": bool(acquisition_integration.get("release_governance_contract")),
             "release_disclosure_contract": bool(acquisition_integration.get("release_disclosure_contract")),
+            "answer_synthesis_contract": bool(acquisition_integration.get("answer_synthesis_contract")),
             "attention_sites_total": len(acquisition_health.get("attention_sites", []) or []),
             "stability_score": float(adapter_coverage.get("stability_score", 0.0) or 0.0),
         },

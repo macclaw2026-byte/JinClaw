@@ -2139,6 +2139,11 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
                     errors.append('acquisition_chain_missing_site_synthesis_summary')
                 if not str((sample_summary.get('overall_summary', {}) or {}).get('synthesis_status', '')).strip():
                     errors.append('acquisition_chain_missing_synthesis_status')
+                answer_synthesis = (sample_summary.get('overall_summary', {}) or {}).get('answer_synthesis', {})
+                if not isinstance(answer_synthesis, dict):
+                    errors.append('acquisition_chain_missing_answer_synthesis')
+                elif bool(answer_synthesis.get('answerable')) and not str(answer_synthesis.get('response_mode', '')).strip():
+                    errors.append('acquisition_chain_missing_answer_response_mode')
                 if not str((sample_summary.get('overall_summary', {}) or {}).get('validation_diversity_status', '')).strip():
                     errors.append('acquisition_chain_missing_validation_diversity_status')
                 if not str((sample_summary.get('overall_summary', {}) or {}).get('release_readiness_status', '')).strip():
@@ -2147,6 +2152,12 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
                     errors.append('acquisition_chain_missing_trusted_release_status')
                 if not str((sample_summary.get('overall_summary', {}) or {}).get('governed_release_status', '')).strip():
                     errors.append('acquisition_chain_missing_governed_release_status')
+                site_answers = [
+                    item.get('answer_synthesis', {}) or {}
+                    for item in (sample_summary.get('site_synthesized_outputs', []) or [])
+                ]
+                if site_answers and not all(isinstance(item, dict) and str(item.get('status', '')).strip() for item in site_answers):
+                    errors.append('acquisition_chain_site_answer_synthesis_incomplete')
                 release_disclosure = (sample_summary.get('overall_summary', {}) or {}).get('release_disclosure', {})
                 governed_release_status = str((sample_summary.get('overall_summary', {}) or {}).get('governed_release_status', '')).strip()
                 if not isinstance(release_disclosure, dict):
@@ -2218,6 +2229,14 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
         ),
         'release_disclosure_contract': not any(
             item in {'acquisition_chain_missing_release_disclosure', 'acquisition_chain_release_disclosure_missing_headline'}
+            for item in errors
+        ),
+        'answer_synthesis_contract': not any(
+            item in {
+                'acquisition_chain_missing_answer_synthesis',
+                'acquisition_chain_missing_answer_response_mode',
+                'acquisition_chain_site_answer_synthesis_incomplete',
+            }
             for item in errors
         ),
         'browser_execution_contract': not any(
