@@ -22,6 +22,9 @@ from coding_session_adapter import build_coding_session_payload
 def build_acp_dispatch_request(contract: Dict[str, Any], stage_context: Dict[str, Any] | None = None) -> Dict[str, Any]:
     coding_payload = build_coding_session_payload(contract, stage_context)
     methodology = coding_payload.get('methodology', {}) or {}
+    governance = coding_payload.get('governance', {}) or {}
+    protocol_pack = coding_payload.get('protocol_pack', {}) or {}
+    operating_discipline = coding_payload.get('operating_discipline', {}) or {}
     metadata = contract.get('metadata', {}) or {}
     control_center = metadata.get('control_center', {}) or {}
     return {
@@ -38,6 +41,8 @@ def build_acp_dispatch_request(contract: Dict[str, Any], stage_context: Dict[str
         'env': {
             'OPENCLAW_SESSION': '1',
             'JINCLAW_CODING_METHODOLOGY': str(methodology.get('methodology', 'jinclaw-native')),
+            'JINCLAW_GOVERNANCE_TIER': str(governance.get('tier', 'standard')),
+            'JINCLAW_PROTOCOL_PACK': str(protocol_pack.get('pack_id', '')),
         },
         'metadata': {
             'task_goal': contract.get('user_goal', ''),
@@ -45,5 +50,8 @@ def build_acp_dispatch_request(contract: Dict[str, Any], stage_context: Dict[str
             'control_center_selected_plan': (control_center.get('selected_plan', {}) or {}).get('plan_id', ''),
             'coding_methodology_enabled': bool(methodology.get('enabled')),
             'coding_lifecycle': methodology.get('lifecycle', []),
+            'governance_tier': governance.get('tier', 'standard'),
+            'protocol_pack_id': protocol_pack.get('pack_id', ''),
+            'operating_discipline_rules': (operating_discipline.get('enabled_rule_keys', []) or [])[:10],
         },
     }

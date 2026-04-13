@@ -45,7 +45,24 @@ from event_bus import publish_event
 from browser_channel_recovery import prune_relay_tabs, recover_browser_channel, navigate_relay_to_url
 from browser_task_signals import collect_browser_task_signals
 from mission_supervisor import supervise_task
-from orchestrator import _derive_allowed_tools, _derive_complex_task_controller, _derive_stage_contracts, _derive_task_milestones, _goal_requires_strict_continuation, build_crawler_plan, derive_business_verification_requirements
+from orchestrator import (
+    _derive_allowed_tools,
+    _derive_coding_methodology,
+    _derive_complex_task_controller,
+    _derive_goal_guardian,
+    _derive_governance_policy,
+    _derive_governance_tier,
+    _derive_knowledge_basis,
+    _derive_operating_discipline,
+    _derive_plan_reviews,
+    _derive_protocol_pack,
+    _derive_readiness_dashboard,
+    _derive_stage_contracts,
+    _derive_task_milestones,
+    _goal_requires_strict_continuation,
+    build_crawler_plan,
+    derive_business_verification_requirements,
+)
 from paths import CONTRACT_QUARANTINE_ROOT
 from progress_evidence import build_progress_evidence
 from system_doctor import run_system_doctor
@@ -519,6 +536,139 @@ def _upgrade_missing_business_requirements(task_id: str) -> dict | None:
     return {"task_id": task_id, "requirements": derived}
 
 
+def _derive_control_center_upgrade_bundle(task_id: str, contract) -> dict:
+    """
+    中文注解：
+    - 功能：为历史 contract 统一补齐治理升级后的 control_center 元数据与阶段合同。
+    - 设计意图：避免 governance / plan_reviews / protocol_pack / readiness 的派生逻辑散落在多个 upgrade 入口里各自漂移。
+    """
+    metadata = contract.metadata.get("control_center", {}) or {}
+    intent = dict(metadata.get("intent", {}) or {})
+    if not intent:
+        intent = {"goal": contract.user_goal, "done_definition": contract.done_definition}
+    intent.setdefault("goal", contract.user_goal)
+    intent.setdefault("done_definition", contract.done_definition)
+    mission_profile = metadata.get("mission_profile", {}) or {}
+    selected_plan = metadata.get("selected_plan", {}) or {}
+    candidate_plans = metadata.get("candidate_plans", []) or ([selected_plan] if selected_plan else [])
+    approval = metadata.get("approval", {}) or contract.metadata.get("approval", {}) or {}
+    crawler = metadata.get("crawler", {}) or {}
+    fetch_route = metadata.get("fetch_route", {}) or {}
+    resource_scout = metadata.get("resource_scout", {}) or {}
+
+    coding_methodology = metadata.get("coding_methodology", {}) or _derive_coding_methodology(intent)
+    governance = metadata.get("governance", {}) or {}
+    if not governance:
+        governance_tier = _derive_governance_tier(contract.user_goal, intent, mission_profile, coding_methodology)
+        governance = {**governance_tier, "policy": _derive_governance_policy(str(governance_tier.get("tier", "standard")))}
+    elif not governance.get("policy"):
+        governance = {**governance, "policy": _derive_governance_policy(str(governance.get("tier", "standard") or "standard"))}
+
+    strict = bool(
+        metadata.get("strict_continuation_required")
+        if "strict_continuation_required" in metadata
+        else _goal_requires_strict_continuation(contract.user_goal, intent, mission_profile, governance=governance)
+    )
+    task_milestones = metadata.get("task_milestones", []) or _derive_task_milestones(
+        task_id,
+        contract.user_goal,
+        intent,
+        mission_profile,
+        governance=governance,
+    )
+    knowledge_basis = metadata.get("knowledge_basis", {}) or _derive_knowledge_basis(
+        intent,
+        selected_plan,
+        resource_scout,
+        fetch_route,
+    )
+    plan_reviews = metadata.get("plan_reviews", {}) or _derive_plan_reviews(
+        intent,
+        candidate_plans,
+        selected_plan,
+        governance,
+    )
+    operating_discipline = metadata.get("operating_discipline", {}) or _derive_operating_discipline(
+        contract.user_goal,
+        intent,
+        governance,
+        coding_methodology,
+        mission_profile,
+    )
+    protocol_pack = metadata.get("protocol_pack", {}) or _derive_protocol_pack(
+        governance,
+        operating_discipline,
+        plan_reviews,
+    )
+    complex_task_controller = metadata.get("complex_task_controller", {}) or _derive_complex_task_controller(
+        contract.user_goal,
+        intent,
+        mission_profile,
+        coding_methodology,
+        governance,
+    )
+    goal_guardian = metadata.get("goal_guardian", {}) or _derive_goal_guardian(
+        contract.user_goal,
+        intent,
+        mission_profile,
+        coding_methodology,
+        governance,
+        operating_discipline,
+    )
+    stages = _derive_stage_contracts(
+        task_id,
+        {
+            "goal": contract.user_goal,
+            "done_definition": contract.done_definition,
+            "intent": intent,
+            "selected_plan": selected_plan,
+            "mission_profile": mission_profile,
+            "strict_continuation_required": strict,
+            "approval": approval,
+            "crawler": crawler,
+            "complex_task_controller": complex_task_controller,
+            "governance": governance,
+            "plan_reviews": plan_reviews,
+            "protocol_pack": protocol_pack,
+        },
+    )
+    readiness_dashboard = metadata.get("readiness_dashboard", {}) or _derive_readiness_dashboard(
+        task_id,
+        stages,
+        governance,
+        plan_reviews,
+    )
+    upgraded_metadata = {
+        **metadata,
+        "intent": intent,
+        "approval": approval,
+        "mission_profile": mission_profile,
+        "coding_methodology": coding_methodology,
+        "governance": governance,
+        "goal_guardian": goal_guardian,
+        "complex_task_controller": complex_task_controller,
+        "strict_continuation_required": strict,
+        "task_milestones": task_milestones,
+        "knowledge_basis": knowledge_basis,
+        "plan_reviews": plan_reviews,
+        "operating_discipline": operating_discipline,
+        "protocol_pack": protocol_pack,
+        "readiness_dashboard": readiness_dashboard,
+        "business_verification_requirements": metadata.get("business_verification_requirements", {}) or derive_business_verification_requirements(intent),
+    }
+    return {
+        "metadata": upgraded_metadata,
+        "stages": stages,
+        "strict_continuation_required": strict,
+        "task_milestones": task_milestones,
+        "complex_task_controller": complex_task_controller,
+        "governance": governance,
+        "plan_reviews": plan_reviews,
+        "protocol_pack": protocol_pack,
+        "readiness_dashboard": readiness_dashboard,
+    }
+
+
 def _upgrade_missing_goal_decomposition(task_id: str) -> dict | None:
     """
     中文注解：
@@ -526,28 +676,15 @@ def _upgrade_missing_goal_decomposition(task_id: str) -> dict | None:
     - 作用：让这次 milestone/verifier 修复对历史任务同样生效，而不是只覆盖新任务。
     """
     contract = load_contract(task_id)
+    bundle = _derive_control_center_upgrade_bundle(task_id, contract)
     metadata = contract.metadata.get("control_center", {}) or {}
-    intent = metadata.get("intent", {}) or {}
-    mission_profile = metadata.get("mission_profile", {}) or {}
-    strict = _goal_requires_strict_continuation(contract.user_goal, intent, mission_profile)
-    stage_contracts = _derive_stage_contracts(
-        task_id,
-        {
-            "goal": contract.user_goal,
-            "done_definition": contract.done_definition,
-            "intent": intent,
-            "selected_plan": metadata.get("selected_plan", {}) or {},
-            "mission_profile": mission_profile,
-            "strict_continuation_required": strict,
-            "approval": metadata.get("approval", {}) or {},
-        },
-    )
-    milestones = _derive_task_milestones(task_id, contract.user_goal, intent, mission_profile)
+    upgraded_metadata = bundle["metadata"]
+    strict = bool(bundle["strict_continuation_required"])
+    milestones = list(bundle["task_milestones"])
+    stage_contracts = bundle["stages"]
     contract_changed = False
-    if metadata.get("task_milestones") != milestones or metadata.get("strict_continuation_required") != strict:
-        metadata["strict_continuation_required"] = strict
-        metadata["task_milestones"] = milestones
-        contract.metadata["control_center"] = metadata
+    if metadata != upgraded_metadata:
+        contract.metadata["control_center"] = upgraded_metadata
         contract_changed = True
     if contract.stages != stage_contracts:
         contract.stages = stage_contracts
@@ -556,6 +693,8 @@ def _upgrade_missing_goal_decomposition(task_id: str) -> dict | None:
         save_contract(contract)
 
     state = load_state(task_id)
+    if contract_changed:
+        state.metadata["contract_metadata"] = contract.metadata
     progress = state.metadata.get("milestone_progress", {}) or {}
     now = utc_now_iso()
     changed = False
@@ -601,6 +740,9 @@ def _upgrade_missing_goal_decomposition(task_id: str) -> dict | None:
         }
         state.last_update_at = now
         save_state(state)
+    elif contract_changed:
+        state.last_update_at = now
+        save_state(state)
     log_event(task_id, "goal_decomposition_upgraded", strict_continuation_required=strict, milestone_count=len(milestones))
     return {
         "task_id": task_id,
@@ -618,32 +760,16 @@ def _upgrade_missing_complex_task_controller(task_id: str) -> dict | None:
     - 设计意图：让过去创建的复杂任务也能吃到新的阶段产物/阶段验收能力，而不是只惠及未来任务。
     """
     contract = load_contract(task_id)
+    bundle = _derive_control_center_upgrade_bundle(task_id, contract)
     metadata = contract.metadata.get("control_center", {}) or {}
-    intent = metadata.get("intent", {}) or {}
-    mission_profile = metadata.get("mission_profile", {}) or {}
-    coding_methodology = metadata.get("coding_methodology", {}) or {}
-    complex_task_controller = _derive_complex_task_controller(contract.user_goal, intent, mission_profile, coding_methodology)
+    upgraded_metadata = bundle["metadata"]
+    complex_task_controller = bundle["complex_task_controller"]
     if not complex_task_controller.get("enabled"):
         return None
-    strict = _goal_requires_strict_continuation(contract.user_goal, intent, mission_profile)
-    stage_contracts = _derive_stage_contracts(
-        task_id,
-        {
-            "goal": contract.user_goal,
-            "done_definition": contract.done_definition,
-            "intent": intent,
-            "selected_plan": metadata.get("selected_plan", {}) or {},
-            "mission_profile": mission_profile,
-            "strict_continuation_required": strict,
-            "approval": metadata.get("approval", {}) or {},
-            "crawler": metadata.get("crawler", {}) or {},
-            "complex_task_controller": complex_task_controller,
-        },
-    )
+    stage_contracts = bundle["stages"]
     changed = False
-    if metadata.get("complex_task_controller") != complex_task_controller:
-        metadata["complex_task_controller"] = complex_task_controller
-        contract.metadata["control_center"] = metadata
+    if metadata != upgraded_metadata:
+        contract.metadata["control_center"] = upgraded_metadata
         changed = True
     if contract.stages != stage_contracts:
         contract.stages = stage_contracts
@@ -742,19 +868,9 @@ def _upgrade_missing_crawler_system(task_id: str) -> dict | None:
     if "agent_browser" in {str(item) for item in crawler.get("requested_tools", [])}:
         crawler_tools.append("agent-browser")
     contract.allowed_tools = sorted(dict.fromkeys([*contract.allowed_tools, *derived_tools, *crawler_tools]))
-    contract.stages = _derive_stage_contracts(
-        task_id,
-        {
-            "goal": contract.user_goal,
-            "done_definition": contract.done_definition,
-            "intent": intent,
-            "selected_plan": selected_plan,
-            "mission_profile": mission_profile,
-            "strict_continuation_required": strict,
-            "approval": approval,
-            "crawler": crawler,
-        },
-    )
+    bundle = _derive_control_center_upgrade_bundle(task_id, contract)
+    contract.metadata["control_center"] = bundle["metadata"]
+    contract.stages = bundle["stages"]
     save_contract(contract)
 
     state = load_state(task_id)
