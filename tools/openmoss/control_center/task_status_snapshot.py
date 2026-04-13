@@ -350,7 +350,65 @@ def _milestone_snapshot(contract: Dict[str, Any], state: Dict[str, Any]) -> Dict
     }
 
 
-def _build_authoritative_summary(task_id: str, state: Dict[str, Any], browser_signals: Dict[str, Any]) -> str:
+def _build_acquisition_reply_contract(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：把 acquisition answer synthesis 压成回复层可直接消费的轻量合同。
+    - 设计意图：回复链不应该自己逆向拼装 answer_synthesis，而应消费 snapshot 中的一份显式交付合同。
+    """
+    acquisition_hand = snapshot.get("acquisition_hand", {}) or {}
+    answer_synthesis = acquisition_hand.get("answer_synthesis", {}) or {}
+    if not isinstance(answer_synthesis, dict) or not answer_synthesis:
+        return {
+            "enabled": False,
+            "status": "",
+            "response_mode": "",
+            "answerable": False,
+            "requires_disclosure": False,
+            "requires_user_confirmation": False,
+            "preview_lines": [],
+            "blocker_reasons": [],
+            "recommended_next_actions": [],
+        }
+    preview_lines: List[str] = []
+    for site_answer in (answer_synthesis.get("site_answers", []) or [])[:2]:
+        site = str(site_answer.get("site", "")).strip() or "current target"
+        fields = []
+        for row in (site_answer.get("required_fields", []) or [])[:3]:
+            field_name = str((row or {}).get("field_name", "")).strip()
+            value = str((row or {}).get("value", "")).strip()
+            if field_name and value:
+                fields.append(f"{field_name}={value}")
+        if fields:
+            preview_lines.append(f"{site}: {', '.join(fields)}")
+    return {
+        "enabled": True,
+        "status": str(answer_synthesis.get("status", "")).strip(),
+        "response_mode": str(answer_synthesis.get("response_mode", "")).strip(),
+        "answerable": bool(answer_synthesis.get("answerable")),
+        "requires_disclosure": bool(answer_synthesis.get("requires_disclosure")),
+        "requires_user_confirmation": bool(answer_synthesis.get("requires_user_confirmation")),
+        "preview_lines": preview_lines,
+        "disclosure_lines": [
+            str(item).strip()
+            for item in (answer_synthesis.get("user_visible_lines", []) or [])[:3]
+            if str(item).strip()
+        ],
+        "blocker_reasons": [
+            str(item).strip()
+            for item in (answer_synthesis.get("blocker_reasons", []) or [])[:4]
+            if str(item).strip()
+        ],
+        "recommended_next_actions": [
+            str(item).strip()
+            for item in (answer_synthesis.get("recommended_next_actions", []) or [])[:4]
+            if str(item).strip()
+        ],
+        "answerable_site_total": int(answer_synthesis.get("answerable_site_total", 0) or 0),
+    }
+
+
+def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: Dict[str, Any], browser_signals: Dict[str, Any]) -> str:
     """
     中文注解：
     - 功能：实现 `_build_authoritative_summary` 对应的处理逻辑。
@@ -362,20 +420,38 @@ def _build_authoritative_summary(task_id: str, state: Dict[str, Any], browser_si
     current_stage = str(state.get("current_stage", ""))
     next_action = str(state.get("next_action", ""))
     diagnosis = str(browser_signals.get("diagnosis", "none"))
+    acquisition_response = ((snapshot.get("reply_contract", {}) or {}).get("acquisition_response", {}) or {})
+    acquisition_suffix = ""
+    if acquisition_response.get("enabled"):
+        mode = str(acquisition_response.get("response_mode", "")).strip()
+        preview_lines = acquisition_response.get("preview_lines", []) or []
+        blocker_reasons = acquisition_response.get("blocker_reasons", []) or []
+        acquisition_suffix = f" Current data answer mode is {mode or 'unknown'}."
+        if preview_lines:
+            acquisition_suffix += " Answer preview: " + " | ".join(preview_lines[:2]) + "."
+        elif blocker_reasons:
+            acquisition_suffix += " Current blockers: " + ", ".join(blocker_reasons[:3]) + "."
+        if acquisition_response.get("requires_user_confirmation"):
+            acquisition_suffix += " User confirmation is required before guarded release."
+        elif acquisition_response.get("requires_disclosure"):
+            acquisition_suffix += " Guarded disclosure is required when using the current result."
     if business.get("goal_satisfied") is True and business.get("user_visible_result_confirmed") is True:
         return (
             f"Authoritative task state says {task_id} is completed. "
             f"Business outcome is confirmed: {business.get('proof_summary', '')}"
+            f"{acquisition_suffix}"
         ).strip()
     if diagnosis and diagnosis != "none":
         return (
             f"Authoritative task state says {task_id} is {status or 'unknown'} "
             f"at stage {current_stage or 'none'} with next action {next_action or 'none'}. "
             f"Latest browser diagnosis is {diagnosis}."
+            f"{acquisition_suffix}"
         ).strip()
     return (
         f"Authoritative task state says {task_id} is {status or 'unknown'} "
         f"at stage {current_stage or 'none'} with next action {next_action or 'none'}."
+        f"{acquisition_suffix}"
     ).strip()
 
 
@@ -471,14 +547,15 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
         "recent_events": _recent_events(canonical_task_id),
     }
     snapshot["output_attachments"] = _discover_output_attachments(canonical_task_id, state, business)
-    snapshot["authoritative_summary"] = _build_authoritative_summary(canonical_task_id, state, browser_signals)
     snapshot["reply_contract"] = {
         "must_use_authoritative_snapshot": True,
         "must_prefer_task_state_over_chat_memory": True,
         "forbid_outdated_failure_claims_when_business_outcome_confirmed": bool(
             business.get("goal_satisfied") and business.get("user_visible_result_confirmed")
         ),
+        "acquisition_response": _build_acquisition_reply_contract(snapshot),
     }
+    snapshot["authoritative_summary"] = _build_authoritative_summary(canonical_task_id, snapshot, state, browser_signals)
     snapshot["snapshot_path"] = _write_json(TASK_STATUS_ROOT / f"{canonical_task_id}.json", snapshot)
     return snapshot
 

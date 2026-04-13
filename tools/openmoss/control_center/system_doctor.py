@@ -36,7 +36,7 @@ from paths import CONTROL_CENTER_RUNTIME_ROOT, FETCH_ROUTES_ROOT
 from mission_supervisor import run_mission_supervisor
 from progress_evidence import build_progress_evidence
 from brain_router import route_instruction
-from response_policy_engine import build_supervisor_status_text
+from response_policy_engine import build_route_receipt_text, build_supervisor_status_text
 from research_loop import prepare_research_package
 from route_guardrails import persist_route, reroot_route_if_needed
 from problem_solver import solve_problem
@@ -2198,6 +2198,23 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
                 errors.append('acquisition_chain_snapshot_missing_enable_marker')
             if not snapshot_hand.get('primary_route'):
                 errors.append('acquisition_chain_snapshot_missing_primary_route')
+            answer_response = ((snapshot.get('reply_contract', {}) or {}).get('acquisition_response', {}) or {})
+            if (snapshot_hand.get('answer_synthesis', {}) or {}) and not str(answer_response.get('response_mode', '')).strip():
+                errors.append('acquisition_chain_snapshot_missing_answer_response_mode')
+            authoritative_summary = str(snapshot.get('authoritative_summary', '')).strip()
+            if bool(answer_response.get('enabled')) and 'Current data answer mode is' not in authoritative_summary:
+                errors.append('acquisition_chain_authoritative_summary_missing_answer_mode')
+            receipt_text = build_route_receipt_text(
+                {
+                    'mode': 'authoritative_task_status',
+                    'task_id': task_id,
+                    'authoritative_task_status': snapshot,
+                }
+            )
+            if bool(answer_response.get('enabled')) and not any(
+                marker in receipt_text for marker in ['当前数据回答模式是', 'Current data answer mode is']
+            ):
+                errors.append('acquisition_chain_receipt_missing_answer_mode')
         finally:
             if task_path.exists():
                 shutil.rmtree(task_path)
@@ -2236,6 +2253,14 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
                 'acquisition_chain_missing_answer_synthesis',
                 'acquisition_chain_missing_answer_response_mode',
                 'acquisition_chain_site_answer_synthesis_incomplete',
+            }
+            for item in errors
+        ),
+        'answer_response_contract': not any(
+            item in {
+                'acquisition_chain_snapshot_missing_answer_response_mode',
+                'acquisition_chain_authoritative_summary_missing_answer_mode',
+                'acquisition_chain_receipt_missing_answer_mode',
             }
             for item in errors
         ),

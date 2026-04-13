@@ -29,6 +29,7 @@ The current phase also extends that control surface into execution evidence:
 - guarded results now emit structured `release_disclosure`, so user-facing caveats and operator-facing release blockers come from the same schema
 - fresh tasks now support field-level `freshness_priority` resolution when competing routes have equal trust rank but different freshness posture
 - acquisition summaries now also emit structured `answer_synthesis`, so downstream reply/runtime layers can directly consume a governed answer contract instead of reverse-engineering `final_fields`
+- task snapshots and response policy now consume that answer contract directly, so user-visible authoritative replies can distinguish `auto_answer`, `guarded_answer`, `confirm_then_guarded_answer`, and `pause_and_recapture`
 
 ## New Core Structures
 
