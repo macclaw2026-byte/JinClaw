@@ -190,9 +190,11 @@ def _route_quality_score(route_run: Dict[str, Any], acquisition_hand: Dict[str, 
     risk_penalty = RISK_PENALTY.get(str(route_run.get("route_risk", "medium")).strip(), 4)
     preferred_site_bonus = 6 if route_run.get("preferred_site_match") else 0
     primary_bonus = 4 if str(route_run.get("route_id", "")).strip() == primary_route_id else 0
+    required_field_bonus = float(route_run.get("required_field_coverage", 0.0) or 0.0) * 75
     return round(
         status_rank * 100
         + float(route_run.get("field_coverage", 0.0) or 0.0) * 60
+        + required_field_bonus
         + int(route_run.get("arbitration_score", 0) or 0)
         + trust_rank * 10
         + preferred_site_bonus
@@ -215,6 +217,72 @@ def _route_families_for_ids(route_runs: List[Dict[str, Any]], route_ids: List[st
             if str(route_run.get("route_id", "")).strip() in route_id_set and _route_validation_family(route_run) != "unknown"
         ]
     )
+
+
+def _delivery_requirements(acquisition_hand: Dict[str, Any]) -> Dict[str, Any]:
+    return acquisition_hand.get("delivery_requirements", {}) or {}
+
+
+def _site_field_requirements(
+    site: str,
+    acquisition_hand: Dict[str, Any],
+    route_runs: List[Dict[str, Any]],
+) -> Dict[str, List[str]]:
+    """
+    中文注解：
+    - 功能：解析当前站点的 required/stretch 字段要求。
+    - 设计意图：字段级合成应优先服从本次任务的交付要求，而不是只使用站点默认模板。
+    """
+    requirements = _delivery_requirements(acquisition_hand)
+    required_by_site = requirements.get("required_fields_by_site", {}) or {}
+    stretch_by_site = requirements.get("stretch_fields_by_site", {}) or {}
+    default_required = required_by_site.get("default", []) or SITE_EXPECTED_FIELDS.get(site, [])[:3] or ["title", "link"]
+    default_stretch = stretch_by_site.get("default", []) or []
+    required_fields = _unique_preserve(
+        [
+            str(item).strip()
+            for item in (required_by_site.get(site, []) or default_required)
+            if str(item).strip()
+        ]
+    )
+    stretch_fields = _unique_preserve(
+        [
+            str(item).strip()
+            for item in (stretch_by_site.get(site, []) or default_stretch)
+            if str(item).strip() and str(item).strip() not in set(required_fields)
+        ]
+    )
+    discovered = _unique_preserve(
+        [
+            *[
+                str(key).strip()
+                for row in route_runs
+                for key in (row.get("task_fields", {}) or {}).keys()
+                if str(key).strip()
+            ],
+            *[
+                str(item).strip()
+                for row in route_runs
+                for item in (row.get("populated_fields", []) or [])
+                if str(item).strip()
+            ],
+        ]
+    )
+    stretch_fields = _unique_preserve([*stretch_fields, *[field for field in discovered if field not in required_fields]])
+    return {
+        "required_fields": required_fields,
+        "stretch_fields": stretch_fields,
+    }
+
+
+def _required_field_metrics(task_fields: Dict[str, Any], required_fields: List[str]) -> Dict[str, Any]:
+    present = [field for field in required_fields if _value_present((task_fields or {}).get(field))]
+    missing = [field for field in required_fields if field not in set(present)]
+    return {
+        "required_fields_present": present,
+        "missing_required_fields": missing,
+        "required_field_coverage": round(len(present) / max(1, len(required_fields)), 3) if required_fields else 1.0,
+    }
 
 
 def _field_agreement(winner_fields: Dict[str, Any], other_fields: Dict[str, Any]) -> Dict[str, int]:
@@ -256,8 +324,13 @@ def _field_group_score(best_quality_score: float, support_count: int) -> float:
     return round(float(best_quality_score or 0.0) + support_count * 35.0, 3)
 
 
-def _derive_expected_fields(site: str, route_runs: List[Dict[str, Any]]) -> List[str]:
-    expected = list(SITE_EXPECTED_FIELDS.get(site, []))
+def _derive_expected_fields(site: str, route_runs: List[Dict[str, Any]], acquisition_hand: Dict[str, Any]) -> List[str]:
+    site_requirements = _site_field_requirements(site, acquisition_hand, route_runs)
+    expected = [
+        *site_requirements.get("required_fields", []),
+        *site_requirements.get("stretch_fields", []),
+        *SITE_EXPECTED_FIELDS.get(site, []),
+    ]
     discovered = _unique_preserve(
         [
             *[
@@ -288,12 +361,21 @@ def _field_provenance_for_site(
     - 设计意图：站点级 winner 只能回答“谁赢了”，字段级 provenance 才能回答“最终每个字段为何选它”。
     """
     surviving = [item for item in route_runs if str(item.get("status", "")).strip() in {"usable", "partial"}]
-    expected_fields = _derive_expected_fields(site, surviving or route_runs)
+    site_requirements = _site_field_requirements(site, acquisition_hand, surviving or route_runs)
+    required_fields = site_requirements.get("required_fields", [])
+    stretch_fields = site_requirements.get("stretch_fields", [])
+    expected_fields = _derive_expected_fields(site, surviving or route_runs, acquisition_hand)
     if not surviving:
         return build_acquisition_site_synthesis_schema(
             site=site,
             synthesis_status="blocked",
+            required_fields=required_fields,
+            stretch_fields=stretch_fields,
             missing_fields=expected_fields,
+            missing_required_fields=required_fields,
+            missing_stretch_fields=stretch_fields,
+            required_field_coverage_ratio=0.0,
+            release_ready=False,
             recommended_next_actions=["switch_route_or_pause_for_human_checkpoint"],
             notes=["当前站点没有 surviving route，无法进行字段级融合。"],
         )
@@ -423,21 +505,33 @@ def _field_provenance_for_site(
             notes=notes,
         )
 
+    missing_required_fields = [field for field in required_fields if field not in final_fields]
+    missing_stretch_fields = [field for field in stretch_fields if field not in final_fields]
+    required_field_coverage_ratio = round(
+        (len(required_fields) - len(missing_required_fields)) / max(1, len(required_fields)),
+        3,
+    ) if required_fields else 1.0
     synthesis_status = "blocked"
     site_notes: List[str] = []
     recommended_next_actions: List[str] = []
+    release_ready = False
     if final_fields:
         synthesis_status = "ready"
         if conflicted_fields:
             synthesis_status = "needs_review"
             site_notes.append("部分字段存在冲突，当前结果是保守择优后的合成视图。")
             recommended_next_actions.append("review_field_level_conflicts_before_release")
+        elif missing_required_fields:
+            synthesis_status = "partial"
+            site_notes.append("核心 required 字段仍有缺口，当前结果可参考但不应直接 release。")
+            recommended_next_actions.append("capture_missing_required_fields_before_release")
         elif missing_fields:
             synthesis_status = "partial"
-            site_notes.append("已能输出结构化结果，但仍有缺失字段。")
+            site_notes.append("已满足核心 required 字段，但仍缺少扩展字段。")
             recommended_next_actions.append("capture_missing_fields_via_backup_route")
         else:
             site_notes.append("当前站点已形成完整字段级合成结果。")
+        release_ready = not conflicted_fields and not missing_required_fields
     else:
         recommended_next_actions.append("switch_route_or_pause_for_human_checkpoint")
 
@@ -446,7 +540,13 @@ def _field_provenance_for_site(
         synthesis_status=synthesis_status,
         final_fields=final_fields,
         field_provenance=field_provenance,
+        required_fields=required_fields,
+        stretch_fields=stretch_fields,
         missing_fields=missing_fields,
+        missing_required_fields=missing_required_fields,
+        missing_stretch_fields=missing_stretch_fields,
+        required_field_coverage_ratio=required_field_coverage_ratio,
+        release_ready=release_ready,
         cross_validated_fields=_unique_preserve(cross_validated_fields),
         conflicted_fields=_unique_preserve(conflicted_fields),
         supporting_route_ids=_unique_preserve(
@@ -512,6 +612,9 @@ def _site_consensus(site: str, route_runs: List[Dict[str, Any]], acquisition_han
         requires_review = True
         notes.append("赢家路线只有 partial 质量，建议保守处理。")
         recommended_next_actions.append("improve_field_coverage_before_release")
+    if (winner.get("missing_required_fields", []) or []):
+        notes.append("赢家路线仍缺少 required 字段，需要继续补齐后再 release。")
+        recommended_next_actions.append("capture_missing_required_fields_before_release")
     if len(ranked) >= 2 and len(compared_families) < 2:
         recommended_next_actions.append("capture_independent_validation_family_before_release")
 
@@ -527,6 +630,7 @@ def _site_consensus(site: str, route_runs: List[Dict[str, Any]], acquisition_han
             "tool_label": str(winner.get("tool_label", "")).strip(),
             "status": str(winner.get("status", "")).strip(),
             "field_coverage": float(winner.get("field_coverage", 0.0) or 0.0),
+            "required_field_coverage": float(winner.get("required_field_coverage", 0.0) or 0.0),
         },
         "compared_route_ids": [str(item.get("route_id", "")).strip() for item in ranked if str(item.get("route_id", "")).strip()],
         "requires_review": requires_review,
@@ -562,6 +666,7 @@ def build_acquisition_execution_summary(
     for site in report_payload.get("sites", []) or []:
         site_id = str(site.get("site", "")).strip()
         source_url = str(site.get("url", "")).strip()
+        site_requirements = _site_field_requirements(site_id, acquisition_hand, [])
         for row in site.get("tool_results", []) or []:
             tool_label = str(row.get("tool", "")).strip()
             if not tool_label:
@@ -584,6 +689,10 @@ def build_acquisition_execution_summary(
                 adapter = _pick_adapter(tool_label, acquisition_hand, maps)
                 candidate = _pick_route_candidate(adapter, acquisition_hand, maps) if adapter else {}
             normalized_output = row.get("normalized_task_output", {}) or {}
+            required_metrics = _required_field_metrics(
+                dict(normalized_output.get("fields", {}) or {}),
+                site_requirements.get("required_fields", []),
+            )
             notes = [str(item) for item in ((row.get("false_positive", {}) or {}).get("reasons", []) or []) if str(item).strip()]
             if planned_binding:
                 if str(planned_binding.get("parallel_role", "")).strip():
@@ -604,7 +713,10 @@ def build_acquisition_execution_summary(
                 source_url=source_url,
                 retrieved_at=str(report_payload.get("generated_at", "")).strip(),
                 field_coverage=float(normalized_output.get("field_completeness", 0.0) or 0.0),
+                required_field_coverage=float(required_metrics.get("required_field_coverage", 0.0) or 0.0),
                 populated_fields=[str(item) for item in normalized_output.get("populated_fields", []) or [] if str(item).strip()],
+                required_fields_present=required_metrics.get("required_fields_present", []) or [],
+                missing_required_fields=required_metrics.get("missing_required_fields", []) or [],
                 arbitration_score=int(row.get("arbitration_score", row.get("score", 0)) or 0),
                 evidence_ref=report_path,
                 route_risk=str((candidate or {}).get("risk_level", (adapter or {}).get("risk_level", "medium"))).strip() or "medium",
@@ -620,9 +732,11 @@ def build_acquisition_execution_summary(
         site_synthesized_outputs.append(synthesis)
         consensus_row = _site_consensus(site_id, site_route_runs, acquisition_hand)
         consensus_row["synthesis_status"] = str(synthesis.get("synthesis_status", "")).strip()
+        consensus_row["release_ready"] = bool(synthesis.get("release_ready"))
         consensus_row["final_field_count"] = len((synthesis.get("final_fields", {}) or {}).keys())
         consensus_row["cross_validated_field_count"] = len(synthesis.get("cross_validated_fields", []) or [])
         consensus_row["conflicted_field_count"] = len(synthesis.get("conflicted_fields", []) or [])
+        consensus_row["missing_required_field_count"] = len(synthesis.get("missing_required_fields", []) or [])
         site_consensus_rows.append(consensus_row)
 
     planned_route_ids = execution_plan.get("active_route_ids") or _planned_route_ids(acquisition_hand)
@@ -646,9 +760,12 @@ def build_acquisition_execution_summary(
     )
     sites_blocked = sum(1 for item in site_consensus_rows if item.get("decision") == "insufficient_evidence")
     synthesized_sites_total = sum(1 for item in site_synthesized_outputs if (item.get("final_fields", {}) or {}))
+    sites_release_ready = sum(1 for item in site_synthesized_outputs if bool(item.get("release_ready")))
     cross_validated_field_total = sum(len(item.get("cross_validated_fields", []) or []) for item in site_synthesized_outputs)
     conflicted_field_total = sum(len(item.get("conflicted_fields", []) or []) for item in site_synthesized_outputs)
     missing_field_total = sum(len(item.get("missing_fields", []) or []) for item in site_synthesized_outputs)
+    required_field_gap_total = sum(len(item.get("missing_required_fields", []) or []) for item in site_synthesized_outputs)
+    stretch_field_gap_total = sum(len(item.get("missing_stretch_fields", []) or []) for item in site_synthesized_outputs)
     validation_family_count = len(
         _unique_preserve(
             [
@@ -681,6 +798,16 @@ def build_acquisition_execution_summary(
         synthesis_status = "partial"
     elif sites_total and all(str(item.get("synthesis_status", "")).strip() == "ready" for item in site_synthesized_outputs):
         synthesis_status = "ready"
+
+    release_readiness_status = "blocked"
+    if sites_total and sites_release_ready == sites_total and not sites_needs_review:
+        release_readiness_status = "ready"
+    elif required_field_gap_total:
+        release_readiness_status = "missing_required_fields"
+    elif sites_needs_review or conflicted_field_total:
+        release_readiness_status = "needs_review"
+    elif missing_field_total:
+        release_readiness_status = "stretch_fields_missing"
 
     recommended_next_actions = _unique_preserve(
         [
@@ -720,8 +847,13 @@ def build_acquisition_execution_summary(
                 else []
             ),
             *(
+                ["capture_missing_required_fields_before_release"]
+                if required_field_gap_total
+                else []
+            ),
+            *(
                 ["capture_missing_fields_via_backup_route"]
-                if missing_field_total
+                if stretch_field_gap_total
                 else []
             ),
             *[
@@ -763,9 +895,13 @@ def build_acquisition_execution_summary(
             "validation_family_count": validation_family_count,
             "validation_diversity_status": validation_diversity_status,
             "synthesized_sites_total": synthesized_sites_total,
+            "sites_release_ready": sites_release_ready,
             "cross_validated_field_total": cross_validated_field_total,
             "conflicted_field_total": conflicted_field_total,
             "missing_field_total": missing_field_total,
+            "required_field_gap_total": required_field_gap_total,
+            "stretch_field_gap_total": stretch_field_gap_total,
+            "release_readiness_status": release_readiness_status,
             "route_gap_count": len(planned_but_not_executed),
             "global_planned_route_ids": execution_plan.get("global_planned_route_ids", []) or _planned_route_ids(acquisition_hand),
             "global_skipped_route_ids": global_skipped_route_ids,
@@ -792,6 +928,7 @@ def render_acquisition_execution_summary_markdown(summary: Dict[str, Any]) -> st
         f"- Task: `{summary.get('task_id', '')}`",
         f"- Consensus status: `{overall.get('consensus_status', '')}`",
         f"- Synthesis status: `{overall.get('synthesis_status', '')}`",
+        f"- Release readiness: `{overall.get('release_readiness_status', '')}`",
         f"- Validation diversity: `{overall.get('validation_diversity_status', '')}`",
         f"- Planned routes: `{', '.join(summary.get('planned_route_ids', []) or [])}`",
         f"- Executed routes: `{', '.join(summary.get('executed_route_ids', []) or [])}`",
@@ -819,12 +956,17 @@ def render_acquisition_execution_summary_markdown(summary: Dict[str, Any]) -> st
                 f"- Winner tool: `{winner.get('tool_label', '')}`",
                 f"- Winner status: `{winner.get('status', '')}`",
                 f"- Winner field coverage: `{winner.get('field_coverage', 0.0)}`",
+                f"- Winner required field coverage: `{winner.get('required_field_coverage', 0.0)}`",
             ]
         )
+        if synthesized.get("required_fields"):
+            lines.append(f"- Required fields: `{', '.join(synthesized.get('required_fields', []) or [])}`")
         if synthesized.get("final_fields"):
             lines.append("- Final fields:")
             for key, value in (synthesized.get("final_fields", {}) or {}).items():
                 lines.append(f"  - {key}: {value}")
+        if synthesized.get("missing_required_fields"):
+            lines.append(f"- Missing required fields: `{', '.join(synthesized.get('missing_required_fields', []) or [])}`")
         if synthesized.get("conflicted_fields"):
             lines.append(f"- Conflicted fields: `{', '.join(synthesized.get('conflicted_fields', []) or [])}`")
         if synthesized.get("missing_fields"):

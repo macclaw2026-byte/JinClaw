@@ -374,6 +374,7 @@ def _doctor_runtime_summary() -> Dict[str, Any]:
     acquisition_health = payload.get("acquisition_health", {}) or {}
     adapter_coverage = acquisition_health.get("adapter_coverage", {}) or {}
     integration_health = payload.get("integration_health", {}) or {}
+    acquisition_integration = integration_health.get("acquisition_hand", {}) or {}
     checked_at = str(payload.get("checked_at", "")).strip()
     return {
         "last_run_exists": DOCTOR_LAST_RUN_PATH.exists(),
@@ -390,6 +391,7 @@ def _doctor_runtime_summary() -> Dict[str, Any]:
             "validation_families": list(adapter_coverage.get("validation_families", []) or []),
             "browser_runtime_ready_total": int(adapter_coverage.get("browser_runtime_ready_total", 0) or 0),
             "browser_execution_profiles": list(adapter_coverage.get("browser_execution_profiles", []) or []),
+            "delivery_requirements_contract": bool(acquisition_integration.get("delivery_requirements_contract")),
             "attention_sites_total": len(acquisition_health.get("attention_sites", []) or []),
             "stability_score": float(adapter_coverage.get("stability_score", 0.0) or 0.0),
         },

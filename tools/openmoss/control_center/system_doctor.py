@@ -2089,6 +2089,9 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
             )
             if not [str(item).strip() for item in probe_plan.get('tool_ids', []) or [] if str(item).strip()]:
                 errors.append('acquisition_chain_missing_local_probe_plan')
+            delivery_requirements = acquisition_hand.get('delivery_requirements', {}) or {}
+            if not (delivery_requirements.get('required_fields_by_site', {}) or {}):
+                errors.append('acquisition_chain_missing_delivery_requirements')
             sample_tool_labels = [
                 str(item.get('tool_label', '')).strip()
                 for item in (probe_plan.get('route_plan', []) or [])[:2]
@@ -2136,6 +2139,8 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
                     errors.append('acquisition_chain_missing_synthesis_status')
                 if not str((sample_summary.get('overall_summary', {}) or {}).get('validation_diversity_status', '')).strip():
                     errors.append('acquisition_chain_missing_validation_diversity_status')
+                if not str((sample_summary.get('overall_summary', {}) or {}).get('release_readiness_status', '')).strip():
+                    errors.append('acquisition_chain_missing_release_readiness_status')
 
             contract = TaskContract.from_dict({
                 'task_id': task_id,
@@ -2185,6 +2190,10 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
         'required_files': [str(path.relative_to(WORKSPACE_ROOT)) for path in ACQUISITION_REQUIRED_FILES],
         'field_synthesis_contract': not any(
             item in {'acquisition_chain_missing_site_synthesis_summary', 'acquisition_chain_missing_synthesis_status'}
+            for item in errors
+        ),
+        'delivery_requirements_contract': not any(
+            item in {'acquisition_chain_missing_delivery_requirements', 'acquisition_chain_missing_release_readiness_status'}
             for item in errors
         ),
         'browser_execution_contract': not any(

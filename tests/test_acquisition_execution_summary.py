@@ -45,11 +45,23 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
             },
         }
 
-    def _acquisition_hand(self, *, validation_adapter_id='crawl4ai_cli', validation_route_id='validate:crawl4ai', validation_route_type='crawl4ai'):
+    def _acquisition_hand(
+        self,
+        *,
+        validation_adapter_id='crawl4ai_cli',
+        validation_route_id='validate:crawl4ai',
+        validation_route_type='crawl4ai',
+        required_fields=None,
+        stretch_fields=None,
+    ):
         registry = build_acquisition_adapter_registry(self._capabilities())
         return {
             'enabled': True,
             'adapter_registry': registry,
+            'delivery_requirements': {
+                'required_fields_by_site': {'amazon': list(required_fields or ['title', 'price', 'link'])},
+                'stretch_fields_by_site': {'amazon': list(stretch_fields or ['rating', 'reviews'])},
+            },
             'route_candidates': [
                 {
                     'route_id': 'primary:curl',
@@ -141,10 +153,12 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         )
         self.assertEqual(summary['overall_summary']['consensus_status'], 'cross_route_validated')
         self.assertEqual(summary['overall_summary']['synthesis_status'], 'ready')
+        self.assertEqual(summary['overall_summary']['release_readiness_status'], 'ready')
         self.assertEqual(summary['overall_summary']['validation_diversity_status'], 'independent_family_validation')
         self.assertEqual(summary['site_consensus'][0]['validation_status'], 'cross_validated_independent')
         self.assertEqual(summary['site_synthesized_outputs'][0]['final_fields']['title'], 'Wireless Mouse')
         self.assertEqual(summary['site_synthesized_outputs'][0]['field_provenance']['price']['confidence'], 'cross_validated_independent')
+        self.assertTrue(summary['site_synthesized_outputs'][0]['release_ready'])
         self.assertFalse(summary['planned_but_not_executed_route_ids'])
         self.assertEqual(summary['route_runs'][0]['evidence_ref'], '/tmp/crawler-tool-matrix.json')
         self.assertIn('Synthesis status: `ready`', render_acquisition_execution_summary_markdown(summary))
@@ -185,11 +199,51 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         )
         self.assertEqual(summary['overall_summary']['consensus_status'], 'needs_review')
         self.assertEqual(summary['overall_summary']['synthesis_status'], 'needs_review')
+        self.assertEqual(summary['overall_summary']['release_readiness_status'], 'needs_review')
         site_output = summary['site_synthesized_outputs'][0]
         self.assertEqual(site_output['final_fields']['price'], '19.99')
         self.assertIn('price', site_output['conflicted_fields'])
         self.assertEqual(site_output['field_provenance']['price']['confidence'], 'resolved_by_best_evidence')
         self.assertIn('review_field_level_conflicts_before_release', summary['recommended_next_actions'])
+
+    def test_execution_summary_allows_release_when_only_stretch_fields_are_missing(self):
+        payload = self._report_payload()
+        for row in payload['sites'][0]['tool_results']:
+            row['normalized_task_output']['populated_fields'] = ['title', 'price', 'link']
+            row['normalized_task_output']['fields'].pop('rating', None)
+            row['normalized_task_output']['fields'].pop('reviews', None)
+            row['normalized_task_output']['field_completeness'] = 0.6
+        summary = build_acquisition_execution_summary(
+            'test-acq-stretch-missing',
+            'Collect public Amazon price evidence with source links',
+            payload,
+            self._acquisition_hand(required_fields=['title', 'price', 'link'], stretch_fields=['rating', 'reviews']),
+            report_path='/tmp/crawler-tool-matrix.json',
+        )
+        self.assertEqual(summary['overall_summary']['synthesis_status'], 'partial')
+        self.assertEqual(summary['overall_summary']['release_readiness_status'], 'ready')
+        self.assertEqual(summary['overall_summary']['required_field_gap_total'], 0)
+        self.assertEqual(summary['site_synthesized_outputs'][0]['missing_required_fields'], [])
+        self.assertFalse(summary['recommended_next_actions'].count('capture_missing_required_fields_before_release'))
+
+    def test_execution_summary_blocks_release_when_required_fields_are_missing(self):
+        payload = self._report_payload()
+        for row in payload['sites'][0]['tool_results']:
+            row['normalized_task_output']['fields'].pop('price', None)
+            row['normalized_task_output']['populated_fields'] = ['title', 'link']
+            row['normalized_task_output']['field_completeness'] = 0.4
+        summary = build_acquisition_execution_summary(
+            'test-acq-required-gap',
+            'Collect public Amazon price evidence with source links',
+            payload,
+            self._acquisition_hand(required_fields=['title', 'price', 'link'], stretch_fields=['rating']),
+            report_path='/tmp/crawler-tool-matrix.json',
+        )
+        self.assertEqual(summary['overall_summary']['release_readiness_status'], 'missing_required_fields')
+        self.assertGreater(summary['overall_summary']['required_field_gap_total'], 0)
+        self.assertIn('capture_missing_required_fields_before_release', summary['recommended_next_actions'])
+        self.assertIn('price', summary['site_synthesized_outputs'][0]['missing_required_fields'])
+        self.assertFalse(summary['site_synthesized_outputs'][0]['release_ready'])
 
     def test_verifier_accepts_complete_acquisition_summary(self):
         task_id = 'test-acq-summary-verifier'
@@ -229,7 +283,9 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         self.assertEqual(result['site_synthesized_output_count'], 1)
         snapshot = build_task_status_snapshot(task_id)
         self.assertEqual(snapshot['acquisition_hand']['execution_synthesis_status'], 'ready')
+        self.assertEqual(snapshot['acquisition_hand']['release_readiness_status'], 'ready')
         self.assertEqual(snapshot['acquisition_hand']['validation_diversity_status'], 'independent_family_validation')
+        self.assertEqual(snapshot['acquisition_hand']['required_field_gap_total'], 0)
         self.assertEqual(snapshot['acquisition_hand']['synthesized_sites_total'], 1)
 
 

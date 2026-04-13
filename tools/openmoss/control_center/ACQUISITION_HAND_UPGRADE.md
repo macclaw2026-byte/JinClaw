@@ -21,6 +21,8 @@ The current phase also extends that control surface into execution evidence:
 - the adapter catalog is now a concrete adapter market instead of only stack-level labels
 - execution results can be normalized into a route-aware `acquisition execution summary`
 - verifier/runtime/doctor now have a shared artifact for planned-vs-executed route gaps and site-level consensus
+- task-level `delivery_requirements` now define which fields are truly required for release versus only nice-to-have
+- acquisition summaries now expose `release_readiness_status` so doctor/runtime can tell the difference between missing critical fields and missing stretch fields
 
 ## New Core Structures
 
@@ -29,6 +31,7 @@ The current phase also extends that control surface into execution evidence:
 - `acquisition_hand`
   - Unified data-acquisition protocol with:
     - target profile
+    - delivery requirements
     - governance binding
     - challenge assessment
     - routing policy
@@ -43,6 +46,7 @@ The current phase also extends that control surface into execution evidence:
     - executed routes
     - planned-vs-executed gaps
     - per-site winner / validation status
+    - required-field coverage and release readiness
     - overall consensus status
 - structured `challenge` signals
   - Challenge classification now emits severity, signals, safe next routes, and anti-bot posture hints.
