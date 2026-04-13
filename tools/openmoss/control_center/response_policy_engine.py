@@ -108,6 +108,70 @@ def _governance_fragment(snapshot: Dict[str, Any]) -> str:
     return " 当前治理上下文：" + "，".join(parts) + "。"
 
 
+def _acquisition_response_fragment(snapshot: Dict[str, Any]) -> str:
+    """
+    中文注解：
+    - 功能：把 snapshot.reply_contract 中的 acquisition response 合同翻译成用户可见的简短回复片段。
+    - 设计意图：让最终回执真正消费 acquisition-hand 的答案合同，而不是只停留在内部 metadata。
+    """
+    reply_contract = snapshot.get("reply_contract", {}) or {}
+    acquisition_response = reply_contract.get("acquisition_response", {}) or {}
+    if not bool(acquisition_response.get("enabled")):
+        return ""
+    mode = str(acquisition_response.get("response_mode", "")).strip() or "unknown"
+    fragment = f" 当前数据回答模式是 {mode}。"
+    preview_lines = [str(item).strip() for item in (acquisition_response.get("preview_lines", []) or []) if str(item).strip()]
+    disclosure_lines = [str(item).strip() for item in (acquisition_response.get("disclosure_lines", []) or []) if str(item).strip()]
+    blocker_reasons = [str(item).strip() for item in (acquisition_response.get("blocker_reasons", []) or []) if str(item).strip()]
+    recommended_next_actions = [
+        str(item).strip() for item in (acquisition_response.get("recommended_next_actions", []) or []) if str(item).strip()
+    ]
+    if preview_lines:
+        fragment += " 当前可引用字段：" + "；".join(preview_lines[:2]) + "。"
+    if bool(acquisition_response.get("requires_user_confirmation")):
+        fragment += " 继续前需要你确认接受当前 guarded 证据级别。"
+    elif bool(acquisition_response.get("requires_disclosure")) and disclosure_lines:
+        fragment += " 使用当前结果时必须附带说明：" + "；".join(disclosure_lines[:2]) + "。"
+    if mode in {"partial_answer_with_blockers", "pause_and_recapture"} and blocker_reasons:
+        fragment += " 当前阻断：" + "，".join(blocker_reasons[:3]) + "。"
+    elif mode in {"partial_answer_with_blockers", "pause_and_recapture"} and recommended_next_actions:
+        fragment += " 下一步建议：" + "，".join(recommended_next_actions[:3]) + "。"
+    return fragment
+
+
+def _acquisition_response_details_fragment(snapshot: Dict[str, Any]) -> str:
+    reply_contract = snapshot.get("reply_contract", {}) or {}
+    acquisition_response = reply_contract.get("acquisition_response", {}) or {}
+    if not bool(acquisition_response.get("enabled")):
+        return ""
+    fragment = ""
+    preview_lines = [str(item).strip() for item in (acquisition_response.get("preview_lines", []) or []) if str(item).strip()]
+    disclosure_lines = [str(item).strip() for item in (acquisition_response.get("disclosure_lines", []) or []) if str(item).strip()]
+    blocker_reasons = [str(item).strip() for item in (acquisition_response.get("blocker_reasons", []) or []) if str(item).strip()]
+    recommended_next_actions = [
+        str(item).strip() for item in (acquisition_response.get("recommended_next_actions", []) or []) if str(item).strip()
+    ]
+    mode = str(acquisition_response.get("response_mode", "")).strip()
+    if preview_lines:
+        fragment += " 当前可引用字段：" + "；".join(preview_lines[:2]) + "。"
+    if bool(acquisition_response.get("requires_user_confirmation")):
+        fragment += " 继续前需要你确认接受当前 guarded 证据级别。"
+    elif bool(acquisition_response.get("requires_disclosure")) and disclosure_lines:
+        fragment += " 使用当前结果时必须附带说明：" + "；".join(disclosure_lines[:2]) + "。"
+    if mode in {"partial_answer_with_blockers", "pause_and_recapture"} and blocker_reasons:
+        fragment += " 当前阻断：" + "，".join(blocker_reasons[:3]) + "。"
+    elif mode in {"partial_answer_with_blockers", "pause_and_recapture"} and recommended_next_actions:
+        fragment += " 下一步建议：" + "，".join(recommended_next_actions[:3]) + "。"
+    return fragment
+
+
+def _merge_acquisition_response(summary: str, snapshot: Dict[str, Any]) -> str:
+    text = str(summary or "").strip()
+    if "Current data answer mode is" in text or "当前数据回答模式是" in text:
+        return text + _acquisition_response_details_fragment(snapshot)
+    return text + _acquisition_response_fragment(snapshot)
+
+
 def build_route_receipt_text(route: Dict[str, Any]) -> str:
     """
     中文注解：
@@ -130,13 +194,14 @@ def build_route_receipt_text(route: Dict[str, Any]) -> str:
         if not snapshot or not task_id or status in {"completed", "failed"}:
             return "HEARTBEAT_OK"
         summary = str(snapshot.get("authoritative_summary", "")).strip() or f"任务 {task_id} 仍在推进中。"
-        return summary + _milestone_fragment(snapshot) + _governance_fragment(snapshot)
+        return _merge_acquisition_response(summary, snapshot) + _milestone_fragment(snapshot) + _governance_fragment(snapshot)
     if mode == "explicit_task_not_found":
         return f"没有找到任务 {task_id or 'unknown'}。请先在任务面板确认任务 ID，然后再用 `[task:任务ID]` 或 `任务: 任务ID` 指定。"
     if mode == "task_completed_notice":
         snapshot = route.get("authoritative_task_status", {}) or {}
         summary = str(snapshot.get("authoritative_summary", "")).strip()
-        return f"任务 {task_id or snapshot.get('task_id', 'unknown')} 已完成。{summary or '完成状态已记录。'}{_milestone_fragment(snapshot)}{_governance_fragment(snapshot)}"
+        body = _merge_acquisition_response(summary or "完成状态已记录。", snapshot)
+        return f"任务 {task_id or snapshot.get('task_id', 'unknown')} 已完成。{body}{_milestone_fragment(snapshot)}{_governance_fragment(snapshot)}"
     if mode == "milestone_progress_notice":
         snapshot = route.get("authoritative_task_status", {}) or {}
         notice = route.get("milestone_notice", {}) or {}
@@ -145,17 +210,19 @@ def build_route_receipt_text(route: Dict[str, Any]) -> str:
         prefix = f"任务 {task_id or snapshot.get('task_id', 'unknown')} 已推进里程碑：{title}。"
         if summary:
             prefix += summary
-        return prefix + _milestone_fragment(snapshot) + _governance_fragment(snapshot)
+        return _merge_acquisition_response(prefix, snapshot) + _milestone_fragment(snapshot) + _governance_fragment(snapshot)
     if mode == "failed_task_doctor_takeover":
         snapshot = route.get("authoritative_task_status", {}) or {}
         summary = str(snapshot.get("authoritative_summary", "")).strip()
-        return f"任务 {task_id or snapshot.get('task_id', 'unknown')} 刚进入失败态，系统医生已接管。{summary or '我会先分析并尝试修复，再决定是否升级报告。'}{_milestone_fragment(snapshot)}{_governance_fragment(snapshot)}"
+        body = _merge_acquisition_response(summary or '我会先分析并尝试修复，再决定是否升级报告。', snapshot)
+        return f"任务 {task_id or snapshot.get('task_id', 'unknown')} 刚进入失败态，系统医生已接管。{body}{_milestone_fragment(snapshot)}{_governance_fragment(snapshot)}"
     if mode == "authoritative_task_status":
         snapshot = route.get("authoritative_task_status", {}) or {}
         canonical = snapshot.get("canonical_task", {}) or {}
         requested_task_id = str(snapshot.get("requested_task_id", "")).strip()
         canonical_task_id = str(snapshot.get("task_id", "")).strip()
         summary = str(snapshot.get("authoritative_summary", "")).strip() or f"当前任务状态已刷新，任务 ID: {task_id or 'unknown'}。"
+        summary = _merge_acquisition_response(summary, snapshot)
         summary += _milestone_fragment(snapshot)
         summary += _governance_fragment(snapshot)
         if requested_task_id and canonical_task_id and requested_task_id != canonical_task_id:
@@ -195,7 +262,7 @@ def build_route_receipt_text(route: Dict[str, Any]) -> str:
     if mode == "doctor_diagnostic":
         snapshot = route.get("authoritative_task_status", {}) or {}
         summary = str(snapshot.get("authoritative_summary", "")).strip() or f"系统医生已接管任务 {task_id} 并开始诊断。"
-        return summary + _milestone_fragment(snapshot) + _governance_fragment(snapshot)
+        return _merge_acquisition_response(summary, snapshot) + _milestone_fragment(snapshot) + _governance_fragment(snapshot)
     return f"已收到任务型指令。当前路由模式: {mode}。任务 ID: {task_id or '未创建'}。"
 
 
