@@ -191,6 +191,9 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         self.assertEqual(summary['site_consensus'][0]['validation_status'], 'cross_validated_independent')
         self.assertEqual(summary['site_synthesized_outputs'][0]['trust_posture'], 'guarded_medium_trust_sources')
         self.assertEqual(summary['site_synthesized_outputs'][0]['governed_release_status'], 'guarded_release_with_disclosure')
+        self.assertTrue(summary['overall_summary']['release_disclosure']['required'])
+        self.assertEqual(summary['overall_summary']['release_disclosure']['level'], 'guarded')
+        self.assertTrue(summary['overall_summary']['release_disclosure']['headline'])
         self.assertEqual(summary['site_synthesized_outputs'][0]['final_fields']['title'], 'Wireless Mouse')
         self.assertEqual(summary['site_synthesized_outputs'][0]['field_provenance']['price']['confidence'], 'cross_validated_independent')
         self.assertTrue(summary['site_synthesized_outputs'][0]['release_ready'])
@@ -274,6 +277,36 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         self.assertEqual(summary['overall_summary']['governed_release_status'], 'auto_release_allowed')
         self.assertTrue(summary['site_synthesized_outputs'][0]['trusted_release_ready'])
         self.assertTrue(summary['site_synthesized_outputs'][0]['governed_release_ready'])
+        self.assertFalse(summary['overall_summary']['release_disclosure']['required'])
+
+    def test_execution_summary_prefers_fresher_evidence_when_trust_rank_is_tied(self):
+        payload = self._report_payload(primary_tool='search', validation_tool='local-agent-browser-cli')
+        payload['sites'][0]['tool_results'][0]['arbitration_score'] = 62
+        payload['sites'][0]['tool_results'][1]['arbitration_score'] = 62
+        payload['sites'][0]['tool_results'][1]['normalized_task_output']['fields']['price'] = '18.99'
+        summary = build_acquisition_execution_summary(
+            'test-acq-freshness-priority',
+            'Collect current Amazon price evidence with source links',
+            payload,
+            self._acquisition_hand(
+                primary_adapter_id='official_api_search',
+                primary_route_id='primary:official',
+                primary_route_type='official_api',
+                validation_adapter_id='authorized_browser_session',
+                validation_route_id='validate:authorized',
+                validation_route_type='authorized_session',
+                required_fields=['title', 'price', 'link'],
+                stretch_fields=['rating'],
+                time_sensitivity='fresh',
+            ),
+            report_path='/tmp/crawler-tool-matrix.json',
+        )
+        price_provenance = summary['site_synthesized_outputs'][0]['field_provenance']['price']
+        self.assertEqual(summary['site_synthesized_outputs'][0]['final_fields']['price'], '19.99')
+        self.assertEqual(price_provenance['confidence'], 'resolved_by_freshness')
+        self.assertEqual(price_provenance['resolution_basis'], 'freshness_priority')
+        self.assertEqual(price_provenance['selected_freshness_alignment'], 'fresh_ready')
+        self.assertEqual(summary['overall_summary']['governed_release_status'], 'auto_release_allowed')
 
     def test_execution_summary_marks_low_trust_browser_release_as_guarded(self):
         payload = self._report_payload(primary_tool='playwright-stealth', validation_tool='playwright')
@@ -301,6 +334,7 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         self.assertEqual(summary['site_synthesized_outputs'][0]['freshness_posture'], 'snapshot_only')
         self.assertFalse(summary['site_synthesized_outputs'][0]['trusted_release_ready'])
         self.assertFalse(summary['site_synthesized_outputs'][0]['governed_release_ready'])
+        self.assertEqual(summary['overall_summary']['release_disclosure']['level'], 'blocked')
         self.assertIn('seek_higher_trust_source_before_release', summary['recommended_next_actions'])
         self.assertIn('rerun_fresher_route_before_release', summary['recommended_next_actions'])
 
@@ -373,6 +407,7 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         self.assertEqual(summary['overall_summary']['governed_release_status'], 'guarded_requires_human_confirmation')
         self.assertTrue(summary['overall_summary']['requires_human_confirmation'])
         self.assertFalse(summary['site_synthesized_outputs'][0]['governed_release_ready'])
+        self.assertTrue(summary['overall_summary']['release_disclosure']['requires_user_confirmation'])
         self.assertIn('ask_user_to_confirm_guarded_release', summary['recommended_next_actions'])
 
     def test_verifier_accepts_complete_acquisition_summary(self):
@@ -416,6 +451,7 @@ class AcquisitionExecutionSummaryTest(unittest.TestCase):
         self.assertEqual(snapshot['acquisition_hand']['release_readiness_status'], 'ready')
         self.assertEqual(snapshot['acquisition_hand']['trusted_release_status'], 'guarded_medium_trust')
         self.assertEqual(snapshot['acquisition_hand']['governed_release_status'], 'guarded_release_with_disclosure')
+        self.assertTrue(snapshot['acquisition_hand']['release_disclosure']['required'])
         self.assertEqual(snapshot['acquisition_hand']['validation_diversity_status'], 'independent_family_validation')
         self.assertEqual(snapshot['acquisition_hand']['required_field_gap_total'], 0)
         self.assertEqual(snapshot['acquisition_hand']['synthesized_sites_total'], 1)

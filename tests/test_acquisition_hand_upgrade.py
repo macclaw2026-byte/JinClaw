@@ -79,6 +79,7 @@ class AcquisitionHandUpgradeTest(unittest.TestCase):
         self.assertIn('freshness_alignment', hand['result_consensus']['required_provenance_fields'])
         self.assertTrue(hand['release_governance']['mode'])
         self.assertTrue(hand['release_governance']['auto_release_requires_trusted_ready'])
+        self.assertTrue(hand['release_governance']['guarded_release_requires_disclosure'])
         self.assertGreaterEqual(int(hand['result_consensus']['minimum_validation_family_count']), 1)
         self.assertTrue(hand['compatibility']['crawler_enabled'])
         self.assertTrue(set(hand['recommended_tools']).issubset(set(package['allowed_tools'])))

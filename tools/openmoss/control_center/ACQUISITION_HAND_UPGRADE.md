@@ -26,6 +26,8 @@ The current phase also extends that control surface into execution evidence:
 - acquisition summaries now also expose `trusted_release_status`, making it explicit whether required fields are backed mainly by higher-trust sources or only by browser/public-fetch evidence
 - acquisition hand now carries explicit `release_governance`, so the system can distinguish automatic release, guarded release with disclosure, user-confirmed guarded release, and must-recapture states
 - acquisition summaries now expose `governed_release_status`, turning trust/freshness posture into an actual delivery rule instead of just passive metadata
+- guarded results now emit structured `release_disclosure`, so user-facing caveats and operator-facing release blockers come from the same schema
+- fresh tasks now support field-level `freshness_priority` resolution when competing routes have equal trust rank but different freshness posture
 
 ## New Core Structures
 
@@ -53,6 +55,7 @@ The current phase also extends that control surface into execution evidence:
     - required-field coverage and release readiness
     - trust posture and trusted-release status
     - freshness posture and governed-release decision
+    - structured release disclosure
     - overall consensus status
 - structured `challenge` signals
   - Challenge classification now emits severity, signals, safe next routes, and anti-bot posture hints.
@@ -86,3 +89,4 @@ It also means the system can now explain:
 3. whether multiple routes agreed
 4. where route coverage is still missing
 5. whether the current result may be auto-delivered, only guarded-delivered, or must first gather fresher / higher-trust evidence
+6. what exact caveat text should accompany a guarded release
