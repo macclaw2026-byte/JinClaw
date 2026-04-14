@@ -74,6 +74,59 @@ class CrawlerExecutionTruthAlignmentTest(unittest.TestCase):
             self.assertIn('price', contract.comparison_summary['missing_required_fields'])
             self.assertTrue(contract.comparison_summary['disqualified_tools'])
 
+    def test_build_contract_accepts_amazon_browser_dom_with_opened_url_title_pair(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            reports_root = tmp / 'reports'
+            sites_root = tmp / 'site-profiles'
+            self._write_json(
+                reports_root / 'amazon-latest-run.json',
+                {
+                    'site': 'amazon',
+                    'query': 'wireless mouse',
+                    'preferredOrder': ['local-agent-browser-cli', 'crawl4ai-cli'],
+                    'taskReadySummary': {'recommendedAction': 'use-best-tool'},
+                    'toolResults': [
+                        {
+                            'tool': 'local-agent-browser-cli',
+                            'status': 'usable',
+                            'score': 75,
+                            'product_signal_count': 180,
+                            'block_signal_count': 0,
+                            'stdout_chars': 120000,
+                            'stdout_head': 'opened_url=https://www.amazon.com/s?k=wireless+mouse\nAmazon.com : wireless mouse\n- generic',
+                            'stderr_head': '',
+                            'notes': 'browser DOM capture',
+                            'url': 'https://www.amazon.com/s?k=wireless+mouse',
+                        },
+                        {
+                            'tool': 'crawl4ai-cli',
+                            'status': 'usable',
+                            'score': 75,
+                            'product_signal_count': 120,
+                            'block_signal_count': 0,
+                            'stdout_chars': 130000,
+                            'stdout_head': 'Search Amazon\nhttps://www.amazon.com/s?k=wireless+mouse',
+                            'stderr_head': '',
+                            'notes': 'markdown extract',
+                            'url': 'https://www.amazon.com/s?k=wireless+mouse',
+                        },
+                    ],
+                },
+            )
+            sites_root.mkdir(parents=True, exist_ok=True)
+            (sites_root / 'amazon.md').write_text('# amazon\n', encoding='utf-8')
+
+            with patch.object(crawler_contract, 'REPORT_DIR', reports_root), patch.object(
+                crawler_contract, 'SITE_PROFILE_DIR', sites_root
+            ):
+                contract = crawler_contract.build_contract('amazon')
+
+            self.assertEqual(contract.comparison_summary['best_tool'], 'local-agent-browser-cli')
+            self.assertTrue(contract.comparison_summary['required_fields_met'])
+            self.assertEqual(contract.task_ready_fields['title'], 'Amazon.com : wireless mouse')
+            self.assertEqual(contract.task_ready_fields['link'], 'https://www.amazon.com/s?k=wireless+mouse')
+
     def test_choose_best_prefers_candidate_that_meets_required_fields(self):
         rows = [
             {
@@ -172,6 +225,68 @@ class CrawlerExecutionTruthAlignmentTest(unittest.TestCase):
             self.assertEqual((site.get('evidence_alignment', {}) or {}).get('status'), 'execution_conflict_and_profile_stale')
             self.assertEqual(summary['sites_with_evidence_drift'], 1)
             self.assertEqual(summary['evidence_alignment_score'], 0.0)
+
+    def test_capability_profile_treats_none_selected_tool_as_empty_for_blocked_consensus(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            sites_root = tmp / 'site-profiles'
+            reports_root = tmp / 'reports'
+            history_path = tmp / 'history.json'
+            profile_path = tmp / 'profile.json'
+
+            self._write_json(
+                sites_root / '1688.json',
+                {
+                    'site': '1688',
+                    'mode': 'anonymous_truth_check_only',
+                    'confidence': 'low',
+                    'tested_tools': ['curl-cffi'],
+                    'usable_tools': [],
+                    'blocked_tools': ['curl-cffi'],
+                    'selected_tool': '',
+                    'task_output_fields': {},
+                },
+            )
+            self._write_json(
+                reports_root / '1688-latest-run.json',
+                {
+                    'site': '1688',
+                    'bestStatus': 'blocked',
+                    'bestTool': None,
+                    'taskReadySummary': {'notes': ['still blocked']},
+                },
+            )
+            self._write_json(
+                reports_root / '1688-contract.json',
+                {
+                    'site': '1688',
+                    'preferred_tool_order': ['curl-cffi'],
+                    'comparison_summary': {
+                        'best_tool': None,
+                        'best_status': 'blocked',
+                        'usable_tools': [],
+                    },
+                    'task_ready_fields': {'evidence_excerpt': []},
+                },
+            )
+
+            with patch.object(profile_module, 'SITE_PROFILES_ROOT', sites_root), patch.object(
+                profile_module, 'REPORTS_ROOT', reports_root
+            ), patch.object(
+                profile_module, 'CRAWLER_CAPABILITY_HISTORY_PATH', history_path
+            ), patch.object(
+                profile_module, 'CRAWLER_CAPABILITY_PROFILE_PATH', profile_path
+            ), patch.object(
+                profile_module,
+                'summarize_project_memory_writebacks',
+                return_value={'tasks_total': 0, 'target_counts': {}, 'source_counts': {}, 'recent_items': []},
+            ):
+                profile = profile_module.build_crawler_capability_profile()
+
+            site = profile['sites'][0]
+            self.assertEqual((site.get('evidence_alignment', {}) or {}).get('status'), 'blocked_consensus')
+            self.assertEqual(profile['summary']['sites_with_evidence_drift'], 0)
+            self.assertEqual(profile['summary']['evidence_alignment_score'], 100.0)
 
 
 if __name__ == '__main__':

@@ -82,9 +82,9 @@ def _derive_execution_truth(
     - 输出角色：供 capability profile、router、doctor 使用，避免每层各自挑一个 best tool 造成漂移。
     """
     comparison_summary = contract.get("comparison_summary", {}) or {}
-    profile_selected_tool = str(profile.get("selected_tool", "")).strip()
-    latest_selected_tool = str(latest_run.get("bestTool", "")).strip()
-    contract_selected_tool = str(comparison_summary.get("best_tool", "")).strip()
+    profile_selected_tool = str(profile.get("selected_tool") or "").strip()
+    latest_selected_tool = str(latest_run.get("bestTool") or "").strip()
+    contract_selected_tool = str(comparison_summary.get("best_tool") or "").strip()
     latest_best_status = str(latest_run.get("bestStatus", "")).strip().lower()
     contract_best_status = str(comparison_summary.get("best_status", "")).strip().lower()
     profile_usable_tools = _tool_names(profile.get("usable_tools", []) or [])

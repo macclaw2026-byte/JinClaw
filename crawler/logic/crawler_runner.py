@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+# RULES-FIRST NOTICE:
+# Before modifying this file, first read:
+# - `JINCLAW_CONSTITUTION.md`
+# - `AI_OPTIMIZATION_FRAMEWORK.md`
+# Follow the constitution and framework:
+# brain-first, one-doctor, fail-closed, evidence-over-narration,
+# validate locally, then use the required PR workflow.
 from __future__ import annotations
 
 import argparse
@@ -8,7 +15,14 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote_plus
 
-from crawler.logic.crawler_contract import _extract_task_ready_fields, _field_score, _meets_required_fields, save_contract, summarize_site_from_matrix
+from crawler.logic.crawler_contract import (
+    _extract_task_ready_fields,
+    _field_completeness_from_fields,
+    _field_score,
+    _meets_required_fields,
+    save_contract,
+    summarize_site_from_matrix,
+)
 
 ROOT = Path('/Users/mac_claw/.openclaw/workspace')
 SITE_PROFILES = ROOT / 'crawler' / 'logic' / 'site_profiles.json'
@@ -26,13 +40,49 @@ SITE_URLS = {
     'walmart': lambda q: f'https://www.walmart.com/search?q={quote_plus(q)}',
     'temu': lambda q: f'https://www.temu.com/search_result.html?search_key={quote_plus(q)}',
     '1688': lambda q: f'https://s.1688.com/selloffer/offer_search.htm?keywords={quote_plus(q)}',
+    '1688-authenticated': lambda q: f'https://s.1688.com/selloffer/offer_search.htm?keywords={quote_plus(q)}',
 }
 
 
+def _normalize_site_profile(site: str, profile: dict) -> dict:
+    if not profile:
+        return profile
+    if 'preferredTools' in profile:
+        return profile
+    preferred = profile.get('preferred_tool_order', [])
+    fallback = profile.get('fallback_policy', '')
+    notes = profile.get('notes', [])
+    if not notes:
+        notes = [
+            f"selected_tool={profile.get('selected_tool', '') or 'none'}",
+            f"mode={profile.get('mode', '')}",
+            f"confidence={profile.get('confidence', '')}",
+        ]
+    return {
+        'site': site,
+        'lastEvaluated': profile.get('last_evaluated'),
+        'confidence': profile.get('confidence'),
+        'mode': profile.get('mode'),
+        'preferredTools': preferred,
+        'fallbackPolicy': fallback,
+        'notes': notes,
+    }
+
+
 def load_profiles() -> dict:
-    if not SITE_PROFILES.exists():
-        return {}
-    return json.loads(SITE_PROFILES.read_text())
+    profiles = {}
+    if SITE_PROFILES.exists():
+        raw = json.loads(SITE_PROFILES.read_text())
+        for site, profile in raw.items():
+            profiles[site] = _normalize_site_profile(site, profile)
+    for path in SITE_PROFILE_DIR.glob('*.json'):
+        try:
+            raw_profile = json.loads(path.read_text())
+        except Exception:
+            continue
+        site = raw_profile.get('site') or path.stem
+        profiles[site] = _normalize_site_profile(site, raw_profile)
+    return profiles
 
 
 def save_profiles(profiles: dict) -> None:
@@ -88,14 +138,18 @@ def choose_best(tool_results: list[dict], site: str | None = None) -> dict | Non
         ranked = []
         for row in survivors:
             text = f"{row.get('stdout_head', '')}\n{row.get('stderr_head', '')}"
-            task_fields = _extract_task_ready_fields(site or '', row.get('stdout_head', '')) if site else {}
+            task_fields = _extract_task_ready_fields(site or '', row.get('stdout_head', ''), row.get('url', '')) if site else {}
             required_fields_met = _meets_required_fields(site or '', task_fields) if site else True
-            field_completeness = float(row.get('field_completeness', 0) or _field_score(text).get('completeness', 0))
+            field_completeness = max(
+                float(row.get('field_completeness', 0) or 0),
+                _field_completeness_from_fields(task_fields),
+                _field_score(text).get('completeness', 0),
+            )
             ranked.append(
                 (
                     1 if required_fields_met else 0,
-                    int(row.get('score', 0) or 0),
                     field_completeness,
+                    int(row.get('score', 0) or 0),
                     int(row.get('product_signal_count', 0) or 0),
                     int(row.get('stdout_chars', 0) or 0),
                     row,
@@ -124,14 +178,19 @@ def refresh_site_profile_from_matrix(site: str) -> dict:
 def run_site(site: str, query: str, first_run: bool = False, refresh_profile: bool = False) -> dict:
     profiles = load_profiles()
     profile = profiles.get(site)
-    first_run_missing = not site_has_completed_first_run(site)
+    state_site = site
+    matrix_site = site
+    if site == '1688-authenticated':
+        matrix_site = '1688'
+    first_run_missing = not site_has_completed_first_run(state_site)
     should_full_eval = first_run or refresh_profile or not profile or first_run_missing
     if should_full_eval:
         run_full_matrix()
-        profile = refresh_site_profile_from_matrix(site)
-        mark_site_first_run_completed(site, query)
+        if site != '1688-authenticated':
+            profile = refresh_site_profile_from_matrix(site)
+        mark_site_first_run_completed(state_site, query)
     matrix = load_matrix()
-    site_row = next((s for s in matrix['sites'] if s['site'] == site), None)
+    site_row = next((s for s in matrix['sites'] if s['site'] == matrix_site), None)
     if not site_row:
         raise SystemExit(f'No matrix data for site: {site}')
 

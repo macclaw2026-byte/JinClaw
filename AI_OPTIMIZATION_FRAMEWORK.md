@@ -52,6 +52,9 @@ This document makes that workflow explicit.
 7. PR-only integration.
    Core changes are not structurally complete until they are validated and moved through the branch/PR path defined by the constitution.
 
+8. Goal-complete, not round-complete.
+   A PR, a local fix, or one optimization round is only a milestone. The default stop condition is final objective satisfied or a real governance/safety boundary, not "this round is done".
+
 ## The Framework Layers
 
 ### 1. Constitution Layer

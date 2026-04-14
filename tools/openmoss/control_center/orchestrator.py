@@ -61,7 +61,7 @@ from mission_profiles import detect_root_mission_profile
 from paths import APPROVALS_ROOT, MISSIONS_ROOT
 from plan_reselector import reselect_plan
 from proposal_judge import judge_proposals
-from promotion_engine import load_doctor_strategy_rules
+from promotion_engine import load_doctor_strategy_rules, load_operator_discipline_rules
 from resource_scout import build_resource_scout_brief
 from solution_arbitrator import arbitrate_solution_path
 from stpa_auditor import audit_mission
@@ -1104,6 +1104,7 @@ def _derive_operating_discipline(
     """
     tier = str(governance.get("tier", "standard")).strip() or "standard"
     method = str(coding_methodology.get("methodology", "jinclaw-native")).strip() or "jinclaw-native"
+    promoted_operator_rules = load_operator_discipline_rules()
 
     def _rule(key: str, section: str, statement: str, enabled: bool = True, reason: str = "") -> Dict[str, object]:
         return {
@@ -1131,9 +1132,33 @@ def _derive_operating_discipline(
         _rule("deep_research_then_ask_user", "escalation_rules", "卡住时优先深挖证据，再把真正需要人判断的部分呈给用户。", True, "避免低质量升级。"),
     ]
     completion_rules = [
+        _rule(
+            "continue_until_goal_fully_satisfied",
+            "completion_rules",
+            "默认停点不是一轮 PR 或一次局部修补完成，而是最终目标真正达到、或明确撞上治理/权限边界。未达成前继续优化，不把里程碑误当终点。",
+            True,
+            "把“目标闭环优先于轮次闭环”固化为基础执行纪律，避免把单轮 PR 误当自然停点。",
+        ),
         _rule("must_write_postmortem_before_close", "completion_rules", "关闭任务前必须写 postmortem / reusable rule。", True, "保持 learn 阶段的闭环价值。"),
         _rule("must_reference_protocol_pack", "completion_rules", "执行与回报都应遵守 protocol pack，而不是随意跳流程。", True, "让协议包成为稳定消费入口。"),
     ]
+    for promoted_rule in promoted_operator_rules:
+        section = str(promoted_rule.get("section", "")).strip() or "execution_rules"
+        target = {
+            "principles": principles,
+            "execution_rules": execution_rules,
+            "escalation_rules": escalation_rules,
+            "completion_rules": completion_rules,
+        }.get(section, execution_rules)
+        target.append(
+            _rule(
+                str(promoted_rule.get("discipline_key", "")).strip(),
+                section,
+                str(promoted_rule.get("statement", "")).strip(),
+                bool(promoted_rule.get("enabled", True)),
+                str(promoted_rule.get("reason", "")).strip() or "来自 durable operator discipline。",
+            )
+        )
     all_rules = principles + execution_rules + escalation_rules + completion_rules
     rule_lookup = {str(item.get("key", "")).strip(): item for item in all_rules}
     return {
@@ -1141,6 +1166,12 @@ def _derive_operating_discipline(
         "governance_tier": tier,
         "coding_methodology": method,
         "mission_profile_id": mission_profile.get("profile_id", ""),
+        "promoted_operator_rule_count": len(promoted_operator_rules),
+        "promoted_operator_rule_keys": [
+            str(item.get("discipline_key", "")).strip()
+            for item in promoted_operator_rules
+            if str(item.get("discipline_key", "")).strip()
+        ],
         "principles": principles,
         "execution_rules": execution_rules,
         "escalation_rules": escalation_rules,

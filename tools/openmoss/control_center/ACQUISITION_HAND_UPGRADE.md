@@ -33,6 +33,7 @@ The current phase also extends that control surface into execution evidence:
 - stage context, ACP dispatch, and runtime execution prompts now consume a structured `response_handoff`, so acquisition answer governance reaches the execution chain instead of stopping at status receipts
 - crawler execution truth is now explicitly reconciled across `site-profile`, `latest-run`, and `contract`, so router/doctor no longer treat those three layers as independent truths
 - crawler capability health now exposes `sites_with_evidence_drift` and `evidence_alignment_score`, and the canonical doctor treats this execution-truth alignment as a first-class monitored contract
+- remediation now supports inline `execution_truth_reconcile`, so low-risk drift can be repaired immediately while unresolved sites are escalated to revalidation instead of being silently overwritten
 
 ## New Core Structures
 
@@ -74,6 +75,10 @@ The current phase also extends that control surface into execution evidence:
     - `route_preference_strength`
     - summary-level `sites_with_evidence_drift`
     - summary-level `evidence_alignment_score`
+- `crawler_execution_truth_reconciler`
+  - Rebuilds fresh contracts from current evidence.
+  - Applies reconciliation only when the new contract is safe and explainable.
+  - Leaves weaker or ambiguous cases in `needs_revalidation` instead of forcing a false alignment.
 - structured `challenge` signals
   - Challenge classification now emits severity, signals, safe next routes, and anti-bot posture hints.
 

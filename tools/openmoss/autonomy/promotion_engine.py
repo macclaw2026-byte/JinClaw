@@ -9,7 +9,7 @@
 """
 中文说明：
 - 文件路径：`tools/openmoss/autonomy/promotion_engine.py`
-- 文件作用：负责把重复错误升级为 durable runtime rule。
+- 文件作用：负责把重复错误升级为 durable runtime rule，并沉淀医生策略与操作纪律等长期可复用规则。
 - 顶层函数：_read_json、_write_json、_classify_failure、load_promoted_rules、resolve_rule_for_error、promote_recurring_errors。
 - 顶层类：无顶层类。
 - 阅读建议：先看模块说明，再按函数/类 docstring 顺着主流程理解调用关系。
@@ -80,13 +80,38 @@ def load_promoted_rules() -> dict:
     return _read_json(PROMOTED_RULES, {"rules": []})
 
 
+def _rules_by_scope(scope: str) -> list[dict]:
+    """
+    中文注解：
+    - 功能：按规则作用域筛选 promoted rules。
+    - 设计意图：让 doctor strategy、operator discipline 等长期规则都能复用同一条读取路径，减少双轨漂移。
+    """
+    normalized_scope = str(scope or "").strip()
+    if not normalized_scope:
+        return []
+    promoted = load_promoted_rules()
+    return [
+        dict(rule)
+        for rule in (promoted.get("rules", []) or [])
+        if str(rule.get("rule_scope", "")).strip() == normalized_scope
+    ]
+
+
 def load_doctor_strategy_rules() -> list[dict]:
     """
     中文注解：
     - 功能：读取由医生沉淀出的可复用修复/防漂移策略。
     """
-    promoted = load_promoted_rules()
-    return [dict(rule) for rule in (promoted.get("rules", []) or []) if str(rule.get("rule_scope", "")).strip() == "doctor_strategy"]
+    return _rules_by_scope("doctor_strategy")
+
+
+def load_operator_discipline_rules() -> list[dict]:
+    """
+    中文注解：
+    - 功能：读取已经被系统沉淀下来的 durable operator discipline。
+    - 设计意图：把“持续优化到目标真正闭环”为止之类纪律，变成 runtime/orchestrator 可直接消费的长期规则，而不是只靠临时上下文记忆。
+    """
+    return _rules_by_scope("operator_discipline")
 
 
 def resolve_doctor_strategy(reason: str) -> dict | None:
@@ -189,6 +214,66 @@ def promote_doctor_strategy(
         "prevention_hint": str(prevention_hint).strip(),
         "promotion_type": "durable_doctor_rule",
         "source": "doctor_repair_success",
+        "count": 1,
+        "tasks": [task_id],
+        "latest_evidence": evidence or {},
+    }
+    rules.append(rule)
+    _write_json(PROMOTED_RULES, {"rules": rules})
+    return rule
+
+
+def promote_operator_discipline(
+    *,
+    discipline_key: str,
+    section: str,
+    statement: str,
+    reason: str,
+    task_id: str,
+    source: str = "operator_resolution",
+    enabled: bool = True,
+    evidence: dict | None = None,
+) -> dict:
+    """
+    中文注解：
+    - 功能：把一次验证过的操作纪律升级成 durable operator discipline。
+    - 设计意图：当系统确认某条执行纪律应该长期默认生效时，将其写入持久规则层，供 orchestrator/runtime 统一继承。
+    """
+    promoted = _read_json(PROMOTED_RULES, {"rules": []})
+    rules = list(promoted.get("rules", []) or [])
+    normalized_key = str(discipline_key or "").strip()
+    normalized_section = str(section or "").strip() or "execution_rules"
+    normalized_statement = str(statement or "").strip()
+    normalized_reason = str(reason or "").strip()
+    normalized_source = str(source or "").strip() or "operator_resolution"
+    for rule in rules:
+        if (
+            str(rule.get("rule_scope", "")).strip() == "operator_discipline"
+            and str(rule.get("discipline_key", "")).strip() == normalized_key
+        ):
+            rule["count"] = int(rule.get("count", 1) or 1) + 1
+            tasks = list(rule.get("tasks", []) or [])
+            if task_id not in tasks:
+                tasks.append(task_id)
+            rule["tasks"] = tasks
+            rule["section"] = normalized_section
+            rule["statement"] = normalized_statement
+            rule["reason"] = normalized_reason
+            rule["enabled"] = bool(enabled)
+            rule["source"] = normalized_source
+            if evidence:
+                rule["latest_evidence"] = evidence
+            _write_json(PROMOTED_RULES, {"rules": rules})
+            return rule
+    rule = {
+        "rule_scope": "operator_discipline",
+        "discipline_key": normalized_key,
+        "section": normalized_section,
+        "statement": normalized_statement,
+        "reason": normalized_reason,
+        "enabled": bool(enabled),
+        "promotion_type": "durable_operator_rule",
+        "source": normalized_source,
         "count": 1,
         "tasks": [task_id],
         "latest_evidence": evidence or {},

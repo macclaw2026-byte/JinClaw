@@ -83,18 +83,21 @@ def _plan_sort_key(item: Dict[str, Any], start_bias: str) -> tuple[int, int, str
     priority_rank = {"high": 0, "medium": 1, "low": 2}.get(str(item.get("priority", "medium")).strip().lower(), 9)
     execution_type = str(item.get("execution_type", "")).strip().lower()
     bias_rank = {
+        "execution_truth_reconcile": 0,
         "site_revalidation": 1,
         "manual_triage": 2,
         "field_coverage_upgrade": 3,
     }
     if start_bias == "route_unblock_first":
         bias_rank = {
+            "execution_truth_reconcile": 1,
             "manual_triage": 1,
             "site_revalidation": 2,
             "field_coverage_upgrade": 3,
         }
     elif start_bias == "repair_hotspot_first":
         bias_rank = {
+            "execution_truth_reconcile": 0,
             "site_revalidation": 1,
             "field_coverage_upgrade": 2,
             "manual_triage": 3,
@@ -198,6 +201,37 @@ def _plan_for_action(
                 str(CRAWLER_CAPABILITY_PROFILE_PATH),
             ],
             "focus_fields": task_output_fields[:8],
+            "execution_feedback": execution_feedback,
+            "priority_reason": priority_reason,
+        }
+    if action == "reconcile_site_execution_truth":
+        evidence_inputs = [str(CRAWLER_CAPABILITY_PROFILE_PATH)]
+        if site:
+            evidence_inputs.extend(
+                [
+                    str(REPORTS_ROOT / f"{site}-latest-run.json"),
+                    str(REPORTS_ROOT / f"{site}-contract.json"),
+                    str(SITE_PROFILES_ROOT / f"{site}.json"),
+                ]
+            )
+        return {
+            "id": item.get("id", ""),
+            "priority": effective_priority,
+            "execution_type": "execution_truth_reconcile",
+            "site": site,
+            "goal": (
+                f"对账并修正 {site} 的 latest-run / contract / site-profile 执行真值漂移。"
+                if site
+                else "对账所有存在 execution-truth drift 的站点，并在安全可解释时自动修正。"
+            ),
+            "suggested_route": "local_reconciliation",
+            "suggested_tools": ["crawler_execution_truth_reconciler", "crawler_contract", "crawler_capability_profile"],
+            "verification_targets": [
+                "fresh contract matches safe execution truth",
+                "safe sites are reconciled without overriding weaker evidence",
+                "unresolved sites are explicitly marked for revalidation",
+            ],
+            "evidence_inputs": evidence_inputs,
             "execution_feedback": execution_feedback,
             "priority_reason": priority_reason,
         }
