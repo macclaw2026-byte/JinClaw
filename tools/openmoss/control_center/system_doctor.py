@@ -3425,6 +3425,11 @@ def _run_capability_gap_integration_checks() -> Dict[str, object]:
         local_names = [str(item.get('name', '')).strip() for item in (capability_gap.get('local_tool_candidates', []) or [])]
         if 'curl' not in local_names:
             errors.append('capability_gap_missing_local_tool_candidate')
+        tool_evolution_plan = capability_gap.get('tool_evolution_plan', {}) or {}
+        if not bool(tool_evolution_plan.get('enabled')):
+            errors.append('capability_gap_missing_tool_evolution_plan')
+        elif not (tool_evolution_plan.get('planned_actions', []) or []):
+            errors.append('capability_gap_missing_tool_evolution_actions')
         if 'Capability-gap loop selected' not in str(snapshot.get('authoritative_summary', '')).strip():
             errors.append('capability_gap_missing_summary_signal')
     finally:
@@ -3449,6 +3454,13 @@ def _run_capability_gap_integration_checks() -> Dict[str, object]:
                 'capability_gap_did_not_attempt_local_reuse',
                 'capability_gap_runtime_not_reopened',
                 'capability_gap_wrong_next_action',
+            }
+            for item in errors
+        ),
+        'tool_evolution_plan_contract': not any(
+            item in {
+                'capability_gap_missing_tool_evolution_plan',
+                'capability_gap_missing_tool_evolution_actions',
             }
             for item in errors
         ),

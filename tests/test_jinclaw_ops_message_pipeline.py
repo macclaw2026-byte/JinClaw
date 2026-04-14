@@ -98,6 +98,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                     'capability_gap': {
                         'capability_gap_contract': True,
                         'self_heal_ladder_contract': True,
+                        'tool_evolution_plan_contract': True,
                         'authoritative_summary_visibility_contract': True,
                     },
                     'delivery_plane': {
@@ -220,6 +221,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                 'capability_gap': {
                     'capability_gap_contract': True,
                     'self_heal_ladder_contract': True,
+                    'tool_evolution_plan_contract': True,
                     'authoritative_summary_visibility_contract': True,
                 },
                 'delivery_plane': {
