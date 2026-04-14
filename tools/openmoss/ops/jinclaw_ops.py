@@ -59,6 +59,12 @@ DOCTOR_REQUIRED_ACQUISITION_CONTRACTS = (
     "execution_truth_contract",
     "objective_completion_contract",
 )
+DOCTOR_REQUIRED_CONVERSATION_CONTEXT_CONTRACTS = (
+    "instruction_envelope_contract",
+    "focus_contract",
+    "followup_resolution_contract",
+    "control_plane_visibility_contract",
+)
 
 
 def utc_now() -> datetime:
@@ -389,6 +395,7 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
     adapter_coverage = acquisition_health.get("adapter_coverage", {}) or {}
     integration_health = payload.get("integration_health", {}) or {}
     acquisition_integration = integration_health.get("acquisition_hand", {}) or {}
+    conversation_context = integration_health.get("conversation_context", {}) or {}
     checked_at = str(payload.get("checked_at", "")).strip()
     return {
         "last_run_exists": DOCTOR_LAST_RUN_PATH.exists(),
@@ -438,6 +445,13 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
             "coding_chain": str(integration_health.get("coding_chain", "")).strip(),
             "noncoding_chain": str(integration_health.get("noncoding_chain", "")).strip(),
             "acquisition_chain": str(integration_health.get("acquisition_chain", "")).strip(),
+            "conversation_context_chain": str(integration_health.get("conversation_context_chain", "")).strip(),
+            "conversation_context": {
+                "instruction_envelope_contract": bool(conversation_context.get("instruction_envelope_contract")),
+                "focus_contract": bool(conversation_context.get("focus_contract")),
+                "followup_resolution_contract": bool(conversation_context.get("followup_resolution_contract")),
+                "control_plane_visibility_contract": bool(conversation_context.get("control_plane_visibility_contract")),
+            },
         },
     }
 
@@ -462,10 +476,17 @@ def _doctor_runtime_payload_complete(payload: Dict[str, Any]) -> bool:
         return False
     if not str(integration.get("acquisition_chain", "")).strip():
         return False
+    if not str(integration.get("conversation_context_chain", "")).strip():
+        return False
     acquisition_hand = integration.get("acquisition_hand", {}) or {}
     if not isinstance(acquisition_hand, dict) or not acquisition_hand:
         return False
-    return all(name in acquisition_hand for name in DOCTOR_REQUIRED_ACQUISITION_CONTRACTS)
+    conversation_context = integration.get("conversation_context", {}) or {}
+    if not isinstance(conversation_context, dict) or not conversation_context:
+        return False
+    return all(name in acquisition_hand for name in DOCTOR_REQUIRED_ACQUISITION_CONTRACTS) and all(
+        name in conversation_context for name in DOCTOR_REQUIRED_CONVERSATION_CONTEXT_CONTRACTS
+    )
 
 
 def _import_run_system_doctor():

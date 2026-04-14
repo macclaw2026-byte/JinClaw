@@ -68,6 +68,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                     'coding_chain': 'ok',
                     'noncoding_chain': 'ok',
                     'acquisition_chain': 'ok',
+                    'conversation_context_chain': 'ok',
                 },
             },
             'project_scheduler_policy': {},
@@ -106,6 +107,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                 'coding_chain': 'ok',
                 'noncoding_chain': 'ok',
                 'acquisition_chain': 'ok',
+                'conversation_context_chain': 'ok',
                 'acquisition_hand': {
                     'field_synthesis_contract': True,
                     'delivery_requirements_contract': True,
@@ -119,6 +121,12 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                     'browser_execution_contract': True,
                     'validation_family_contract': True,
                     'objective_completion_contract': True,
+                },
+                'conversation_context': {
+                    'instruction_envelope_contract': True,
+                    'focus_contract': True,
+                    'followup_resolution_contract': True,
+                    'control_plane_visibility_contract': True,
                 },
                 'ok': True,
             },

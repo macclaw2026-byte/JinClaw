@@ -406,6 +406,26 @@ def _build_doctor_coverage_bundle() -> Dict[str, Any]:
                 "primary_monitor": "system_doctor.integration_health.acquisition_hand",
                 "backstop_monitor": "tools/openmoss/ops/jinclaw_ops.py:doctor_runtime",
                 "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json#acquisition_health",
+            },
+            {
+                "name": "conversation-context-kernel",
+                "required_files": [
+                    "tools/openmoss/control_center/conversation_context.py",
+                    "tools/openmoss/control_center/brain_router.py",
+                    "tools/openmoss/control_center/route_guardrails.py",
+                    "tools/openmoss/autonomy/telegram_binding.py",
+                    "tools/openmoss/control_center/brain_enforcer.py",
+                    "tools/openmoss/control_center/control_plane_builder.py",
+                ],
+                "doctor_checks": [
+                    "instruction_envelope_presence",
+                    "conversation_focus_persistence",
+                    "followup_resolution_recovery",
+                    "control_plane_focus_visibility",
+                ],
+                "primary_monitor": "system_doctor.integration_health.conversation_context",
+                "backstop_monitor": "tools/openmoss/runtime/control_center/control_plane/conversation_focus_registry.json",
+                "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.conversation_context",
             }
         ],
     }

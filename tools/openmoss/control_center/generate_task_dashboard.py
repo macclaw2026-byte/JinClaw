@@ -597,6 +597,7 @@ def build_task_dashboard(
     task_registry: Dict[str, Any],
     task_alias_registry: Dict[str, Any],
     conversation_registry: Dict[str, Any],
+    conversation_focus_registry: Dict[str, Any] | None = None,
     waiting_registry: Dict[str, Any],
     doctor_queue: Dict[str, Any],
     doctor_incident_inbox: Dict[str, Any],

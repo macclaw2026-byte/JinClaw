@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from canonical_active_task import resolve_canonical_active_task
+from conversation_context import build_conversation_focus_registry
 from crawler_capability_profile import build_crawler_capability_profile
 from crawler_remediation_planner import build_crawler_remediation_plan
 from execution_governor import classify_blocked_runtime_state
@@ -38,6 +39,7 @@ from task_retention_runtime import load_archived_task_registry, run_task_retenti
 from paths import (
     ALERTS_PATH,
     ARCHIVED_TASK_REGISTRY_PATH,
+    CONVERSATION_FOCUS_REGISTRY_PATH,
     CONVERSATION_REGISTRY_PATH,
     DOCTOR_LAST_RUN_PATH,
     CROSS_MARKET_ARBITRAGE_SCHEDULER_STATE_PATH,
@@ -1408,8 +1410,10 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
     _write_json(WAITING_REGISTRY_PATH, task_views["waiting_registry"])
     _write_json(DOCTOR_QUEUE_PATH, task_views["doctor_queue"])
     conversation_registry = build_conversation_registry(task_items)
+    conversation_focus_registry = build_conversation_focus_registry()
     _decorate_conversation_registry_with_aliases(conversation_registry, task_alias_registry)
     _write_json(CONVERSATION_REGISTRY_PATH, conversation_registry)
+    _write_json(CONVERSATION_FOCUS_REGISTRY_PATH, conversation_focus_registry)
     blocked_category_counts = _blocked_category_counts(task_items)
     top_blocked_category = next(iter(blocked_category_counts), "")
     doctor_cycle_stats = (doctor_last_run.get("doctor_cycle_stats", {}) or {}) if isinstance(doctor_last_run, dict) else {}
@@ -1441,6 +1445,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
         "archived_task_registry_path": str(ARCHIVED_TASK_REGISTRY_PATH),
         "task_retention_last_run_path": str(TASK_RETENTION_LAST_RUN_PATH),
         "conversation_registry_path": str(CONVERSATION_REGISTRY_PATH),
+        "conversation_focus_registry_path": str(CONVERSATION_FOCUS_REGISTRY_PATH),
         "waiting_registry_path": str(WAITING_REGISTRY_PATH),
         "doctor_queue_path": str(DOCTOR_QUEUE_PATH),
         "alerts_path": str(ALERTS_PATH),
@@ -1505,6 +1510,10 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
             "task_retention_archived_total": int(task_retention.get("archived_total", 0) or 0),
             "task_retention_candidates_total": int(task_retention.get("candidates_total", 0) or 0),
             "conversation_bindings_total": len(conversation_registry.get("items", []) or []),
+            "conversation_focus_total": int((conversation_focus_registry.get("summary", {}) or {}).get("focus_total", 0) or 0),
+            "conversation_focus_context_ready_total": int((conversation_focus_registry.get("summary", {}) or {}).get("context_ready_total", 0) or 0),
+            "conversation_focus_task_bound_total": int((conversation_focus_registry.get("summary", {}) or {}).get("task_bound_total", 0) or 0),
+            "conversation_focus_resolved_total": int((conversation_focus_registry.get("summary", {}) or {}).get("resolved_with_focus_total", 0) or 0),
             "blocked_total": blocked_total,
             "blocked_project_crawler_remediation_total": blocked_category_counts.get("project_crawler_remediation", 0),
             "blocked_approval_or_contract_total": blocked_category_counts.get("approval_or_contract", 0),
@@ -1546,6 +1555,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
             task_registry=task_views["task_registry"],
             task_alias_registry=task_alias_registry,
             conversation_registry=conversation_registry,
+            conversation_focus_registry=conversation_focus_registry,
             waiting_registry=task_views["waiting_registry"],
             doctor_queue=task_views["doctor_queue"],
             doctor_incident_inbox=doctor_incident_inbox,
@@ -1580,6 +1590,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
         "project_scheduler_policy": project_scheduler_policy,
         "task_alias_registry": task_alias_registry,
         "conversation_registry": conversation_registry,
+        "conversation_focus_registry": conversation_focus_registry,
         **task_views,
         "system_snapshot": snapshot,
     }
