@@ -51,6 +51,7 @@ def _base_task_prompt(contract: Dict[str, Any], stage_context: Dict[str, Any] | 
     plan_reviews = stage_context.get('plan_reviews', {}) or control_center.get('plan_reviews', {}) or {}
     operating_discipline = stage_context.get('operating_discipline', {}) or control_center.get('operating_discipline', {}) or {}
     protocol_pack = stage_context.get('protocol_pack', {}) or control_center.get('protocol_pack', {}) or {}
+    skill_guidance = stage_context.get('skill_guidance', {}) or control_center.get('skill_guidance', {}) or {}
     knowledge_basis = stage_context.get('knowledge_basis', {}) or control_center.get('knowledge_basis', {}) or {}
     readiness_dashboard = stage_context.get('readiness_dashboard', {}) or control_center.get('readiness_dashboard', {}) or {}
     acquisition_hand = stage_context.get('acquisition_hand', {}) or control_center.get('acquisition_hand', {}) or {}
@@ -73,6 +74,12 @@ def _base_task_prompt(contract: Dict[str, Any], stage_context: Dict[str, Any] | 
         pieces.append(f"Governance tier: {governance.get('tier', 'standard')}")
     if protocol_pack:
         pieces.append(f"Protocol pack: {protocol_pack.get('pack_id', '')}")
+    if skill_guidance.get('enabled'):
+        skill_summary = {
+            'matched_skill_names': skill_guidance.get('matched_skill_names', []),
+            'runtime_prompt_lines': (skill_guidance.get('runtime_prompt_lines', []) or [])[:4],
+        }
+        pieces.append(f"Skill guidance: {json.dumps(skill_summary, ensure_ascii=False)}")
     if must_fix:
         pieces.append(f'Must-fix before execute: {json.dumps(must_fix, ensure_ascii=False)}')
     if pending_direction:
@@ -134,6 +141,7 @@ def build_coding_session_payload(contract: Dict[str, Any], stage_context: Dict[s
         'governance': governance,
         'protocol_pack': protocol_pack,
         'operating_discipline': operating_discipline,
+        'skill_guidance': stage_context.get('skill_guidance', {}) or control_center.get('skill_guidance', {}) or {},
         'acquisition_hand': acquisition_hand,
         'response_handoff': response_handoff,
     }

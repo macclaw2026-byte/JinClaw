@@ -50,10 +50,18 @@ def _classify_task_types(goal: str) -> List[str]:
             "登录",
             "seller",
             "draft",
+            "temu",
+            "ziniao",
+            "子鸟",
+            "kuajingmaihuo",
+            "导出",
+            "对账",
+            "账务",
+            "财务",
         ]
     ):
         task_types.append("web")
-    if any(token in normalized for token in ["data", "analyze", "analysis", "report", "csv", "json", "dashboard", "分析", "报告", "数据"]):
+    if any(token in normalized for token in ["data", "analyze", "analysis", "report", "csv", "json", "dashboard", "分析", "报告", "数据", "导出", "账务", "财务", "对账"]):
         task_types.append("data")
     if any(token in normalized for token in ["code", "build", "implement", "fix", "debug", "refactor", "test", "搭建", "实现", "修复"]):
         task_types.append("code")
@@ -64,7 +72,7 @@ def _classify_task_types(goal: str) -> List[str]:
         for token in ["image", "img", "photo", "scene", "render", "sdxl", "flux", "图片", "场景图", "出图", "灯具", "产品图", "生成图"]
     ):
         task_types.append("image")
-    if any(token in normalized for token in ["seller", "shopify", "listing", "product", "draft", "上架", "商品", "草稿"]):
+    if any(token in normalized for token in ["seller", "shopify", "listing", "product", "draft", "上架", "商品", "草稿", "temu", "店铺", "订单", "账务", "对账", "kuajingmaihuo", "ziniao", "子鸟"]):
         task_types.append("marketplace")
     return task_types or ["general"]
 
@@ -96,13 +104,18 @@ def analyze_intent(goal: str, *, source: str = "manual") -> Dict[str, object]:
             "后台",
             "seller",
             "上传",
+            "temu",
+            "kuajingmaihuo",
+            "ziniao",
+            "子鸟",
+            "导出",
         ]
     )
-    may_download = any(token in lowered for token in ["download", "install", "dependency", "package", "tool"])
+    may_download = any(token in lowered for token in ["download", "install", "dependency", "package", "tool", "export", "导出"])
     may_execute_external_code = any(token in lowered for token in ["install", "run script", "execute", "dependency"])
     needs_browser = any(
         token in lowered
-        for token in ["browser", "website", "page", "click", "telegram web", "seller", "后台", "上传", "draft", "登录", "页面"]
+        for token in ["browser", "website", "page", "click", "telegram web", "seller", "后台", "上传", "draft", "登录", "页面", "temu", "kuajingmaihuo", "ziniao", "子鸟", "账务", "对账", "导出"]
     )
     needs_verification = True
     hard_constraints = [
@@ -115,7 +128,7 @@ def analyze_intent(goal: str, *, source: str = "manual") -> Dict[str, object]:
     domains = DOMAIN_RE.findall(normalized)
     likely_platforms = [
         token
-        for token in ["amazon", "github", "telegram", "cloudflare", "shopify", "reddit", "walmart", "seller", "neosgo", "temu"]
+        for token in ["amazon", "github", "telegram", "cloudflare", "shopify", "reddit", "walmart", "seller", "neosgo", "temu", "ziniao", "kuajingmaihuo"]
         if token in lowered
     ]
     return {

@@ -274,6 +274,7 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
         f"plan_reviews: {json.dumps(stage_context.get('plan_reviews', {}), ensure_ascii=False)}",
         f"operating_discipline: {json.dumps(stage_context.get('operating_discipline', {}), ensure_ascii=False)}",
         f"protocol_pack: {json.dumps(stage_context.get('protocol_pack', {}), ensure_ascii=False)}",
+        f"skill_guidance: {json.dumps(stage_context.get('skill_guidance', {}), ensure_ascii=False)}",
         f"knowledge_basis: {json.dumps(stage_context.get('knowledge_basis', {}), ensure_ascii=False)}",
         f"readiness_dashboard: {json.dumps(stage_context.get('readiness_dashboard', {}), ensure_ascii=False)}",
         f"acquisition_hand: {json.dumps(stage_context.get('acquisition_hand', {}), ensure_ascii=False)}",
@@ -291,6 +292,11 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
         "Browser execution rule: if repeated browser recovery attempts keep failing on the same live-site step, stop repeating the same browser-only tactic and switch to another available technical route such as direct HTTP, a verified API, or a hybrid collector.",
     ]
     batch_focus = stage_context.get("batch_focus", {}) or {}
+    skill_guidance = stage_context.get("skill_guidance", {}) or {}
+    if skill_guidance.get("enabled"):
+        prompt_lines.append("Local skill execution rule: when matched skill guidance exists, follow it before generic browser experimentation.")
+        for line in [str(item).strip() for item in (skill_guidance.get("runtime_prompt_lines", []) or []) if str(item).strip()][:6]:
+            prompt_lines.append(f"Local skill rule: {line}")
     normalized_goal = str(stage_context.get("goal", contract.user_goal) or "").lower()
     # 下面这些附加规则不是通用提示词噪音，而是 runtime 在已知高风险业务域上
     # 给 agent 增加的“硬约束补丁”，用于压住会重复出现的错误行为。
