@@ -65,6 +65,7 @@ def _score_site(profile: Dict[str, Any], latest_run: Dict[str, Any], auth_policy
     best_status = str(latest_run.get("bestStatus", "") or "").strip().lower()
     confidence = str(profile.get("confidence", "") or "").strip().lower()
     authenticated_supported = bool((profile.get("authenticated_mode", {}) or {}).get("supported")) or auth_policy_exists
+    mode = str(profile.get("mode", "") or "").strip()
     blocked_ratio = min(1.0, len(blocked_tools) / max(1, len(tested_tools)))
 
     breadth_score = min(100.0, round(35 + len(tested_tools) * 4 + len(usable_tools) * 6 - len(blocked_tools) * 2, 2))
@@ -97,6 +98,20 @@ def _score_site(profile: Dict[str, Any], latest_run: Dict[str, Any], auth_policy
         if tested_tools
         else "unknown"
     )
+    access_posture = "unknown"
+    access_route = "human_checkpoint"
+    governed_ready = False
+    if readiness == "production_ready":
+        access_posture = "anonymous_ready"
+        access_route = "anonymous_public"
+        governed_ready = True
+    elif authenticated_supported and mode in {"anonymous_truth_check_only", "browser_first_anonymous"}:
+        access_posture = "governed_authenticated_ready"
+        access_route = "authorized_session"
+        governed_ready = True
+    elif tested_tools:
+        access_posture = "blocked_or_partial"
+
     primary_limitations = []
     if blocked_tools:
         primary_limitations.append(f"blocked_tools:{', '.join(blocked_tools[:4])}")
@@ -121,10 +136,14 @@ def _score_site(profile: Dict[str, Any], latest_run: Dict[str, Any], auth_policy
         "populated_output_field_count": len(populated_fields),
         "field_coverage_ratio": round(field_coverage_ratio, 2),
         "authenticated_supported": authenticated_supported,
+        "auth_policy_exists": auth_policy_exists,
         "breadth_score": breadth_score,
         "depth_score": depth_score,
         "stability_score": stability_score,
         "readiness": readiness,
+        "governed_ready": governed_ready,
+        "access_posture": access_posture,
+        "preferred_access_route": access_route,
         "primary_limitations": primary_limitations,
         "latest_notes": ((latest_run.get("taskReadySummary", {}) or {}).get("notes", []) or [])[:5],
     }
@@ -270,7 +289,10 @@ def build_crawler_capability_profile() -> Dict[str, Any]:
     usable_sites = [site for site in sites if site.get("readiness") == "production_ready"]
     attention_sites = [site for site in sites if site.get("readiness") == "attention_required"]
     authenticated_sites = [site for site in sites if site.get("authenticated_supported")]
+    governed_ready_sites = [site for site in sites if site.get("governed_ready")]
+    authorized_session_ready_sites = [site for site in sites if site.get("access_posture") == "governed_authenticated_ready"]
     width_score = round((len(usable_sites) / max(1, sites_total)) * 100, 2)
+    governed_width_score = round((len(governed_ready_sites) / max(1, sites_total)) * 100, 2)
     breadth_score = round(sum(site.get("breadth_score", 0.0) for site in sites) / max(1, sites_total), 2)
     depth_score = round(sum(site.get("depth_score", 0.0) for site in sites) / max(1, sites_total), 2)
     stability_score = round(sum(site.get("stability_score", 0.0) for site in sites) / max(1, sites_total), 2)
@@ -285,7 +307,10 @@ def build_crawler_capability_profile() -> Dict[str, Any]:
         "sites_production_ready": len(usable_sites),
         "sites_attention_required": len(attention_sites),
         "authenticated_sites": len(authenticated_sites),
+        "sites_governed_ready": len(governed_ready_sites),
+        "sites_authorized_session_ready": len(authorized_session_ready_sites),
         "width_score": width_score,
+        "governed_width_score": governed_width_score,
         "breadth_score": breadth_score,
         "depth_score": depth_score,
         "stability_score": stability_score,

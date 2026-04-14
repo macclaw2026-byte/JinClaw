@@ -98,11 +98,13 @@ def _apply_crawler_profile_guidance(ladder: List[str], intent: Dict[str, object]
         best_status = str(site.get("best_status", "")).strip().lower()
         authenticated_supported = bool(site.get("authenticated_supported"))
         readiness = str(site.get("readiness", "")).strip()
+        access_posture = str(site.get("access_posture", "")).strip()
         route = _tool_to_route(selected_tool)
         guidance["relevant_sites"].append(
             {
                 "site": site_name,
                 "readiness": readiness,
+                "access_posture": access_posture,
                 "best_status": best_status,
                 "selected_tool": selected_tool,
                 "primary_limitations": site.get("primary_limitations", []),
@@ -111,6 +113,9 @@ def _apply_crawler_profile_guidance(ladder: List[str], intent: Dict[str, object]
         if readiness == "production_ready" and route and route in adjusted:
             adjusted = [route] + [item for item in adjusted if item != route]
             guidance["route_overrides"].append(f"{site_name}:prefer:{route}")
+        elif access_posture == "governed_authenticated_ready" and "authorized_session" in adjusted:
+            adjusted = ["authorized_session"] + [item for item in adjusted if item != "authorized_session"]
+            guidance["route_overrides"].append(f"{site_name}:prefer:authorized_session")
         elif readiness == "attention_required" and authenticated_supported and "authorized_session" in adjusted:
             adjusted = ["authorized_session"] + [item for item in adjusted if item != "authorized_session"]
             guidance["route_overrides"].append(f"{site_name}:escalate:authorized_session")

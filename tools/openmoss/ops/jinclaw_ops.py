@@ -399,6 +399,8 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
             "sites_total": int(adapter_coverage.get("sites_total", 0) or 0),
             "sites_production_ready": int(adapter_coverage.get("sites_production_ready", 0) or 0),
             "sites_attention_required": int(adapter_coverage.get("sites_attention_required", 0) or 0),
+            "sites_governed_ready": int(adapter_coverage.get("sites_governed_ready", 0) or 0),
+            "sites_authorized_session_ready": int(adapter_coverage.get("sites_authorized_session_ready", 0) or 0),
             "available_adapter_total": int(adapter_coverage.get("available_adapter_total", 0) or 0),
             "validation_family_total": int(adapter_coverage.get("validation_family_total", 0) or 0),
             "validation_families": list(adapter_coverage.get("validation_families", []) or []),
@@ -417,6 +419,7 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
             "browser_execution_contract": bool(acquisition_integration.get("browser_execution_contract")),
             "validation_family_contract": bool(acquisition_integration.get("validation_family_contract")),
             "attention_sites_total": len(acquisition_health.get("attention_sites", []) or []),
+            "governed_width_score": float(adapter_coverage.get("governed_width_score", 0.0) or 0.0),
             "stability_score": float(adapter_coverage.get("stability_score", 0.0) or 0.0),
         },
         "integration_health": {

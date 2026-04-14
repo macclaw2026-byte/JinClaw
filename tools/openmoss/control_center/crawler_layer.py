@@ -190,6 +190,7 @@ def _score_stack(stack: Dict[str, object], requirements: Dict[str, object], site
     for site in relevant_sites:
         selected_tool = str(site.get("selected_tool", "")).strip().lower()
         readiness = str(site.get("readiness", "")).strip()
+        access_posture = str(site.get("access_posture", "")).strip()
         blocked = {
             str(item).strip().lower()
             for item in site.get("primary_limitations", [])
@@ -202,7 +203,10 @@ def _score_stack(stack: Dict[str, object], requirements: Dict[str, object], site
         if readiness == "production_ready" and selected_matches:
             score += 8
             rationale.append(f"{site.get('site', '')} 当前生产可用，优先沿已验证工具路线")
-        if readiness == "attention_required" and site.get("authenticated_supported") and stack_id == "authorized_session":
+        if access_posture == "governed_authenticated_ready" and stack_id == "authorized_session":
+            score += 8
+            rationale.append(f"{site.get('site', '')} 已具备受治理授权态可用性，优先走 authorized_session")
+        elif readiness == "attention_required" and site.get("authenticated_supported") and stack_id == "authorized_session":
             score += 6
             rationale.append(f"{site.get('site', '')} 当前更适合升级到授权态链路")
         blocked_text = " ".join(blocked)
