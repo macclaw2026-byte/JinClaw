@@ -69,6 +69,7 @@ from system_doctor import run_system_doctor
 from task_receipt_engine import emit_route_receipt
 from task_status_snapshot import build_task_status_snapshot
 from execution_governor import classify_blocked_runtime_state
+from control_center_schemas import build_outcome_evaluation_schema, build_reflection_report_schema
 
 
 def utc_now_iso() -> str:
@@ -1448,6 +1449,184 @@ def _task_postmortem_ready(task_id: str) -> bool:
     return bool(postmortem.get("written"))
 
 
+def _derive_outcome_status(state, business: dict, *, proof_summary: str) -> str:
+    if state.status == "failed":
+        return "failed"
+    if (
+        business.get("goal_satisfied") is True
+        and business.get("user_visible_result_confirmed") is True
+        and proof_summary
+    ):
+        return "goal_reached"
+    if business.get("goal_satisfied") is True or proof_summary:
+        return "partial"
+    return str(state.status or "unknown").strip() or "unknown"
+
+
+def _completion_score(state, business: dict, *, proof_summary: str, open_stages: list[str], completed_stage_total: int, total_stage_total: int) -> float:
+    score = 0.0
+    if business.get("goal_satisfied") is True:
+        score += 40.0
+    if business.get("user_visible_result_confirmed") is True:
+        score += 25.0
+    if proof_summary:
+        score += 15.0
+    if total_stage_total > 0:
+        score += min(15.0, 15.0 * (float(completed_stage_total) / float(total_stage_total)))
+    verify_stage = (state.stages or {}).get("verify")
+    verification_status = str(getattr(verify_stage, "verification_status", "") or "").strip().lower()
+    if verification_status in {"passed", "verified", "ok"}:
+        score += 5.0
+    score -= min(10.0, float(len(state.blockers or [])) * 3.0 + float(len(open_stages)) * 1.5)
+    return max(0.0, min(100.0, round(score, 2)))
+
+
+def _write_task_completion_reports(task_id: str, *, reason: str = "") -> dict:
+    """
+    中文注解：
+    - 功能：为 terminal task 写 outcome evaluation 与 reflection report。
+    - 设计意图：让“完成/失败”不只是 terminal status，而是伴随可量化评估和下一轮优化建议。
+    """
+    contract = load_contract(task_id)
+    state = load_state(task_id)
+    if state.status not in {"completed", "failed"}:
+        return {
+            "task_id": task_id,
+            "written": False,
+            "reason": "task_not_terminal",
+        }
+    existing_outcome = state.metadata.get("outcome_evaluation", {}) or {}
+    existing_reflection = state.metadata.get("reflection_report", {}) or {}
+    if (
+        bool(existing_outcome.get("enabled"))
+        and bool(existing_reflection.get("enabled"))
+        and str(existing_outcome.get("terminal_status", "")).strip() == state.status
+        and str(existing_reflection.get("terminal_status", "")).strip() == state.status
+    ):
+        return {
+            "task_id": task_id,
+            "written": False,
+            "reason": "already_current",
+            "outcome_evaluation": existing_outcome,
+            "reflection_report": existing_reflection,
+        }
+    business = state.metadata.get("business_outcome", {}) or {}
+    proof_summary = str(business.get("proof_summary", "")).strip()
+    completed_stages = [name for name in state.stage_order if state.stages.get(name) and state.stages[name].status == "completed"]
+    open_stages = [name for name in state.stage_order if state.stages.get(name) and state.stages[name].status != "completed"]
+    outcome_status = _derive_outcome_status(state, business, proof_summary=proof_summary)
+    completion_score = _completion_score(
+        state,
+        business,
+        proof_summary=proof_summary,
+        open_stages=open_stages,
+        completed_stage_total=len(completed_stages),
+        total_stage_total=len(state.stage_order or []),
+    )
+    recommended_next_step = "promote_reusable_rule_and_keep_monitoring" if outcome_status == "goal_reached" else "continue_repair_or_replan"
+    what_worked: list[str] = []
+    if business.get("goal_satisfied") is True:
+        what_worked.append("Business outcome reached and stored in structured runtime metadata.")
+    if business.get("user_visible_result_confirmed") is True:
+        what_worked.append("User-visible result was confirmed before terminal closure.")
+    if proof_summary:
+        what_worked.append("Task retained proof_summary evidence for future audit and reply projection.")
+    if len(completed_stages) == len(state.stage_order or []):
+        what_worked.append("Every declared stage reached completion before the terminal state was accepted.")
+    if not what_worked:
+        what_worked.append("Runtime still preserved a structured terminal state and stage history for repair.")
+
+    what_failed = [f"Open stage remained at terminal time: {name}" for name in open_stages]
+    what_failed.extend([f"Unresolved blocker: {item}" for item in state.blockers or [] if str(item).strip()])
+    what_failed.extend([f"Learning backlog item still open: {item}" for item in state.learning_backlog or [] if str(item).strip()])
+    if not proof_summary:
+        what_failed.append("Proof summary was missing or too weak for stronger delivery confidence.")
+    if not what_failed:
+        what_failed.append("No major failure remained, but regression-proofing can still improve.")
+
+    optimization_proposals: list[str] = []
+    if not proof_summary:
+        optimization_proposals.append("Strengthen business-proof capture so future completions can be auto-verified with less ambiguity.")
+    if open_stages:
+        optimization_proposals.append("Tighten stage-exit guards so terminal transitions cannot leave open stages behind.")
+    if state.learning_backlog:
+        optimization_proposals.append("Burn down the learning backlog by promoting the strongest reusable fixes into durable rules or tests.")
+    optimization_proposals.append("Turn this terminal trace into a reusable regression or skill playbook so the next similar task completes faster.")
+    optimization_proposals = list(dict.fromkeys(item for item in optimization_proposals if str(item).strip()))
+
+    reusable_rules = [
+        "Terminal tasks must emit outcome evaluation and reflection artifacts before they are treated as fully learnable outcomes.",
+        "Goal completion claims should stay coupled to proof_summary and user-visible confirmation.",
+    ]
+
+    outcome_path = TASKS_ROOT / task_id / "outcome_evaluation.json"
+    reflection_path = TASKS_ROOT / task_id / "reflection_report.json"
+    outcome_payload = build_outcome_evaluation_schema(
+        enabled=True,
+        task_id=task_id,
+        terminal_status=state.status,
+        outcome_status=outcome_status,
+        completion_score=completion_score,
+        goal_satisfied=bool(business.get("goal_satisfied")),
+        user_visible_result_confirmed=bool(business.get("user_visible_result_confirmed")),
+        proof_summary=proof_summary,
+        completed_stage_total=len(completed_stages),
+        total_stage_total=len(state.stage_order or []),
+        open_stage_names=open_stages,
+        blocker_count=len(state.blockers or []),
+        learning_backlog_count=len(state.learning_backlog or []),
+        verifier_status=str(getattr((state.stages or {}).get("verify"), "verification_status", "") or "").strip(),
+        recommended_next_step=recommended_next_step,
+        report_reason=reason or "terminal_completion_reports",
+        path=str(outcome_path),
+        checked_at=utc_now_iso(),
+    )
+    reflection_payload = build_reflection_report_schema(
+        enabled=True,
+        task_id=task_id,
+        terminal_status=state.status,
+        reflection_status="written",
+        what_worked=what_worked,
+        what_failed=what_failed,
+        optimization_proposals=optimization_proposals,
+        reusable_rules=reusable_rules,
+        based_on_postmortem=bool((state.metadata.get("postmortem", {}) or {}).get("written")),
+        report_reason=reason or "terminal_completion_reports",
+        path=str(reflection_path),
+        generated_at=utc_now_iso(),
+    )
+    outcome_path.parent.mkdir(parents=True, exist_ok=True)
+    outcome_path.write_text(json.dumps(outcome_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    reflection_path.write_text(json.dumps(reflection_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    state.metadata["outcome_evaluation"] = outcome_payload
+    state.metadata["reflection_report"] = reflection_payload
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    update_task_summary(
+        task_id,
+        {
+            "outcome_status": outcome_status,
+            "completion_score": completion_score,
+            "outcome_evaluation_path": str(outcome_path),
+            "reflection_report_path": str(reflection_path),
+            "optimization_proposal_total": len(optimization_proposals),
+        },
+    )
+    log_event(
+        task_id,
+        "task_completion_reports_written",
+        outcome_evaluation=outcome_payload,
+        reflection_report=reflection_payload,
+    )
+    return {
+        "task_id": task_id,
+        "written": True,
+        "reason": reason or "terminal_completion_reports",
+        "outcome_evaluation": outcome_payload,
+        "reflection_report": reflection_payload,
+    }
+
+
 def _write_task_postmortem(task_id: str, *, reason: str = "") -> dict:
     """
     中文注解：
@@ -1458,6 +1637,7 @@ def _write_task_postmortem(task_id: str, *, reason: str = "") -> dict:
     state = load_state(task_id)
     postmortem = state.metadata.get("postmortem", {}) or {}
     if postmortem.get("written") and str(postmortem.get("path", "")).strip():
+        _write_task_completion_reports(task_id, reason=reason or "postmortem_already_written")
         return postmortem
     completed_stages = [name for name in state.stage_order if state.stages.get(name) and state.stages[name].status == "completed"]
     open_stages = [name for name in state.stage_order if state.stages.get(name) and state.stages[name].status != "completed"]
@@ -1526,6 +1706,7 @@ def _write_task_postmortem(task_id: str, *, reason: str = "") -> dict:
         },
     )
     log_event(task_id, "task_postmortem_written", postmortem=payload)
+    _write_task_completion_reports(task_id, reason=reason or "postmortem_written")
     return payload
 
 
@@ -2246,6 +2427,7 @@ def _post_process_terminal_transitions(task_id: str) -> None:
       - failed -> doctor takeover
     - 调用关系：main 每轮推进完单个 task 后都会调用这里，确保 terminal 变化不会静默发生。
     """
+    _write_task_completion_reports(task_id, reason="terminal_transition")
     _maybe_notify_completion(task_id)
     _maybe_take_over_failed_task(task_id)
 

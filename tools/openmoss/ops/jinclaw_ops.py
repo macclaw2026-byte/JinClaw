@@ -82,6 +82,11 @@ DOCTOR_REQUIRED_EXECUTION_EVENT_CONTRACTS = (
     "runtime_mode_session_strategy_contract",
     "control_plane_visibility_contract",
 )
+DOCTOR_REQUIRED_COMPLETION_REFLECTION_CONTRACTS = (
+    "outcome_evaluation_contract",
+    "reflection_report_contract",
+    "authoritative_summary_visibility_contract",
+)
 
 
 def utc_now() -> datetime:
@@ -469,6 +474,7 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
             "reply_projection_chain": str(integration_health.get("reply_projection_chain", "")).strip(),
             "conversation_event_chain": str(integration_health.get("conversation_event_chain", "")).strip(),
             "execution_event_chain": str(integration_health.get("execution_event_chain", "")).strip(),
+            "completion_reflection_chain": str(integration_health.get("completion_reflection_chain", "")).strip(),
             "conversation_context": {
                 "instruction_envelope_contract": bool(conversation_context.get("instruction_envelope_contract")),
                 "focus_contract": bool(conversation_context.get("focus_contract")),
@@ -491,6 +497,11 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
                 "execution_handoff_payload_contract": bool(execution_events.get("execution_handoff_payload_contract")),
                 "runtime_mode_session_strategy_contract": bool(execution_events.get("runtime_mode_session_strategy_contract")),
                 "control_plane_visibility_contract": bool(execution_events.get("control_plane_visibility_contract")),
+            },
+            "completion_reflection": {
+                "outcome_evaluation_contract": bool((integration_health.get("completion_reflection", {}) or {}).get("outcome_evaluation_contract")),
+                "reflection_report_contract": bool((integration_health.get("completion_reflection", {}) or {}).get("reflection_report_contract")),
+                "authoritative_summary_visibility_contract": bool((integration_health.get("completion_reflection", {}) or {}).get("authoritative_summary_visibility_contract")),
             },
         },
     }
@@ -539,6 +550,9 @@ def _doctor_runtime_payload_complete(payload: Dict[str, Any]) -> bool:
     execution_events = integration.get("execution_events", {}) or {}
     if not isinstance(execution_events, dict) or not execution_events:
         return False
+    completion_reflection = integration.get("completion_reflection", {}) or {}
+    if not isinstance(completion_reflection, dict) or not completion_reflection:
+        return False
     return all(name in acquisition_hand for name in DOCTOR_REQUIRED_ACQUISITION_CONTRACTS) and all(
         name in conversation_context for name in DOCTOR_REQUIRED_CONVERSATION_CONTEXT_CONTRACTS
     ) and all(
@@ -547,6 +561,8 @@ def _doctor_runtime_payload_complete(payload: Dict[str, Any]) -> bool:
         name in conversation_events for name in DOCTOR_REQUIRED_CONVERSATION_EVENT_CONTRACTS
     ) and all(
         name in execution_events for name in DOCTOR_REQUIRED_EXECUTION_EVENT_CONTRACTS
+    ) and all(
+        name in completion_reflection for name in DOCTOR_REQUIRED_COMPLETION_REFLECTION_CONTRACTS
     )
 
 

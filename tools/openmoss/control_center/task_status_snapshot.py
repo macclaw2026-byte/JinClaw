@@ -505,6 +505,8 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
     diagnosis = str(browser_signals.get("diagnosis", "none"))
     acquisition_response = ((snapshot.get("reply_contract", {}) or {}).get("acquisition_response", {}) or {})
     execution_handoff = snapshot.get("execution_handoff", {}) or {}
+    outcome_evaluation = snapshot.get("outcome_evaluation", {}) or {}
+    reflection_report = snapshot.get("reflection_report", {}) or {}
     execution_suffix = ""
     if bool(execution_handoff.get("enabled")):
         handoff_status = str(execution_handoff.get("handoff_status", "")).strip()
@@ -532,12 +534,23 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
             acquisition_suffix += " User confirmation is required before guarded release."
         elif acquisition_response.get("requires_disclosure"):
             acquisition_suffix += " Guarded disclosure is required when using the current result."
+    completion_suffix = ""
+    if bool(outcome_evaluation.get("enabled")):
+        completion_suffix += (
+            f" Outcome evaluation is {str(outcome_evaluation.get('outcome_status', '')).strip() or 'unknown'}"
+            f" with score {float(outcome_evaluation.get('completion_score', 0.0) or 0.0):.1f}."
+        )
+    if bool(reflection_report.get("enabled")):
+        completion_suffix += (
+            f" Reflection report has {len(reflection_report.get('optimization_proposals', []) or [])} optimization proposals."
+        )
     if business.get("goal_satisfied") is True and business.get("user_visible_result_confirmed") is True:
         return (
             f"Authoritative task state says {task_id} is completed. "
             f"Business outcome is confirmed: {business.get('proof_summary', '')}"
             f"{execution_suffix}"
             f"{acquisition_suffix}"
+            f"{completion_suffix}"
         ).strip()
     if diagnosis and diagnosis != "none":
         return (
@@ -546,12 +559,14 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
             f"Latest browser diagnosis is {diagnosis}."
             f"{execution_suffix}"
             f"{acquisition_suffix}"
+            f"{completion_suffix}"
         ).strip()
     return (
         f"Authoritative task state says {task_id} is {status or 'unknown'} "
         f"at stage {current_stage or 'none'} with next action {next_action or 'none'}."
         f"{execution_suffix}"
         f"{acquisition_suffix}"
+        f"{completion_suffix}"
     ).strip()
 
 
@@ -614,6 +629,8 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
         "protocol_pack": control_center.get("protocol_pack", {}),
         "plan_reviews": control_center.get("plan_reviews", {}),
         "readiness_dashboard": control_center.get("readiness_dashboard", {}),
+        "outcome_evaluation": ((state.get("metadata", {}) or {}).get("outcome_evaluation", {}) or {}),
+        "reflection_report": ((state.get("metadata", {}) or {}).get("reflection_report", {}) or {}),
         "acquisition_hand": {
             "enabled": bool((control_center.get("acquisition_hand", {}) or {}).get("enabled")),
             "mode": str((((control_center.get("acquisition_hand", {}) or {}).get("execution_strategy", {}) or {}).get("mode", ""))).strip(),
@@ -656,6 +673,12 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
         ),
         "acquisition_response": _build_acquisition_reply_contract(snapshot),
         "execution_handoff": snapshot.get("execution_handoff", {}),
+        "completion_reflection": {
+            "outcome_evaluation_enabled": bool((snapshot.get("outcome_evaluation", {}) or {}).get("enabled")),
+            "reflection_report_enabled": bool((snapshot.get("reflection_report", {}) or {}).get("enabled")),
+            "completion_score": float((snapshot.get("outcome_evaluation", {}) or {}).get("completion_score", 0.0) or 0.0),
+            "optimization_proposal_total": len((snapshot.get("reflection_report", {}) or {}).get("optimization_proposals", []) or []),
+        },
     }
     snapshot["authoritative_summary"] = _build_authoritative_summary(canonical_task_id, snapshot, state, browser_signals)
     snapshot["snapshot_path"] = _write_json(TASK_STATUS_ROOT / f"{canonical_task_id}.json", snapshot)

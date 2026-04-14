@@ -84,6 +84,11 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                         'runtime_mode_session_strategy_contract': True,
                         'control_plane_visibility_contract': True,
                     },
+                    'completion_reflection': {
+                        'outcome_evaluation_contract': True,
+                        'reflection_report_contract': True,
+                        'authoritative_summary_visibility_contract': True,
+                    },
                     'reply_projection': {
                         'projection_contract_presence': True,
                         'projection_render_parity': True,
@@ -131,6 +136,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                 'reply_projection_chain': 'ok',
                 'conversation_event_chain': 'ok',
                 'execution_event_chain': 'ok',
+                'completion_reflection_chain': 'ok',
                 'acquisition_hand': {
                     'field_synthesis_contract': True,
                     'delivery_requirements_contract': True,
@@ -167,6 +173,11 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                     'execution_handoff_payload_contract': True,
                     'runtime_mode_session_strategy_contract': True,
                     'control_plane_visibility_contract': True,
+                },
+                'completion_reflection': {
+                    'outcome_evaluation_contract': True,
+                    'reflection_report_contract': True,
+                    'authoritative_summary_visibility_contract': True,
                 },
                 'ok': True,
             },

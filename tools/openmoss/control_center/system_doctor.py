@@ -54,7 +54,7 @@ if str(AUTONOMY_DIR) not in sys.path:
 from manager import LINKS_ROOT, TASKS_ROOT, create_task_from_contract, ensure_autonomy_root_mission_link, events_path, find_link_by_task_id, link_path, load_contract, load_state, log_event, save_contract, save_state, task_dir
 from learning_engine import load_task_summary, record_error, record_learning, update_task_summary
 from promotion_engine import promote_doctor_strategy, resolve_doctor_strategy, resolve_rule_for_error
-from task_contract import TaskContract
+from task_contract import StageContract, TaskContract
 from memory_writeback_runtime import load_memory_writeback
 
 DOCTOR_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "doctor"
@@ -117,6 +117,12 @@ EXECUTION_EVENT_REQUIRED_FILES = [
     WORKSPACE_ROOT / 'tools/openmoss/autonomy/action_executor.py',
     WORKSPACE_ROOT / 'tools/openmoss/control_center/task_status_snapshot.py',
     WORKSPACE_ROOT / 'tools/openmoss/control_center/control_plane_builder.py',
+]
+COMPLETION_REFLECTION_REQUIRED_FILES = [
+    WORKSPACE_ROOT / 'tools/openmoss/autonomy/runtime_service.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/control_center_schemas.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/task_status_snapshot.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/system_doctor.py',
 ]
 GSTACK_LIFECYCLE = ['think', 'plan', 'build', 'review', 'test', 'ship', 'reflect']
 DOCTOR_RESOLUTION_REQUIRED_FIELDS = [
@@ -1981,7 +1987,6 @@ def _run_gstack_integration_checks() -> Dict[str, object]:
     from context_builder import build_stage_context
     from coding_session_adapter import build_coding_session_payload
     from acp_dispatch_builder import build_acp_dispatch_request
-    from task_contract import TaskContract
     from action_executor import _dispatch_prompt
 
     def _run_case(task_id: str, goal: str, expect_coding: bool) -> None:
@@ -3072,6 +3077,124 @@ def _run_execution_event_integration_checks() -> Dict[str, object]:
     }
 
 
+def _run_completion_reflection_integration_checks() -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：验证 terminal task 是否会自动写 outcome evaluation 与 reflection report，并进入 authoritative snapshot。
+    - 输入角色：消费 runtime_service 的 terminal learn artifacts 与 snapshot。
+    - 输出角色：供 canonical doctor 判断“结果可评估、结束可反思”的闭环是否成立。
+    """
+    errors = []
+    for path in COMPLETION_REFLECTION_REQUIRED_FILES:
+        if not path.exists():
+            errors.append(f'missing_required_file:{path}')
+
+    if str(CONTROL_CENTER_ROOT) not in sys.path:
+        sys.path.insert(0, str(CONTROL_CENTER_ROOT))
+    if str(AUTONOMY_DIR) not in sys.path:
+        sys.path.insert(0, str(AUTONOMY_DIR))
+
+    from runtime_service import _write_task_postmortem
+
+    task_id = 'doctor-completion-reflection-contract'
+    task_path = task_dir(task_id)
+    try:
+        if task_path.exists():
+            shutil.rmtree(task_path, ignore_errors=True)
+        contract = TaskContract(
+            task_id=task_id,
+            user_goal='Validate that terminal tasks emit outcome evaluation and reflection reports.',
+            done_definition='Outcome evaluation and reflection report are both written and visible in snapshot',
+            stages=[
+                StageContract(name='understand', goal='understand'),
+                StageContract(name='plan', goal='plan'),
+                StageContract(name='execute', goal='execute'),
+                StageContract(name='verify', goal='verify'),
+                StageContract(name='learn', goal='learn'),
+            ],
+        )
+        create_task_from_contract(contract)
+        state = load_state(task_id)
+        state.status = 'completed'
+        state.current_stage = 'learn'
+        state.next_action = 'noop'
+        state.last_update_at = _utc_now_iso()
+        for name in state.stage_order:
+            stage = state.stages.get(name)
+            if not stage:
+                continue
+            stage.status = 'completed'
+            stage.summary = f'{name} finished for doctor completion reflection check'
+            if name == 'verify':
+                stage.verification_status = 'passed'
+            stage.updated_at = _utc_now_iso()
+            stage.completed_at = _utc_now_iso()
+        state.metadata['business_outcome'] = {
+            'goal_satisfied': True,
+            'user_visible_result_confirmed': True,
+            'proof_summary': 'doctor completion reflection proof',
+        }
+        state.learning_backlog = ['promote a reusable completion reflection rule']
+        save_state(state)
+        _write_task_postmortem(task_id, reason='doctor_completion_reflection_check')
+        snapshot = build_task_status_snapshot(task_id)
+        outcome = snapshot.get('outcome_evaluation', {}) or {}
+        reflection = snapshot.get('reflection_report', {}) or {}
+        if not bool(outcome.get('enabled')):
+            errors.append('completion_reflection_missing_outcome_evaluation')
+        if float(outcome.get('completion_score', 0.0) or 0.0) <= 0.0:
+            errors.append('completion_reflection_invalid_completion_score')
+        if str(outcome.get('outcome_status', '')).strip() != 'goal_reached':
+            errors.append('completion_reflection_wrong_outcome_status')
+        if not bool(reflection.get('enabled')):
+            errors.append('completion_reflection_missing_reflection_report')
+        if not (reflection.get('optimization_proposals', []) or []):
+            errors.append('completion_reflection_missing_optimization_proposals')
+        if not (reflection.get('reusable_rules', []) or []):
+            errors.append('completion_reflection_missing_reusable_rules')
+        authoritative_summary = str(snapshot.get('authoritative_summary', '')).strip()
+        if 'Outcome evaluation is' not in authoritative_summary:
+            errors.append('completion_reflection_missing_summary_outcome_signal')
+        if 'Reflection report has' not in authoritative_summary:
+            errors.append('completion_reflection_missing_summary_reflection_signal')
+    finally:
+        if task_path.exists():
+            shutil.rmtree(task_path, ignore_errors=True)
+
+    return {
+        'single_doctor_rule': True,
+        'authoritative_doctor': 'tools/openmoss/control_center/system_doctor.py',
+        'required_files_checked': len(COMPLETION_REFLECTION_REQUIRED_FILES),
+        'required_files': [str(path.relative_to(WORKSPACE_ROOT)) for path in COMPLETION_REFLECTION_REQUIRED_FILES],
+        'outcome_evaluation_contract': not any(
+            item in {
+                'completion_reflection_missing_outcome_evaluation',
+                'completion_reflection_invalid_completion_score',
+                'completion_reflection_wrong_outcome_status',
+            }
+            for item in errors
+        ),
+        'reflection_report_contract': not any(
+            item in {
+                'completion_reflection_missing_reflection_report',
+                'completion_reflection_missing_optimization_proposals',
+                'completion_reflection_missing_reusable_rules',
+            }
+            for item in errors
+        ),
+        'authoritative_summary_visibility_contract': not any(
+            item in {
+                'completion_reflection_missing_summary_outcome_signal',
+                'completion_reflection_missing_summary_reflection_signal',
+            }
+            for item in errors
+        ),
+        'completion_reflection_chain': 'ok' if not errors else 'error',
+        'errors': errors,
+        'ok': not errors,
+    }
+
+
 def _run_integration_health_checks() -> Dict[str, object]:
     """
     中文注解：
@@ -3085,6 +3208,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
     reply_projection = _run_reply_projection_integration_checks()
     conversation_events = _run_conversation_event_integration_checks()
     execution_events = _run_execution_event_integration_checks()
+    completion_reflection = _run_completion_reflection_integration_checks()
     errors = (
         list(gstack.get('errors', []) or [])
         + list(acquisition_hand.get('errors', []) or [])
@@ -3092,6 +3216,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         + list(reply_projection.get('errors', []) or [])
         + list(conversation_events.get('errors', []) or [])
         + list(execution_events.get('errors', []) or [])
+        + list(completion_reflection.get('errors', []) or [])
     )
     return {
         'single_doctor_rule': True,
@@ -3102,7 +3227,8 @@ def _run_integration_health_checks() -> Dict[str, object]:
         + int(conversation_context.get('required_files_checked', 0) or 0)
         + int(reply_projection.get('required_files_checked', 0) or 0)
         + int(conversation_events.get('required_files_checked', 0) or 0)
-        + int(execution_events.get('required_files_checked', 0) or 0),
+        + int(execution_events.get('required_files_checked', 0) or 0)
+        + int(completion_reflection.get('required_files_checked', 0) or 0),
         'lifecycle': GSTACK_LIFECYCLE,
         'gstack': gstack,
         'acquisition_hand': acquisition_hand,
@@ -3110,6 +3236,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         'reply_projection': reply_projection,
         'conversation_events': conversation_events,
         'execution_events': execution_events,
+        'completion_reflection': completion_reflection,
         'coding_chain': gstack.get('coding_chain', 'unknown'),
         'noncoding_chain': gstack.get('noncoding_chain', 'unknown'),
         'acquisition_chain': acquisition_hand.get('acquisition_chain', 'unknown'),
@@ -3117,6 +3244,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         'reply_projection_chain': reply_projection.get('reply_projection_chain', 'unknown'),
         'conversation_event_chain': conversation_events.get('conversation_event_chain', 'unknown'),
         'execution_event_chain': execution_events.get('execution_event_chain', 'unknown'),
+        'completion_reflection_chain': completion_reflection.get('completion_reflection_chain', 'unknown'),
         'errors': errors,
         'ok': (
             bool(gstack.get('ok'))
@@ -3125,6 +3253,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
             and bool(reply_projection.get('ok'))
             and bool(conversation_events.get('ok'))
             and bool(execution_events.get('ok'))
+            and bool(completion_reflection.get('ok'))
         ),
     }
 
