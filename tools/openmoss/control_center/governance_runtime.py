@@ -514,6 +514,23 @@ def _build_doctor_coverage_bundle() -> Dict[str, Any]:
                 "primary_monitor": "system_doctor.integration_health.goal_continuation",
                 "backstop_monitor": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.goal_continuation",
                 "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.goal_continuation",
+            },
+            {
+                "name": "capability-gap-kernel",
+                "required_files": [
+                    "tools/openmoss/autonomy/capability_gap_engine.py",
+                    "tools/openmoss/autonomy/runtime_service.py",
+                    "tools/openmoss/control_center/task_status_snapshot.py",
+                    "tools/openmoss/control_center/system_doctor.py",
+                ],
+                "doctor_checks": [
+                    "capability_gap_contract",
+                    "self_heal_ladder_contract",
+                    "authoritative_summary_visibility",
+                ],
+                "primary_monitor": "system_doctor.integration_health.capability_gap",
+                "backstop_monitor": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.capability_gap",
+                "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.capability_gap",
             }
         ],
     }

@@ -21,7 +21,12 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from canonical_active_task import resolve_canonical_active_task
-from control_center_schemas import build_acquisition_response_handoff_schema, build_execution_handoff_schema, build_goal_continuation_schema
+from control_center_schemas import (
+    build_acquisition_response_handoff_schema,
+    build_capability_gap_schema,
+    build_execution_handoff_schema,
+    build_goal_continuation_schema,
+)
 from conversation_context import load_conversation_focus
 from execution_governor import classify_blocked_runtime_state
 from governance_runtime import build_governance_bundle
@@ -542,6 +547,41 @@ def _build_goal_continuation(contract: Dict[str, Any], snapshot: Dict[str, Any],
     )
 
 
+def _build_capability_gap(snapshot: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：把 runtime 写入的 capability-gap 元数据标准化成权威快照合同。
+    - 设计意图：让回复链、doctor 和 ops 都围绕同一份能力缺口结构工作，而不是各自从 blocker 文本里重猜。
+    """
+    payload = ((state.get("metadata", {}) or {}).get("capability_gap", {}) or {})
+    if not isinstance(payload, dict) or not payload:
+        return build_capability_gap_schema()
+    return build_capability_gap_schema(
+        enabled=bool(payload.get("enabled")),
+        gap_detected=bool(payload.get("gap_detected")),
+        task_id=str(payload.get("task_id", "")).strip() or str(snapshot.get("task_id", "")).strip(),
+        target_stage=str(payload.get("target_stage", "")).strip() or str(snapshot.get("current_stage", "")).strip(),
+        current_action=str(payload.get("current_action", "")).strip() or str(snapshot.get("next_action", "")).strip(),
+        classification=str(payload.get("classification", "")).strip(),
+        blocker=str(payload.get("blocker", "")).strip(),
+        missing_dependency=str(payload.get("missing_dependency", "")).strip(),
+        selected_path=str(payload.get("selected_path", "")).strip(),
+        next_step=str(payload.get("next_step", "")).strip(),
+        auto_continue=bool(payload.get("auto_continue")),
+        requires_external_research=bool(payload.get("requires_external_research")),
+        build_feasible=bool(payload.get("build_feasible")),
+        requires_human_decision=bool(payload.get("requires_human_decision")),
+        local_tool_candidates=list(payload.get("local_tool_candidates", []) or []),
+        skill_candidates=list(payload.get("skill_candidates", []) or []),
+        generated_capability_candidates=list(payload.get("generated_capability_candidates", []) or []),
+        attempted_steps=list(payload.get("attempted_steps", []) or []),
+        ladder_steps=list(payload.get("ladder_steps", []) or []),
+        rationale=list(payload.get("rationale", []) or []),
+        contract_source=str(payload.get("contract_source", "")).strip() or "runtime_service",
+        checked_at=str(payload.get("checked_at", "")).strip(),
+    )
+
+
 def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: Dict[str, Any], browser_signals: Dict[str, Any]) -> str:
     """
     中文注解：
@@ -557,6 +597,7 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
     acquisition_response = ((snapshot.get("reply_contract", {}) or {}).get("acquisition_response", {}) or {})
     execution_handoff = snapshot.get("execution_handoff", {}) or {}
     goal_continuation = snapshot.get("goal_continuation", {}) or {}
+    capability_gap = snapshot.get("capability_gap", {}) or {}
     outcome_evaluation = snapshot.get("outcome_evaluation", {}) or {}
     reflection_report = snapshot.get("reflection_report", {}) or {}
     execution_suffix = ""
@@ -603,6 +644,14 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
         )
         if str(goal_continuation.get("next_required_action", "")).strip():
             continuation_suffix += f" Next required action is {str(goal_continuation.get('next_required_action', '')).strip()}."
+    capability_gap_suffix = ""
+    if bool(capability_gap.get("enabled")) and bool(capability_gap.get("gap_detected")):
+        capability_gap_suffix += (
+            f" Capability-gap loop selected {str(capability_gap.get('selected_path', '')).strip() or 'observe_only'}"
+            f" with next step {str(capability_gap.get('next_step', '')).strip() or 'continue_current_plan'}."
+        )
+        if str(capability_gap.get("missing_dependency", "")).strip():
+            capability_gap_suffix += f" Missing dependency is {str(capability_gap.get('missing_dependency', '')).strip()}."
     if business.get("goal_satisfied") is True and business.get("user_visible_result_confirmed") is True:
         return (
             f"Authoritative task state says {task_id} is completed. "
@@ -611,6 +660,7 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
             f"{acquisition_suffix}"
             f"{completion_suffix}"
             f"{continuation_suffix}"
+            f"{capability_gap_suffix}"
         ).strip()
     if diagnosis and diagnosis != "none":
         return (
@@ -621,6 +671,7 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
             f"{acquisition_suffix}"
             f"{completion_suffix}"
             f"{continuation_suffix}"
+            f"{capability_gap_suffix}"
         ).strip()
     return (
         f"Authoritative task state says {task_id} is {status or 'unknown'} "
@@ -629,6 +680,7 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
         f"{acquisition_suffix}"
         f"{completion_suffix}"
         f"{continuation_suffix}"
+        f"{capability_gap_suffix}"
     ).strip()
 
 
@@ -693,6 +745,7 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
         "readiness_dashboard": control_center.get("readiness_dashboard", {}),
         "outcome_evaluation": ((state.get("metadata", {}) or {}).get("outcome_evaluation", {}) or {}),
         "reflection_report": ((state.get("metadata", {}) or {}).get("reflection_report", {}) or {}),
+        "capability_gap": {},
         "acquisition_hand": {
             "enabled": bool((control_center.get("acquisition_hand", {}) or {}).get("enabled")),
             "mode": str((((control_center.get("acquisition_hand", {}) or {}).get("execution_strategy", {}) or {}).get("mode", ""))).strip(),
@@ -728,6 +781,7 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
     snapshot["output_attachments"] = _discover_output_attachments(canonical_task_id, state, business)
     snapshot["execution_handoff"] = _build_execution_handoff(snapshot, state)
     snapshot["goal_continuation"] = _build_goal_continuation(contract, snapshot, state)
+    snapshot["capability_gap"] = _build_capability_gap(snapshot, state)
     snapshot["reply_contract"] = {
         "must_use_authoritative_snapshot": True,
         "must_prefer_task_state_over_chat_memory": True,
@@ -737,6 +791,7 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
         "acquisition_response": _build_acquisition_reply_contract(snapshot),
         "execution_handoff": snapshot.get("execution_handoff", {}),
         "goal_continuation": snapshot.get("goal_continuation", {}),
+        "capability_gap": snapshot.get("capability_gap", {}),
         "completion_reflection": {
             "outcome_evaluation_enabled": bool((snapshot.get("outcome_evaluation", {}) or {}).get("enabled")),
             "reflection_report_enabled": bool((snapshot.get("reflection_report", {}) or {}).get("enabled")),

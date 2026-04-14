@@ -92,6 +92,11 @@ DOCTOR_REQUIRED_GOAL_CONTINUATION_CONTRACTS = (
     "terminal_reopen_gate_contract",
     "authoritative_summary_visibility_contract",
 )
+DOCTOR_REQUIRED_CAPABILITY_GAP_CONTRACTS = (
+    "capability_gap_contract",
+    "self_heal_ladder_contract",
+    "authoritative_summary_visibility_contract",
+)
 
 
 def utc_now() -> datetime:
@@ -426,6 +431,7 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
     reply_projection = integration_health.get("reply_projection", {}) or {}
     conversation_events = integration_health.get("conversation_events", {}) or {}
     execution_events = integration_health.get("execution_events", {}) or {}
+    capability_gap = integration_health.get("capability_gap", {}) or {}
     checked_at = str(payload.get("checked_at", "")).strip()
     return {
         "last_run_exists": DOCTOR_LAST_RUN_PATH.exists(),
@@ -481,6 +487,7 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
             "execution_event_chain": str(integration_health.get("execution_event_chain", "")).strip(),
             "completion_reflection_chain": str(integration_health.get("completion_reflection_chain", "")).strip(),
             "goal_continuation_chain": str(integration_health.get("goal_continuation_chain", "")).strip(),
+            "capability_gap_chain": str(integration_health.get("capability_gap_chain", "")).strip(),
             "conversation_context": {
                 "instruction_envelope_contract": bool(conversation_context.get("instruction_envelope_contract")),
                 "focus_contract": bool(conversation_context.get("focus_contract")),
@@ -513,6 +520,11 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
                 "goal_continuation_contract": bool((integration_health.get("goal_continuation", {}) or {}).get("goal_continuation_contract")),
                 "terminal_reopen_gate_contract": bool((integration_health.get("goal_continuation", {}) or {}).get("terminal_reopen_gate_contract")),
                 "authoritative_summary_visibility_contract": bool((integration_health.get("goal_continuation", {}) or {}).get("authoritative_summary_visibility_contract")),
+            },
+            "capability_gap": {
+                "capability_gap_contract": bool(capability_gap.get("capability_gap_contract")),
+                "self_heal_ladder_contract": bool(capability_gap.get("self_heal_ladder_contract")),
+                "authoritative_summary_visibility_contract": bool(capability_gap.get("authoritative_summary_visibility_contract")),
             },
         },
     }
@@ -567,6 +579,9 @@ def _doctor_runtime_payload_complete(payload: Dict[str, Any]) -> bool:
     goal_continuation = integration.get("goal_continuation", {}) or {}
     if not isinstance(goal_continuation, dict) or not goal_continuation:
         return False
+    capability_gap = integration.get("capability_gap", {}) or {}
+    if not isinstance(capability_gap, dict) or not capability_gap:
+        return False
     return all(name in acquisition_hand for name in DOCTOR_REQUIRED_ACQUISITION_CONTRACTS) and all(
         name in conversation_context for name in DOCTOR_REQUIRED_CONVERSATION_CONTEXT_CONTRACTS
     ) and all(
@@ -579,6 +594,8 @@ def _doctor_runtime_payload_complete(payload: Dict[str, Any]) -> bool:
         name in completion_reflection for name in DOCTOR_REQUIRED_COMPLETION_REFLECTION_CONTRACTS
     ) and all(
         name in goal_continuation for name in DOCTOR_REQUIRED_GOAL_CONTINUATION_CONTRACTS
+    ) and all(
+        name in capability_gap for name in DOCTOR_REQUIRED_CAPABILITY_GAP_CONTRACTS
     )
 
 

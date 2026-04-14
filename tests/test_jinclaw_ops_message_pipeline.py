@@ -94,6 +94,11 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                         'terminal_reopen_gate_contract': True,
                         'authoritative_summary_visibility_contract': True,
                     },
+                    'capability_gap': {
+                        'capability_gap_contract': True,
+                        'self_heal_ladder_contract': True,
+                        'authoritative_summary_visibility_contract': True,
+                    },
                     'reply_projection': {
                         'projection_contract_presence': True,
                         'projection_render_parity': True,
@@ -143,6 +148,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                 'execution_event_chain': 'ok',
                 'completion_reflection_chain': 'ok',
                 'goal_continuation_chain': 'ok',
+                'capability_gap_chain': 'ok',
                 'acquisition_hand': {
                     'field_synthesis_contract': True,
                     'delivery_requirements_contract': True,
@@ -188,6 +194,11 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                 'goal_continuation': {
                     'goal_continuation_contract': True,
                     'terminal_reopen_gate_contract': True,
+                    'authoritative_summary_visibility_contract': True,
+                },
+                'capability_gap': {
+                    'capability_gap_contract': True,
+                    'self_heal_ladder_contract': True,
                     'authoritative_summary_visibility_contract': True,
                 },
                 'ok': True,

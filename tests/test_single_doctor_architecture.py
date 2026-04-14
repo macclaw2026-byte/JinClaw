@@ -27,6 +27,7 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertIn('execution-event-kernel', names)
         self.assertIn('completion-reflection-kernel', names)
         self.assertIn('goal-continuation-kernel', names)
+        self.assertIn('capability-gap-kernel', names)
 
     def test_control_plane_exposes_doctor_coverage(self):
         plane = build_control_plane(stale_after_seconds=300, escalation_after_seconds=900)
@@ -92,6 +93,11 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertTrue((integration.get('goal_continuation', {}) or {}).get('goal_continuation_contract'))
         self.assertTrue((integration.get('goal_continuation', {}) or {}).get('terminal_reopen_gate_contract'))
         self.assertTrue((integration.get('goal_continuation', {}) or {}).get('authoritative_summary_visibility_contract'))
+        self.assertEqual(integration.get('capability_gap_chain'), 'ok')
+        self.assertTrue((integration.get('capability_gap', {}) or {}).get('ok'))
+        self.assertTrue((integration.get('capability_gap', {}) or {}).get('capability_gap_contract'))
+        self.assertTrue((integration.get('capability_gap', {}) or {}).get('self_heal_ladder_contract'))
+        self.assertTrue((integration.get('capability_gap', {}) or {}).get('authoritative_summary_visibility_contract'))
 
 
 if __name__ == '__main__':

@@ -304,6 +304,14 @@ def classify_blocked_runtime_state(
             "category": "runtime_failure",
             "response_action": "blocked_waiting_for_targeted_fix",
         },
+        "research_capability_gap": {
+            "category": "capability_gap_research",
+            "response_action": "researching_capability_gap",
+        },
+        "build_missing_capability": {
+            "category": "capability_gap_build",
+            "response_action": "preparing_in_house_capability_build",
+        },
     }
     details = dict(mapping.get(next_action, {}))
     if not details:
