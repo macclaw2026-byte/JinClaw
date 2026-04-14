@@ -19,6 +19,7 @@ PROSPECT_DISCOVERY = WORKSPACE_ROOT / "skills/prospect-data-engine/scripts/disco
 PROSPECT_SEARCH_DISCOVERY = WORKSPACE_ROOT / "skills/prospect-data-engine/scripts/expand_search_discovery.py"
 GOOGLE_MAPS_DISCOVERY = WORKSPACE_ROOT / "skills/prospect-data-engine/scripts/discover_google_maps_places.py"
 GOOGLE_MAPS_EMAIL_ENRICHMENT = WORKSPACE_ROOT / "skills/prospect-data-engine/scripts/enrich_google_maps_website_contacts.py"
+GOOGLE_MAPS_CAPTURE_CYCLE = WORKSPACE_ROOT / "skills/prospect-data-engine/scripts/run_google_maps_capture_cycle.py"
 DISCOVERY_RECIPES = WORKSPACE_ROOT / "skills/prospect-data-engine/scripts/build_discovery_recipe_library.py"
 DISCOVERY_QUERY_WEIGHTS = WORKSPACE_ROOT / "skills/prospect-data-engine/scripts/apply_discovery_query_weights.py"
 SOURCE_HEALTH_RETRY = WORKSPACE_ROOT / "skills/prospect-data-engine/scripts/update_source_health_retry.py"
@@ -121,12 +122,21 @@ def main() -> int:
         "--project-root",
         str(project_root),
     )
-    google_maps_discovery_result = _run_python(
+    google_maps_capture_cycle_result = _run_python(
+        GOOGLE_MAPS_CAPTURE_CYCLE,
+        "--project-root",
+        str(project_root),
+    )
+    google_maps_discovery_result = dict(
+        (google_maps_capture_cycle_result.get("payload", {}) or {}).get("discovery") or {}
+    ) or _run_python(
         GOOGLE_MAPS_DISCOVERY,
         "--project-root",
         str(project_root),
     )
-    google_maps_email_enrichment_result = _run_python(
+    google_maps_email_enrichment_result = dict(
+        (google_maps_capture_cycle_result.get("payload", {}) or {}).get("enrichment") or {}
+    ) or _run_python(
         GOOGLE_MAPS_EMAIL_ENRICHMENT,
         "--project-root",
         str(project_root),
@@ -296,6 +306,7 @@ def main() -> int:
             "discovery_recipe_library": recipe_result,
             "discovery_query_weight_update_pre": pre_query_weight_result,
             "prospect_search_discovery": search_discovery_result,
+            "google_maps_capture_cycle": google_maps_capture_cycle_result,
             "google_maps_discovery": google_maps_discovery_result,
             "google_maps_email_enrichment": google_maps_email_enrichment_result,
             "prospect_discovery": discovery_result,

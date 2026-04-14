@@ -11,9 +11,16 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
+from google_maps_capture_core import (
+    enrichment_quality_summary,
+    extract_candidate_links,
+    read_json,
+    root_domain,
+    write_json,
+)
+
 
 EMAIL_RE = re.compile(r"([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})", re.I)
-CONTACT_HINT_RE = re.compile(r"(contact|about|team|studio|trade|connect)", re.I)
 FORM_HINT_RE = re.compile(r"(contact|quote|project|inquiry|enquiry|consult|trade|partner)", re.I)
 BLOCKED_EMAIL_PREFIXES = {"noreply", "no-reply", "donotreply", "do-not-reply", "example"}
 BLOCKED_EMAIL_PATTERNS = ("sentry", "user@domain.com")
@@ -54,12 +61,11 @@ REJECT_WEBSITE_TERMS = (
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return read_json(path, {})
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json(path, payload)
 
 
 def _priority_regions(config: dict[str, Any]) -> list[str]:
@@ -78,29 +84,8 @@ def _fetch_html(url: str) -> str:
         return response.read().decode("utf-8", "ignore")
 
 
-def _extract_candidate_links(base_url: str, html: str) -> list[str]:
-    links = []
-    for href in re.findall(r'href=["\']([^"\']+)["\']', html, re.I):
-        absolute = urljoin(base_url, href.strip())
-        parsed = urlparse(absolute)
-        if not parsed.scheme.startswith("http"):
-            continue
-        if urlparse(base_url).netloc != parsed.netloc:
-            continue
-        if CONTACT_HINT_RE.search(absolute):
-            links.append(absolute)
-    deduped = []
-    seen = set()
-    for link in links:
-        if link in seen:
-            continue
-        seen.add(link)
-        deduped.append(link)
-    return deduped[:2]
-
-
 def _website_root_domain(url: str) -> str:
-    return urlparse(url if "://" in url else f"https://{url}").netloc.lower().removeprefix("www.")
+    return root_domain(url)
 
 
 def _email_is_realish(email: str, website_domain: str) -> tuple[bool, str]:
@@ -215,6 +200,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Visit websites from Google Maps places and extract validated emails.")
     parser.add_argument("--project-root", required=True)
     parser.add_argument("--max-sites-per-run", type=int, default=0)
+    parser.add_argument("--max-pages-per-site", type=int, default=0)
+    parser.add_argument("--contact-link-limit", type=int, default=0)
     args = parser.parse_args()
 
     project_root = Path(args.project_root).expanduser().resolve()
@@ -225,6 +212,9 @@ def main() -> int:
     output_path = project_root / "data" / "raw-imports" / "discovered-google-maps-validated-contacts.json"
     runtime_state_path = project_root / "runtime" / "prospect-data-engine" / "google-maps-email-enrichment-state.json"
     max_sites_per_run = int(args.max_sites_per_run or capture.get("email_enrichment_max_sites_per_run", 40) or 40)
+    max_pages_per_site = int(args.max_pages_per_site or capture.get("max_pages_per_site", 4) or 4)
+    contact_link_limit = int(args.contact_link_limit or capture.get("contact_link_limit", 4) or 4)
+    contact_link_hints = [str(item).strip() for item in list(capture.get("contact_link_hints", []) or ["contact", "about", "team", "trade"]) if str(item).strip()]
     priority_regions = _priority_regions(config)
 
     if not source_path.exists():
@@ -242,6 +232,7 @@ def main() -> int:
     checked_sites = 0
     deferred_count = 0
     website_cache: dict[str, dict[str, Any]] = {}
+    page_fetch_failures = 0
 
     def sort_key(item: dict[str, Any]) -> tuple[int, int, int, str]:
         state = str(item.get("geo", "")).split("/", 1)[0].strip().upper()
@@ -268,12 +259,14 @@ def main() -> int:
             email = str(previous.get("email", "") or "")
             validation_reason = str(previous.get("email_validation_reason", "") or validation_reason)
             crawled_pages = list(previous.get("crawled_pages", []) or [])
+            email_source_page = str(previous.get("email_source_page", "") or "")
             website_fit_status = str(previous.get("website_fit_status", "unknown"))
             website_fit_reasons = list(previous.get("website_fit_reasons", []) or [])
             contact_form_detected = bool(previous.get("contact_form_detected", False))
             contact_form_url = str(previous.get("contact_form_url", ""))
             contact_form_signals = list(previous.get("contact_form_signals", []) or [])
         else:
+            email_source_page = ""
             website_fit_status = "unknown"
             website_fit_reasons = []
             contact_form_detected = False
@@ -304,21 +297,34 @@ def main() -> int:
                 try:
                     homepage_html = _fetch_html(website)
                     checked_sites += 1
-                    pages = [website, *_extract_candidate_links(website, homepage_html)]
+                    pages = [
+                        website,
+                        *extract_candidate_links(
+                            website,
+                            homepage_html,
+                            limit=contact_link_limit,
+                            extra_hints=contact_link_hints,
+                        ),
+                    ][: max(1, max_pages_per_site)]
                     page_html_map = {website: homepage_html}
                     for page in pages[1:]:
                         try:
                             page_html_map[page] = _fetch_html(page)
                         except Exception:  # noqa: BLE001
+                            page_fetch_failures += 1
                             continue
                     emails = []
+                    email_source_page = ""
                     for page, html in page_html_map.items():
                         crawled_pages.append(page)
-                        emails.extend(match.lower() for match in EMAIL_RE.findall(html))
-                        emails.extend(
+                        page_emails = [match.lower() for match in EMAIL_RE.findall(html)]
+                        page_emails.extend(
                             match.lower()
                             for match in re.findall(r"mailto:([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})", html, re.I)
                         )
+                        if page_emails and not email_source_page:
+                            email_source_page = page
+                        emails.extend(page_emails)
                     deduped = []
                     seen = set()
                     for candidate in emails:
@@ -349,6 +355,7 @@ def main() -> int:
                     "email": email,
                     "validation_reason": validation_reason,
                     "crawled_pages": list(crawled_pages),
+                    "email_source_page": email_source_page,
                     "website_fit_status": website_fit_status,
                     "website_fit_reasons": list(website_fit_reasons),
                     "contact_form_detected": contact_form_detected,
@@ -369,6 +376,7 @@ def main() -> int:
                 "email": email,
                 "email_validation_status": "valid" if email else "invalid_or_missing",
                 "email_validation_reason": validation_reason,
+                "email_source_page": str(website_cache.get(website, {}).get("email_source_page", "")) if website else "",
                 "reachability_status": (
                     "form_and_email_available"
                     if email and contact_form_detected
@@ -385,6 +393,7 @@ def main() -> int:
                 "contact_form_detected": contact_form_detected,
                 "contact_form_url": contact_form_url,
                 "contact_form_signals": contact_form_signals,
+                "pages_crawled_count": len(crawled_pages),
             }
         )
 
@@ -397,16 +406,24 @@ def main() -> int:
             "deferred_count": deferred_count,
             "priority_regions": priority_regions,
             "max_sites_per_run": max_sites_per_run,
+            "max_pages_per_site": max_pages_per_site,
+            "contact_link_limit": contact_link_limit,
+            "page_fetch_failures": page_fetch_failures,
         },
     )
+    summary = enrichment_quality_summary(enriched, checked_sites, deferred_count)
     report = {
         "status": "ok",
         "checked_site_count": checked_sites,
         "deferred_count": deferred_count,
         "email_candidate_count": email_candidate_count,
         "validated_email_count": validated_email_count,
+        "newly_validated_email_count": validated_email_count,
+        "total_validated_email_count": summary.get("validated_email_count", 0),
         "contact_form_detected_count": len([item for item in enriched if item.get("contact_form_detected")]),
+        "page_fetch_failures": page_fetch_failures,
         "raw_import_path": str(output_path),
+        "quality_summary": summary,
     }
     _write_json(report_path, report)
     print(json.dumps(report, ensure_ascii=False, indent=2))

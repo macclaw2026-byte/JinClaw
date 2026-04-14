@@ -152,6 +152,40 @@ Primary outputs should include:
 - source quality report
 - suppression candidate report
 
+## Reusable Google Maps lane
+
+This skill now includes a reusable `Google Maps -> website -> validated contactability`
+lane for public business discovery.
+
+Use it when a project needs to:
+
+- discover public Google Maps entities by keyword and geography
+- keep a rolling crawl state instead of one-off search dumps
+- enrich official websites for emails and contact forms
+- write explainable discovery and enrichment quality reports
+
+Canonical runner:
+
+- `scripts/run_google_maps_capture_cycle.py`
+
+Typical usage:
+
+```bash
+python3 /Users/mac_claw/.openclaw/workspace/skills/prospect-data-engine/scripts/run_google_maps_capture_cycle.py \
+  --project-root /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite \
+  --keyword "interior designer" \
+  --account-type designer \
+  --persona-type founder
+```
+
+The runner preserves:
+
+- query family
+- capture route and fallback evidence
+- discovery quality summary
+- enrichment quality summary
+- rolling project-local crawl state
+
 ## Quality and risk model
 
 Monitor:
