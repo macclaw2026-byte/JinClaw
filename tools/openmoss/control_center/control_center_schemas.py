@@ -661,6 +661,90 @@ def build_execution_handoff_schema(
     }
 
 
+def build_outcome_evaluation_schema(
+    *,
+    enabled: bool = False,
+    task_id: str = "",
+    terminal_status: str = "",
+    outcome_status: str = "",
+    completion_score: float = 0.0,
+    goal_satisfied: bool = False,
+    user_visible_result_confirmed: bool = False,
+    proof_summary: str = "",
+    completed_stage_total: int = 0,
+    total_stage_total: int = 0,
+    open_stage_names: List[str] | None = None,
+    blocker_count: int = 0,
+    learning_backlog_count: int = 0,
+    verifier_status: str = "",
+    recommended_next_step: str = "",
+    report_reason: str = "",
+    path: str = "",
+    checked_at: str = "",
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：构造 outcome evaluation schema。
+    - 设计意图：把“任务做得怎么样、是否达到最终目标、还差什么”沉淀成可量化、可消费的结构化合同。
+    """
+    return {
+        "enabled": bool(enabled),
+        "task_id": str(task_id).strip(),
+        "terminal_status": str(terminal_status).strip(),
+        "outcome_status": str(outcome_status).strip(),
+        "completion_score": float(completion_score or 0.0),
+        "goal_satisfied": bool(goal_satisfied),
+        "user_visible_result_confirmed": bool(user_visible_result_confirmed),
+        "proof_summary": str(proof_summary).strip(),
+        "completed_stage_total": int(completed_stage_total or 0),
+        "total_stage_total": int(total_stage_total or 0),
+        "open_stage_names": list(open_stage_names or []),
+        "blocker_count": int(blocker_count or 0),
+        "learning_backlog_count": int(learning_backlog_count or 0),
+        "verifier_status": str(verifier_status).strip(),
+        "recommended_next_step": str(recommended_next_step).strip(),
+        "report_reason": str(report_reason).strip(),
+        "path": str(path).strip(),
+        "checked_at": str(checked_at).strip(),
+    }
+
+
+def build_reflection_report_schema(
+    *,
+    enabled: bool = False,
+    task_id: str = "",
+    terminal_status: str = "",
+    reflection_status: str = "",
+    what_worked: List[str] | None = None,
+    what_failed: List[str] | None = None,
+    optimization_proposals: List[str] | None = None,
+    reusable_rules: List[str] | None = None,
+    based_on_postmortem: bool = False,
+    report_reason: str = "",
+    path: str = "",
+    generated_at: str = "",
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：构造 reflection report schema。
+    - 设计意图：强制每个 terminal task 给出 what worked / what failed / 下一轮优化建议，而不是只留下“完成了”。
+    """
+    return {
+        "enabled": bool(enabled),
+        "task_id": str(task_id).strip(),
+        "terminal_status": str(terminal_status).strip(),
+        "reflection_status": str(reflection_status).strip(),
+        "what_worked": list(what_worked or []),
+        "what_failed": list(what_failed or []),
+        "optimization_proposals": list(optimization_proposals or []),
+        "reusable_rules": list(reusable_rules or []),
+        "based_on_postmortem": bool(based_on_postmortem),
+        "report_reason": str(report_reason).strip(),
+        "path": str(path).strip(),
+        "generated_at": str(generated_at).strip(),
+    }
+
+
 def build_acquisition_answer_synthesis_schema(
     *,
     scope: str = "site",
