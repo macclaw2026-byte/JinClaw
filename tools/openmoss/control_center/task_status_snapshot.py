@@ -577,6 +577,7 @@ def _build_capability_gap(snapshot: Dict[str, Any], state: Dict[str, Any]) -> Di
         generated_capability_candidates=list(payload.get("generated_capability_candidates", []) or []),
         attempted_steps=list(payload.get("attempted_steps", []) or []),
         ladder_steps=list(payload.get("ladder_steps", []) or []),
+        tool_evolution_plan=dict(payload.get("tool_evolution_plan", {}) or {}),
         rationale=list(payload.get("rationale", []) or []),
         contract_source=str(payload.get("contract_source", "")).strip() or "runtime_service",
         checked_at=str(payload.get("checked_at", "")).strip(),
@@ -739,6 +740,10 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
         )
         if str(capability_gap.get("missing_dependency", "")).strip():
             capability_gap_suffix += f" Missing dependency is {str(capability_gap.get('missing_dependency', '')).strip()}."
+        tool_evolution_plan = capability_gap.get("tool_evolution_plan", {}) or {}
+        planned_actions = [str(item).strip() for item in (tool_evolution_plan.get("planned_actions", []) or []) if str(item).strip()]
+        if planned_actions:
+            capability_gap_suffix += f" Tool evolution plan will {', '.join(planned_actions[:3])}."
     skill_action_suffix = ""
     if bool(skill_action_plane.get("enabled")):
         skill_action_suffix += (

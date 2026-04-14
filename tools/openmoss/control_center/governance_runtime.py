@@ -527,6 +527,7 @@ def _build_doctor_coverage_bundle() -> Dict[str, Any]:
                 "doctor_checks": [
                     "capability_gap_contract",
                     "self_heal_ladder_contract",
+                    "tool_evolution_plan_contract",
                     "authoritative_summary_visibility",
                 ],
                 "primary_monitor": "system_doctor.integration_health.capability_gap",

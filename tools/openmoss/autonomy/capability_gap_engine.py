@@ -273,6 +273,36 @@ def build_capability_gap_report(
             "status": "selected" if selected_path == "ask_user_or_doctor_boundary" else "pending",
         },
     ]
+    tool_evolution_plan = {
+        "enabled": bool(gap_detected),
+        "selected_path": selected_path,
+        "target_dependency": missing_dependency,
+        "research_candidates": [dict(item) for item in local_tool_candidates[:3]],
+        "skill_fallbacks": [dict(item) for item in skill_candidates[:3]],
+        "generated_fallbacks": [dict(item) for item in generated_candidates[:3]],
+        "planned_actions": [],
+    }
+    if selected_path == "reuse_local_capability":
+        tool_evolution_plan["planned_actions"] = [
+            "reuse_local_capability",
+            "retry_current_stage_with_local_capability",
+        ]
+    elif selected_path == "research_existing_tooling":
+        tool_evolution_plan["planned_actions"] = [
+            "inspect_local_capability_registry",
+            "record_existing_tooling_options",
+            "only_then_consider_external_research",
+        ]
+    elif selected_path == "build_local_capability":
+        tool_evolution_plan["planned_actions"] = [
+            "inspect_existing_generated_capabilities",
+            "prepare_in_house_capability_build",
+            "wire_new_capability_back_into_runtime",
+        ]
+    else:
+        tool_evolution_plan["planned_actions"] = [
+            "escalate_with_structured_gap_report",
+        ]
     return build_capability_gap_schema(
         enabled=gap_detected,
         gap_detected=gap_detected,
@@ -293,6 +323,7 @@ def build_capability_gap_report(
         generated_capability_candidates=generated_candidates,
         attempted_steps=attempted_steps,
         ladder_steps=ladder_steps,
+        tool_evolution_plan=tool_evolution_plan,
         rationale=rationale,
         contract_source="capability_gap_engine",
         checked_at=utc_now_iso(),

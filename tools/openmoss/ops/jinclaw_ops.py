@@ -96,6 +96,7 @@ DOCTOR_REQUIRED_GOAL_CONTINUATION_CONTRACTS = (
 DOCTOR_REQUIRED_CAPABILITY_GAP_CONTRACTS = (
     "capability_gap_contract",
     "self_heal_ladder_contract",
+    "tool_evolution_plan_contract",
     "authoritative_summary_visibility_contract",
 )
 DOCTOR_REQUIRED_DELIVERY_PLANE_CONTRACTS = (
@@ -548,6 +549,7 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
             "capability_gap": {
                 "capability_gap_contract": bool(capability_gap.get("capability_gap_contract")),
                 "self_heal_ladder_contract": bool(capability_gap.get("self_heal_ladder_contract")),
+                "tool_evolution_plan_contract": bool(capability_gap.get("tool_evolution_plan_contract")),
                 "authoritative_summary_visibility_contract": bool(capability_gap.get("authoritative_summary_visibility_contract")),
             },
             "delivery_plane": {

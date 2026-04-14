@@ -68,6 +68,9 @@ class CapabilityGapSelfHealTest(unittest.TestCase):
         self.assertTrue(capability_gap.get('enabled'))
         self.assertEqual(capability_gap.get('selected_path'), 'reuse_local_capability')
         self.assertIn('curl', [item.get('name') for item in capability_gap.get('local_tool_candidates', []) or []])
+        tool_evolution_plan = capability_gap.get('tool_evolution_plan', {}) or {}
+        self.assertTrue(tool_evolution_plan.get('enabled'))
+        self.assertIn('reuse_local_capability', tool_evolution_plan.get('planned_actions', []) or [])
         self.assertIn('Capability-gap loop selected', snapshot.get('authoritative_summary', ''))
 
 

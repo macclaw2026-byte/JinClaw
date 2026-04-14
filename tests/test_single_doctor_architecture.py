@@ -101,6 +101,7 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertTrue((integration.get('capability_gap', {}) or {}).get('ok'))
         self.assertTrue((integration.get('capability_gap', {}) or {}).get('capability_gap_contract'))
         self.assertTrue((integration.get('capability_gap', {}) or {}).get('self_heal_ladder_contract'))
+        self.assertTrue((integration.get('capability_gap', {}) or {}).get('tool_evolution_plan_contract'))
         self.assertTrue((integration.get('capability_gap', {}) or {}).get('authoritative_summary_visibility_contract'))
         self.assertEqual(integration.get('delivery_plane_chain'), 'ok')
         self.assertTrue((integration.get('delivery_plane', {}) or {}).get('ok'))
