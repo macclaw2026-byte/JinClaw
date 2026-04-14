@@ -27,6 +27,7 @@ from typing import Any, Dict, List
 
 from canonical_active_task import resolve_canonical_active_task
 from conversation_context import build_conversation_focus_registry
+from conversation_events import build_conversation_event_registry
 from crawler_capability_profile import build_crawler_capability_profile
 from crawler_remediation_planner import build_crawler_remediation_plan
 from execution_governor import classify_blocked_runtime_state
@@ -40,6 +41,7 @@ from paths import (
     ALERTS_PATH,
     ARCHIVED_TASK_REGISTRY_PATH,
     CONVERSATION_FOCUS_REGISTRY_PATH,
+    CONVERSATION_EVENT_REGISTRY_PATH,
     CONVERSATION_REGISTRY_PATH,
     DOCTOR_LAST_RUN_PATH,
     CROSS_MARKET_ARBITRAGE_SCHEDULER_STATE_PATH,
@@ -1411,6 +1413,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
     _write_json(DOCTOR_QUEUE_PATH, task_views["doctor_queue"])
     conversation_registry = build_conversation_registry(task_items)
     conversation_focus_registry = build_conversation_focus_registry()
+    conversation_event_registry = build_conversation_event_registry()
     _decorate_conversation_registry_with_aliases(conversation_registry, task_alias_registry)
     _write_json(CONVERSATION_REGISTRY_PATH, conversation_registry)
     _write_json(CONVERSATION_FOCUS_REGISTRY_PATH, conversation_focus_registry)
@@ -1446,6 +1449,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
         "task_retention_last_run_path": str(TASK_RETENTION_LAST_RUN_PATH),
         "conversation_registry_path": str(CONVERSATION_REGISTRY_PATH),
         "conversation_focus_registry_path": str(CONVERSATION_FOCUS_REGISTRY_PATH),
+        "conversation_event_registry_path": str(CONVERSATION_EVENT_REGISTRY_PATH),
         "waiting_registry_path": str(WAITING_REGISTRY_PATH),
         "doctor_queue_path": str(DOCTOR_QUEUE_PATH),
         "alerts_path": str(ALERTS_PATH),
@@ -1516,6 +1520,11 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
             "conversation_focus_resolved_total": int((conversation_focus_registry.get("summary", {}) or {}).get("resolved_with_focus_total", 0) or 0),
             "conversation_focus_interactive_total": int((conversation_focus_registry.get("summary", {}) or {}).get("interactive_mode_total", 0) or 0),
             "conversation_focus_mission_total": int((conversation_focus_registry.get("summary", {}) or {}).get("mission_mode_total", 0) or 0),
+            "conversation_event_conversations_total": int((conversation_event_registry.get("summary", {}) or {}).get("conversation_total", 0) or 0),
+            "conversation_event_total": int((conversation_event_registry.get("summary", {}) or {}).get("event_total", 0) or 0),
+            "conversation_event_with_ingress_total": int((conversation_event_registry.get("summary", {}) or {}).get("with_ingress_total", 0) or 0),
+            "conversation_event_with_route_total": int((conversation_event_registry.get("summary", {}) or {}).get("with_route_total", 0) or 0),
+            "conversation_event_with_reply_total": int((conversation_event_registry.get("summary", {}) or {}).get("with_reply_total", 0) or 0),
             "blocked_total": blocked_total,
             "blocked_project_crawler_remediation_total": blocked_category_counts.get("project_crawler_remediation", 0),
             "blocked_approval_or_contract_total": blocked_category_counts.get("approval_or_contract", 0),

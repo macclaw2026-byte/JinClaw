@@ -23,6 +23,7 @@ from manager import build_args, contract_path, create_task, log_ingress, read_li
 from task_ingress import slugify
 
 from brain_router import route_instruction
+from conversation_events import record_conversation_event
 from route_guardrails import persist_route, reroot_route_if_needed
 from task_receipt_engine import emit_route_receipt
 
@@ -75,6 +76,19 @@ def bind_telegram_message(
         "active_task": existing.get("task_id"),
         "mode": "ignored",
     }
+    record_conversation_event(
+        provider="telegram",
+        conversation_id=chat_id,
+        event_type="ingress_received",
+        payload={
+            "message_id": message_id,
+            "sender_id": sender_id,
+            "sender_name": sender_name,
+            "text": text,
+            "conversation_type": chat_type,
+            "session_key": telegram_session_key(chat_id, chat_type),
+        },
+    )
 
     brain_route = route_instruction(
         provider="telegram",

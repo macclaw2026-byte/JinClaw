@@ -32,7 +32,7 @@ from adaptive_fetch_router import build_fetch_route
 from acquisition_adapter_registry import build_acquisition_adapter_registry
 from control_plane_builder import build_control_plane
 from execution_governor import build_project_crawler_gate, classify_blocked_runtime_state, summarize_governance_attention
-from paths import BRAIN_RECEIPTS_ROOT, CONTROL_CENTER_RUNTIME_ROOT, FETCH_ROUTES_ROOT
+from paths import BRAIN_RECEIPTS_ROOT, BRAIN_ROUTES_ROOT, CONTROL_CENTER_RUNTIME_ROOT, FETCH_ROUTES_ROOT
 from mission_supervisor import run_mission_supervisor
 from progress_evidence import build_progress_evidence
 from brain_router import route_instruction
@@ -104,6 +104,13 @@ REPLY_PROJECTION_REQUIRED_FILES = [
     WORKSPACE_ROOT / 'tools/openmoss/control_center/task_status_snapshot.py',
     WORKSPACE_ROOT / 'tools/openmoss/autonomy/telegram_binding.py',
     WORKSPACE_ROOT / 'tools/openmoss/autonomy/action_executor.py',
+]
+CONVERSATION_EVENT_REQUIRED_FILES = [
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/conversation_events.py',
+    WORKSPACE_ROOT / 'tools/openmoss/autonomy/telegram_binding.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/brain_router.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/task_receipt_engine.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/control_plane_builder.py',
 ]
 GSTACK_LIFECYCLE = ['think', 'plan', 'build', 'review', 'test', 'ship', 'reflect']
 DOCTOR_RESOLUTION_REQUIRED_FIELDS = [
@@ -2654,6 +2661,162 @@ def _run_reply_projection_integration_checks() -> Dict[str, object]:
     }
 
 
+def _run_conversation_event_integration_checks() -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：验证 Telegram ingress、route resolve、reply emission 是否已经收敛到同一条 conversation event 流。
+    - 输入角色：消费 Telegram binding、route、receipt 与 control-plane registry。
+    - 输出角色：供 canonical doctor 判定 transport parity 是否已经有事件真源。
+    """
+    errors = []
+    for path in CONVERSATION_EVENT_REQUIRED_FILES:
+        if not path.exists():
+            errors.append(f'missing_required_file:{path}')
+
+    if str(CONTROL_CENTER_ROOT) not in sys.path:
+        sys.path.insert(0, str(CONTROL_CENTER_ROOT))
+    if str(AUTONOMY_DIR) not in sys.path:
+        sys.path.insert(0, str(AUTONOMY_DIR))
+
+    from control_plane_builder import build_control_plane
+    from conversation_context import conversation_focus_path, instruction_envelope_path
+    from conversation_events import build_conversation_event_registry, conversation_event_path, load_conversation_events
+    from telegram_binding import bind_telegram_message
+
+    provider = 'telegram'
+    conversation_id = 'doctor-event-kernel'
+    focus_path = conversation_focus_path(provider, conversation_id)
+    envelope_path = instruction_envelope_path(provider, conversation_id)
+    event_path = conversation_event_path(provider, conversation_id)
+    route_path = BRAIN_ROUTES_ROOT / provider / f'{conversation_id}.json'
+    receipt_path = BRAIN_RECEIPTS_ROOT / provider / f'{conversation_id}.json'
+    link_file = link_path(provider, conversation_id)
+    touched_task_ids: set[str] = set()
+    for path in [focus_path, envelope_path, event_path, route_path, receipt_path, link_file]:
+        if path.exists():
+            path.unlink()
+    try:
+        result = bind_telegram_message(
+            chat_id=conversation_id,
+            chat_type='group',
+            sender_id='doctor-user',
+            sender_name='doctor-event-user',
+            message_id='evt-1',
+            text='用 ziniao 浏览器打开已绑定店铺，进入对账中心导出三月份账务明细，并在导出历史确认结果',
+        )
+        task_id = str(((result.get('brain_route', {}) or {}).get('task_id', ''))).strip()
+        if task_id:
+            touched_task_ids.add(task_id)
+
+        if not event_path.exists():
+            errors.append('conversation_event_missing_log_file')
+        events = load_conversation_events(provider, conversation_id, limit=20)
+        event_types = [str(item.get('event_type', '')).strip() for item in events]
+        if 'ingress_received' not in event_types:
+            errors.append('conversation_event_missing_ingress_event')
+        if 'route_resolved' not in event_types:
+            errors.append('conversation_event_missing_route_event')
+        if 'reply_projection_emitted' not in event_types:
+            errors.append('conversation_event_missing_reply_event')
+        if {'ingress_received', 'route_resolved', 'reply_projection_emitted'}.issubset(set(event_types)):
+            if not (
+                event_types.index('ingress_received')
+                < event_types.index('route_resolved')
+                < event_types.index('reply_projection_emitted')
+            ):
+                errors.append('conversation_event_invalid_event_order')
+        reply_events = [item for item in events if str(item.get('event_type', '')).strip() == 'reply_projection_emitted']
+        reply_payload = ((reply_events[-1] if reply_events else {}).get('payload', {}) or {})
+        if str(((reply_payload.get('reply_projection', {}) or {}).get('message_kind', ''))).strip() != 'task_status':
+            errors.append('conversation_event_missing_reply_projection_payload')
+        if not str(reply_payload.get('mode', '')).strip():
+            errors.append('conversation_event_missing_reply_mode')
+
+        registry = build_conversation_event_registry()
+        row = next(
+            (
+                item
+                for item in (registry.get('items', []) or [])
+                if str(item.get('provider', '')).strip() == provider and str(item.get('conversation_id', '')).strip() == conversation_id
+            ),
+            {},
+        )
+        if not row:
+            errors.append('conversation_event_registry_missing_row')
+        if not bool(row.get('has_ingress_event')):
+            errors.append('conversation_event_registry_missing_ingress_flag')
+        if not bool(row.get('has_route_event')):
+            errors.append('conversation_event_registry_missing_route_flag')
+        if not bool(row.get('has_reply_event')):
+            errors.append('conversation_event_registry_missing_reply_flag')
+
+        plane = build_control_plane(stale_after_seconds=300, escalation_after_seconds=900)
+        summary = (plane.get('system_snapshot', {}) or {}).get('summary', {}) or {}
+        if 'conversation_event_total' not in summary:
+            errors.append('conversation_event_control_plane_missing_total')
+        if 'conversation_event_with_reply_total' not in summary:
+            errors.append('conversation_event_control_plane_missing_reply_total')
+    finally:
+        for path in [focus_path, envelope_path, event_path, route_path, receipt_path, link_file]:
+            if path.exists():
+                path.unlink()
+        for parent in [event_path.parent, route_path.parent, receipt_path.parent]:
+            if parent.exists():
+                try:
+                    next(parent.iterdir())
+                except StopIteration:
+                    parent.rmdir()
+        for task_id in touched_task_ids:
+            task_path = task_dir(task_id)
+            if task_path.exists():
+                shutil.rmtree(task_path, ignore_errors=True)
+
+    return {
+        'single_doctor_rule': True,
+        'authoritative_doctor': 'tools/openmoss/control_center/system_doctor.py',
+        'required_files_checked': len(CONVERSATION_EVENT_REQUIRED_FILES),
+        'required_files': [str(path.relative_to(WORKSPACE_ROOT)) for path in CONVERSATION_EVENT_REQUIRED_FILES],
+        'ingress_event_contract': not any(
+            item in {
+                'conversation_event_missing_log_file',
+                'conversation_event_missing_ingress_event',
+                'conversation_event_invalid_event_order',
+            }
+            for item in errors
+        ),
+        'route_event_contract': not any(
+            item in {
+                'conversation_event_missing_route_event',
+                'conversation_event_invalid_event_order',
+            }
+            for item in errors
+        ),
+        'reply_event_contract': not any(
+            item in {
+                'conversation_event_missing_reply_event',
+                'conversation_event_invalid_event_order',
+                'conversation_event_missing_reply_projection_payload',
+                'conversation_event_missing_reply_mode',
+            }
+            for item in errors
+        ),
+        'control_plane_visibility_contract': not any(
+            item in {
+                'conversation_event_registry_missing_row',
+                'conversation_event_registry_missing_ingress_flag',
+                'conversation_event_registry_missing_route_flag',
+                'conversation_event_registry_missing_reply_flag',
+                'conversation_event_control_plane_missing_total',
+                'conversation_event_control_plane_missing_reply_total',
+            }
+            for item in errors
+        ),
+        'conversation_event_chain': 'ok' if not errors else 'error',
+        'errors': errors,
+        'ok': not errors,
+    }
+
+
 def _run_integration_health_checks() -> Dict[str, object]:
     """
     中文注解：
@@ -2665,11 +2828,13 @@ def _run_integration_health_checks() -> Dict[str, object]:
     acquisition_hand = _run_acquisition_integration_checks()
     conversation_context = _run_conversation_context_integration_checks()
     reply_projection = _run_reply_projection_integration_checks()
+    conversation_events = _run_conversation_event_integration_checks()
     errors = (
         list(gstack.get('errors', []) or [])
         + list(acquisition_hand.get('errors', []) or [])
         + list(conversation_context.get('errors', []) or [])
         + list(reply_projection.get('errors', []) or [])
+        + list(conversation_events.get('errors', []) or [])
     )
     return {
         'single_doctor_rule': True,
@@ -2678,19 +2843,28 @@ def _run_integration_health_checks() -> Dict[str, object]:
         'required_files_checked': int(gstack.get('required_files_checked', 0) or 0)
         + int(acquisition_hand.get('required_files_checked', 0) or 0)
         + int(conversation_context.get('required_files_checked', 0) or 0)
-        + int(reply_projection.get('required_files_checked', 0) or 0),
+        + int(reply_projection.get('required_files_checked', 0) or 0)
+        + int(conversation_events.get('required_files_checked', 0) or 0),
         'lifecycle': GSTACK_LIFECYCLE,
         'gstack': gstack,
         'acquisition_hand': acquisition_hand,
         'conversation_context': conversation_context,
         'reply_projection': reply_projection,
+        'conversation_events': conversation_events,
         'coding_chain': gstack.get('coding_chain', 'unknown'),
         'noncoding_chain': gstack.get('noncoding_chain', 'unknown'),
         'acquisition_chain': acquisition_hand.get('acquisition_chain', 'unknown'),
         'conversation_context_chain': conversation_context.get('conversation_context_chain', 'unknown'),
         'reply_projection_chain': reply_projection.get('reply_projection_chain', 'unknown'),
+        'conversation_event_chain': conversation_events.get('conversation_event_chain', 'unknown'),
         'errors': errors,
-        'ok': bool(gstack.get('ok')) and bool(acquisition_hand.get('ok')) and bool(conversation_context.get('ok')) and bool(reply_projection.get('ok')),
+        'ok': (
+            bool(gstack.get('ok'))
+            and bool(acquisition_hand.get('ok'))
+            and bool(conversation_context.get('ok'))
+            and bool(reply_projection.get('ok'))
+            and bool(conversation_events.get('ok'))
+        ),
     }
 
 

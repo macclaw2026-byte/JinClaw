@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from paths import BRAIN_RECEIPTS_ROOT, OPENCLAW_SESSIONS_ROOT
+from conversation_events import record_conversation_event
 from response_policy_engine import build_route_receipt_text, build_route_reply_projection
 from response_drift_detector import reconcile_route_with_authoritative_state
 
@@ -430,6 +431,20 @@ def emit_route_receipt(route: Dict[str, object], *, provider: str, conversation_
         "native_chat_attachment_first"
         if attachments
         else "session_receipt_only"
+    )
+    record_conversation_event(
+        provider=provider,
+        conversation_id=conversation_id,
+        event_type="reply_projection_emitted",
+        payload={
+            "task_id": str(receipt.get("task_id", "")).strip(),
+            "mode": str(receipt.get("mode", "")).strip(),
+            "receipt_id": str(receipt.get("receipt_id", "")).strip(),
+            "delivery_strategy": str(receipt.get("delivery_strategy", "")).strip(),
+            "delivery_delivered": bool((delivery or {}).get("delivered")),
+            "attachment_delivered": bool((attachment_delivery or {}).get("delivered")),
+            "reply_projection": dict(reply_projection or {}),
+        },
     )
     _write_json(BRAIN_RECEIPTS_ROOT / provider / f"{conversation_id}.json", receipt)
     return receipt

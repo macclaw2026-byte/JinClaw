@@ -9,6 +9,7 @@ if str(CONTROL_CENTER) not in sys.path:
     sys.path.insert(0, str(CONTROL_CENTER))
 
 from paths import BRAIN_RECEIPTS_ROOT  # noqa: E402
+from conversation_events import conversation_event_path, load_conversation_events  # noqa: E402
 from task_receipt_engine import emit_route_receipt  # noqa: E402
 
 
@@ -17,8 +18,11 @@ class TaskReceiptEngineTest(unittest.TestCase):
         provider = 'unit-test-reply-projection'
         conversation_id = 'conversation-1'
         receipt_path = BRAIN_RECEIPTS_ROOT / provider / f'{conversation_id}.json'
+        event_path = conversation_event_path(provider, conversation_id)
         if receipt_path.exists():
             receipt_path.unlink()
+        if event_path.exists():
+            event_path.unlink()
         route = {
             'mode': 'authoritative_task_status',
             'task_id': 'receipt-projection-task',
@@ -53,12 +57,19 @@ class TaskReceiptEngineTest(unittest.TestCase):
             persisted = json.loads(receipt_path.read_text())
             self.assertIn('reply_projection', persisted)
             self.assertEqual(persisted['reply_projection']['message_kind'], 'task_status')
+            events = load_conversation_events(provider, conversation_id, limit=10)
+            self.assertTrue(any(item.get('event_type') == 'reply_projection_emitted' for item in events))
         finally:
             if receipt_path.exists():
                 receipt_path.unlink()
+            if event_path.exists():
+                event_path.unlink()
             parent = receipt_path.parent
             if parent.exists() and not any(parent.iterdir()):
                 parent.rmdir()
+            event_parent = event_path.parent
+            if event_parent.exists() and not any(event_parent.iterdir()):
+                event_parent.rmdir()
 
 
 if __name__ == '__main__':
