@@ -102,6 +102,12 @@ DOCTOR_REQUIRED_SKILL_ACTION_PLANE_CONTRACTS = (
     "runtime_prompt_attachment_contract",
     "authoritative_summary_visibility_contract",
 )
+DOCTOR_REQUIRED_TRANSPORT_BINDING_CONTRACTS = (
+    "shared_transport_binding_contract",
+    "telegram_binding_delegation_contract",
+    "openclaw_main_binding_delegation_contract",
+    "event_chain_parity_contract",
+)
 
 
 def utc_now() -> datetime:
@@ -438,6 +444,7 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
     execution_events = integration_health.get("execution_events", {}) or {}
     capability_gap = integration_health.get("capability_gap", {}) or {}
     skill_action_plane = integration_health.get("skill_action_plane", {}) or {}
+    transport_binding = integration_health.get("transport_binding", {}) or {}
     checked_at = str(payload.get("checked_at", "")).strip()
     return {
         "last_run_exists": DOCTOR_LAST_RUN_PATH.exists(),
@@ -495,6 +502,7 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
             "goal_continuation_chain": str(integration_health.get("goal_continuation_chain", "")).strip(),
             "capability_gap_chain": str(integration_health.get("capability_gap_chain", "")).strip(),
             "skill_action_plane_chain": str(integration_health.get("skill_action_plane_chain", "")).strip(),
+            "transport_binding_chain": str(integration_health.get("transport_binding_chain", "")).strip(),
             "conversation_context": {
                 "instruction_envelope_contract": bool(conversation_context.get("instruction_envelope_contract")),
                 "focus_contract": bool(conversation_context.get("focus_contract")),
@@ -537,6 +545,12 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
                 "skill_action_plane_contract": bool(skill_action_plane.get("skill_action_plane_contract")),
                 "runtime_prompt_attachment_contract": bool(skill_action_plane.get("runtime_prompt_attachment_contract")),
                 "authoritative_summary_visibility_contract": bool(skill_action_plane.get("authoritative_summary_visibility_contract")),
+            },
+            "transport_binding": {
+                "shared_transport_binding_contract": bool(transport_binding.get("shared_transport_binding_contract")),
+                "telegram_binding_delegation_contract": bool(transport_binding.get("telegram_binding_delegation_contract")),
+                "openclaw_main_binding_delegation_contract": bool(transport_binding.get("openclaw_main_binding_delegation_contract")),
+                "event_chain_parity_contract": bool(transport_binding.get("event_chain_parity_contract")),
             },
         },
     }
@@ -597,6 +611,9 @@ def _doctor_runtime_payload_complete(payload: Dict[str, Any]) -> bool:
     skill_action_plane = integration.get("skill_action_plane", {}) or {}
     if not isinstance(skill_action_plane, dict) or not skill_action_plane:
         return False
+    transport_binding = integration.get("transport_binding", {}) or {}
+    if not isinstance(transport_binding, dict) or not transport_binding:
+        return False
     return all(name in acquisition_hand for name in DOCTOR_REQUIRED_ACQUISITION_CONTRACTS) and all(
         name in conversation_context for name in DOCTOR_REQUIRED_CONVERSATION_CONTEXT_CONTRACTS
     ) and all(
@@ -613,6 +630,8 @@ def _doctor_runtime_payload_complete(payload: Dict[str, Any]) -> bool:
         name in capability_gap for name in DOCTOR_REQUIRED_CAPABILITY_GAP_CONTRACTS
     ) and all(
         name in skill_action_plane for name in DOCTOR_REQUIRED_SKILL_ACTION_PLANE_CONTRACTS
+    ) and all(
+        name in transport_binding for name in DOCTOR_REQUIRED_TRANSPORT_BINDING_CONTRACTS
     )
 
 

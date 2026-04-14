@@ -104,6 +104,12 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                         'runtime_prompt_attachment_contract': True,
                         'authoritative_summary_visibility_contract': True,
                     },
+                    'transport_binding': {
+                        'shared_transport_binding_contract': True,
+                        'telegram_binding_delegation_contract': True,
+                        'openclaw_main_binding_delegation_contract': True,
+                        'event_chain_parity_contract': True,
+                    },
                     'reply_projection': {
                         'projection_contract_presence': True,
                         'projection_render_parity': True,
@@ -155,6 +161,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                 'goal_continuation_chain': 'ok',
                 'capability_gap_chain': 'ok',
                 'skill_action_plane_chain': 'ok',
+                'transport_binding_chain': 'ok',
                 'acquisition_hand': {
                     'field_synthesis_contract': True,
                     'delivery_requirements_contract': True,
@@ -211,6 +218,12 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                     'skill_action_plane_contract': True,
                     'runtime_prompt_attachment_contract': True,
                     'authoritative_summary_visibility_contract': True,
+                },
+                'transport_binding': {
+                    'shared_transport_binding_contract': True,
+                    'telegram_binding_delegation_contract': True,
+                    'openclaw_main_binding_delegation_contract': True,
+                    'event_chain_parity_contract': True,
                 },
                 'ok': True,
             },

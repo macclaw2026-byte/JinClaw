@@ -144,6 +144,12 @@ SKILL_ACTION_PLANE_REQUIRED_FILES = [
     WORKSPACE_ROOT / 'tools/openmoss/control_center/task_status_snapshot.py',
     WORKSPACE_ROOT / 'tools/openmoss/control_center/system_doctor.py',
 ]
+TRANSPORT_BINDING_REQUIRED_FILES = [
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/transport_binding.py',
+    WORKSPACE_ROOT / 'tools/openmoss/autonomy/telegram_binding.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/brain_enforcer.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/system_doctor.py',
+]
 GSTACK_LIFECYCLE = ['think', 'plan', 'build', 'review', 'test', 'ship', 'reflect']
 DOCTOR_RESOLUTION_REQUIRED_FIELDS = [
     "scope",
@@ -3549,6 +3555,106 @@ def _run_skill_action_plane_integration_checks() -> Dict[str, object]:
     }
 
 
+def _run_transport_binding_integration_checks() -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：验证 Telegram 与 openclaw-main 是否已经共用同一个 transport binding 内核。
+    - 输入角色：消费统一 transport binder、事件流以及入口适配器源码。
+    - 输出角色：供 doctor/ops 判断 transport parity 是否继续收敛。
+    """
+    errors: List[str] = []
+    for path in TRANSPORT_BINDING_REQUIRED_FILES:
+        if not path.exists():
+            errors.append(f"missing_required_file:{path.relative_to(WORKSPACE_ROOT)}")
+
+    from conversation_events import load_conversation_events
+    from transport_binding import bind_transport_message
+
+    telegram_source = (WORKSPACE_ROOT / 'tools/openmoss/autonomy/telegram_binding.py').read_text(encoding='utf-8')
+    if 'bind_transport_message(' not in telegram_source:
+        errors.append('telegram_binding_missing_shared_kernel_call')
+    enforcer_source = (WORKSPACE_ROOT / 'tools/openmoss/control_center/brain_enforcer.py').read_text(encoding='utf-8')
+    if 'bind_transport_message(' not in enforcer_source:
+        errors.append('brain_enforcer_missing_shared_kernel_call')
+
+    telegram_conversation_id = 'doctor-transport-binding-telegram'
+    direct_conversation_id = 'doctor-transport-binding-openclaw-main'
+    telegram_result = bind_transport_message(
+        provider='telegram',
+        conversation_id=telegram_conversation_id,
+        conversation_type='group',
+        sender_id='doctor',
+        sender_name='system-doctor',
+        message_id='doctor-transport-msg-1',
+        text='继续优化 transport binding kernel',
+        source='telegram',
+        session_key=f'agent:main:telegram:group:{telegram_conversation_id}',
+        emit_receipt=True,
+    )
+    direct_result = bind_transport_message(
+        provider='openclaw-main',
+        conversation_id=direct_conversation_id,
+        conversation_type='direct',
+        sender_id='user',
+        sender_name='openclaw-user',
+        message_id='doctor-transport-msg-1',
+        text='继续优化 transport binding kernel',
+        source='brain_enforcer',
+        session_key='agent:main:main',
+        emit_receipt=False,
+    )
+
+    if not str((telegram_result.get('brain_route', {}) or {}).get('route_path', '')).strip():
+        errors.append('transport_binding_missing_telegram_route')
+    if not str((telegram_result.get('receipt', {}) or {}).get('text', '')).strip():
+        errors.append('transport_binding_missing_telegram_receipt')
+    if not str((direct_result.get('brain_route', {}) or {}).get('route_path', '')).strip():
+        errors.append('transport_binding_missing_openclaw_route')
+    if direct_result.get('receipt'):
+        errors.append('transport_binding_direct_path_unexpected_receipt')
+
+    telegram_events = load_conversation_events('telegram', telegram_conversation_id, limit=10)
+    direct_events = load_conversation_events('openclaw-main', direct_conversation_id, limit=10)
+    telegram_event_types = [str(item.get('event_type', '')).strip() for item in telegram_events]
+    direct_event_types = [str(item.get('event_type', '')).strip() for item in direct_events]
+    if 'ingress_received' not in telegram_event_types or 'route_resolved' not in telegram_event_types:
+        errors.append('transport_binding_missing_telegram_event_chain')
+    if 'reply_projection_emitted' not in telegram_event_types:
+        errors.append('transport_binding_missing_telegram_reply_event')
+    if 'ingress_received' not in direct_event_types or 'route_resolved' not in direct_event_types:
+        errors.append('transport_binding_missing_openclaw_event_chain')
+    if 'reply_projection_emitted' in direct_event_types:
+        errors.append('transport_binding_openclaw_unexpected_reply_event')
+
+    return {
+        'required_files_checked': len(TRANSPORT_BINDING_REQUIRED_FILES),
+        'required_files': [str(path.relative_to(WORKSPACE_ROOT)) for path in TRANSPORT_BINDING_REQUIRED_FILES],
+        'shared_transport_binding_contract': not any(
+            item in {
+                'transport_binding_missing_telegram_route',
+                'transport_binding_missing_telegram_receipt',
+                'transport_binding_missing_openclaw_route',
+                'transport_binding_direct_path_unexpected_receipt',
+            }
+            for item in errors
+        ),
+        'telegram_binding_delegation_contract': 'telegram_binding_missing_shared_kernel_call' not in errors,
+        'openclaw_main_binding_delegation_contract': 'brain_enforcer_missing_shared_kernel_call' not in errors,
+        'event_chain_parity_contract': not any(
+            item in {
+                'transport_binding_missing_telegram_event_chain',
+                'transport_binding_missing_telegram_reply_event',
+                'transport_binding_missing_openclaw_event_chain',
+                'transport_binding_openclaw_unexpected_reply_event',
+            }
+            for item in errors
+        ),
+        'transport_binding_chain': 'ok' if not errors else 'error',
+        'errors': errors,
+        'ok': not errors,
+    }
+
+
 def _run_integration_health_checks() -> Dict[str, object]:
     """
     中文注解：
@@ -3566,6 +3672,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
     goal_continuation = _run_goal_continuation_integration_checks()
     capability_gap = _run_capability_gap_integration_checks()
     skill_action_plane = _run_skill_action_plane_integration_checks()
+    transport_binding = _run_transport_binding_integration_checks()
     errors = (
         list(gstack.get('errors', []) or [])
         + list(acquisition_hand.get('errors', []) or [])
@@ -3577,6 +3684,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         + list(goal_continuation.get('errors', []) or [])
         + list(capability_gap.get('errors', []) or [])
         + list(skill_action_plane.get('errors', []) or [])
+        + list(transport_binding.get('errors', []) or [])
     )
     return {
         'single_doctor_rule': True,
@@ -3591,7 +3699,8 @@ def _run_integration_health_checks() -> Dict[str, object]:
         + int(completion_reflection.get('required_files_checked', 0) or 0)
         + int(goal_continuation.get('required_files_checked', 0) or 0)
         + int(capability_gap.get('required_files_checked', 0) or 0)
-        + int(skill_action_plane.get('required_files_checked', 0) or 0),
+        + int(skill_action_plane.get('required_files_checked', 0) or 0)
+        + int(transport_binding.get('required_files_checked', 0) or 0),
         'lifecycle': GSTACK_LIFECYCLE,
         'gstack': gstack,
         'acquisition_hand': acquisition_hand,
@@ -3603,6 +3712,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         'goal_continuation': goal_continuation,
         'capability_gap': capability_gap,
         'skill_action_plane': skill_action_plane,
+        'transport_binding': transport_binding,
         'coding_chain': gstack.get('coding_chain', 'unknown'),
         'noncoding_chain': gstack.get('noncoding_chain', 'unknown'),
         'acquisition_chain': acquisition_hand.get('acquisition_chain', 'unknown'),
@@ -3614,6 +3724,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         'goal_continuation_chain': goal_continuation.get('goal_continuation_chain', 'unknown'),
         'capability_gap_chain': capability_gap.get('capability_gap_chain', 'unknown'),
         'skill_action_plane_chain': skill_action_plane.get('skill_action_plane_chain', 'unknown'),
+        'transport_binding_chain': transport_binding.get('transport_binding_chain', 'unknown'),
         'errors': errors,
         'ok': (
             bool(gstack.get('ok'))
@@ -3626,6 +3737,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
             and bool(goal_continuation.get('ok'))
             and bool(capability_gap.get('ok'))
             and bool(skill_action_plane.get('ok'))
+            and bool(transport_binding.get('ok'))
         ),
     }
 
