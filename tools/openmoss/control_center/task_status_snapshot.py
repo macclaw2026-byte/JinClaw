@@ -630,10 +630,16 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
             acquisition_suffix += " Guarded disclosure is required when using the current result."
     completion_suffix = ""
     if bool(outcome_evaluation.get("enabled")):
+        scorecard = outcome_evaluation.get("scorecard", {}) or {}
         completion_suffix += (
             f" Outcome evaluation is {str(outcome_evaluation.get('outcome_status', '')).strip() or 'unknown'}"
             f" with score {float(outcome_evaluation.get('completion_score', 0.0) or 0.0):.1f}."
         )
+        if bool(scorecard.get("enabled")):
+            completion_suffix += (
+                f" Outcome scorecard is {float(scorecard.get('aggregate_score', 0.0) or 0.0):.1f}"
+                f" and delivery readiness is {str(scorecard.get('delivery_readiness', '')).strip() or 'unknown'}."
+            )
     if bool(reflection_report.get("enabled")):
         completion_suffix += (
             f" Reflection report has {len(reflection_report.get('optimization_proposals', []) or [])} optimization proposals."

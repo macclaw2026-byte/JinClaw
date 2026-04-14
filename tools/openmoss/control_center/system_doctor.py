@@ -3166,12 +3166,17 @@ def _run_completion_reflection_integration_checks() -> Dict[str, object]:
         snapshot = build_task_status_snapshot(task_id)
         outcome = snapshot.get('outcome_evaluation', {}) or {}
         reflection = snapshot.get('reflection_report', {}) or {}
+        scorecard = outcome.get('scorecard', {}) or {}
         if not bool(outcome.get('enabled')):
             errors.append('completion_reflection_missing_outcome_evaluation')
         if float(outcome.get('completion_score', 0.0) or 0.0) <= 0.0:
             errors.append('completion_reflection_invalid_completion_score')
         if str(outcome.get('outcome_status', '')).strip() != 'goal_reached':
             errors.append('completion_reflection_wrong_outcome_status')
+        if not bool(scorecard.get('enabled')):
+            errors.append('completion_reflection_missing_outcome_scorecard')
+        if float(scorecard.get('aggregate_score', 0.0) or 0.0) <= 0.0:
+            errors.append('completion_reflection_invalid_outcome_scorecard')
         if not bool(reflection.get('enabled')):
             errors.append('completion_reflection_missing_reflection_report')
         if not (reflection.get('optimization_proposals', []) or []):
@@ -3181,6 +3186,8 @@ def _run_completion_reflection_integration_checks() -> Dict[str, object]:
         authoritative_summary = str(snapshot.get('authoritative_summary', '')).strip()
         if 'Outcome evaluation is' not in authoritative_summary:
             errors.append('completion_reflection_missing_summary_outcome_signal')
+        if 'Outcome scorecard is' not in authoritative_summary:
+            errors.append('completion_reflection_missing_summary_scorecard_signal')
         if 'Reflection report has' not in authoritative_summary:
             errors.append('completion_reflection_missing_summary_reflection_signal')
     finally:
@@ -3200,6 +3207,13 @@ def _run_completion_reflection_integration_checks() -> Dict[str, object]:
             }
             for item in errors
         ),
+        'outcome_scorecard_contract': not any(
+            item in {
+                'completion_reflection_missing_outcome_scorecard',
+                'completion_reflection_invalid_outcome_scorecard',
+            }
+            for item in errors
+        ),
         'reflection_report_contract': not any(
             item in {
                 'completion_reflection_missing_reflection_report',
@@ -3211,6 +3225,7 @@ def _run_completion_reflection_integration_checks() -> Dict[str, object]:
         'authoritative_summary_visibility_contract': not any(
             item in {
                 'completion_reflection_missing_summary_outcome_signal',
+                'completion_reflection_missing_summary_scorecard_signal',
                 'completion_reflection_missing_summary_reflection_signal',
             }
             for item in errors
@@ -3577,8 +3592,9 @@ def _run_transport_binding_integration_checks() -> Dict[str, object]:
     if 'bind_transport_message(' not in enforcer_source:
         errors.append('brain_enforcer_missing_shared_kernel_call')
 
-    telegram_conversation_id = 'doctor-transport-binding-telegram'
-    direct_conversation_id = 'doctor-transport-binding-openclaw-main'
+    unique_suffix = re.sub(r'[^0-9a-z]+', '-', _utc_now_iso().lower()).strip('-')
+    telegram_conversation_id = f'doctor-transport-binding-telegram-{unique_suffix}'
+    direct_conversation_id = f'doctor-transport-binding-openclaw-main-{unique_suffix}'
     telegram_result = bind_transport_message(
         provider='telegram',
         conversation_id=telegram_conversation_id,
