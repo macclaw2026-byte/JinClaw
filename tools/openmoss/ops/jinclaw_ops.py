@@ -91,6 +91,7 @@ DOCTOR_REQUIRED_COMPLETION_REFLECTION_CONTRACTS = (
 DOCTOR_REQUIRED_GOAL_CONTINUATION_CONTRACTS = (
     "goal_continuation_contract",
     "terminal_reopen_gate_contract",
+    "scheduled_delivery_continuation_contract",
     "authoritative_summary_visibility_contract",
 )
 DOCTOR_REQUIRED_CAPABILITY_GAP_CONTRACTS = (
@@ -544,6 +545,7 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
             "goal_continuation": {
                 "goal_continuation_contract": bool((integration_health.get("goal_continuation", {}) or {}).get("goal_continuation_contract")),
                 "terminal_reopen_gate_contract": bool((integration_health.get("goal_continuation", {}) or {}).get("terminal_reopen_gate_contract")),
+                "scheduled_delivery_continuation_contract": bool((integration_health.get("goal_continuation", {}) or {}).get("scheduled_delivery_continuation_contract")),
                 "authoritative_summary_visibility_contract": bool((integration_health.get("goal_continuation", {}) or {}).get("authoritative_summary_visibility_contract")),
             },
             "capability_gap": {

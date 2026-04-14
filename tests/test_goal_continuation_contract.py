@@ -89,6 +89,57 @@ class GoalContinuationContractTest(unittest.TestCase):
         self.assertIn('pr_opened', continuation.get('non_terminal_milestones', []))
         self.assertIn('Continuation is still required', snapshot.get('authoritative_summary', ''))
 
+    def test_periodic_delivery_stays_alive_after_a_successful_cycle(self):
+        contract = TaskContract(
+            task_id=self.task_id,
+            user_goal='Send a verified daily report without silently terminating after one successful delivery.',
+            done_definition='Task remains scheduled for the next delivery window.',
+            stages=[
+                StageContract(name='understand', goal='understand'),
+                StageContract(name='plan', goal='plan'),
+                StageContract(name='execute', goal='execute'),
+                StageContract(name='verify', goal='verify'),
+                StageContract(name='learn', goal='learn'),
+            ],
+        )
+        create_task_from_contract(contract)
+        state = load_state(self.task_id)
+        state.status = 'completed'
+        state.current_stage = 'learn'
+        state.next_action = 'noop'
+        for name in state.stage_order:
+            stage = state.stages.get(name)
+            self.assertIsNotNone(stage)
+            stage.status = 'completed'
+            stage.summary = f'{name} completed for daily delivery'
+        state.metadata['business_outcome'] = {
+            'goal_satisfied': True,
+            'user_visible_result_confirmed': True,
+            'proof_summary': 'daily delivery proof exists',
+        }
+        state.metadata['delivery_schedule'] = {
+            'cadence': 'daily',
+        }
+        save_state(state)
+
+        reopened = _enforce_goal_continuation_gate(self.task_id)
+        self.assertIsNotNone(reopened)
+        self.assertEqual(reopened['action'], 'goal_continuation_reopened_for_scheduled_delivery')
+
+        state = load_state(self.task_id)
+        self.assertEqual(state.status, 'blocked')
+        self.assertEqual(state.current_stage, 'execute')
+        self.assertEqual(state.next_action, 'await_scheduled_delivery_window')
+
+        snapshot = build_task_status_snapshot(self.task_id)
+        continuation = snapshot.get('goal_continuation', {}) or {}
+        self.assertTrue(continuation.get('enabled'))
+        self.assertTrue(continuation.get('continuation_required'))
+        self.assertTrue(continuation.get('periodic_delivery'))
+        self.assertTrue(continuation.get('scheduled_followthrough_required'))
+        self.assertEqual(continuation.get('delivery_cadence'), 'daily')
+        self.assertIn('scheduled_delivery_followthrough_required', continuation.get('non_terminal_reasons', []))
+
 
 if __name__ == '__main__':
     unittest.main()

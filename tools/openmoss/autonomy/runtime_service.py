@@ -2017,35 +2017,73 @@ def _enforce_goal_continuation_gate(task_id: str) -> dict | None:
     """
     contract = load_contract(task_id)
     control_center = (contract.metadata.get("control_center", {}) or {})
-    if not bool(control_center.get("strict_continuation_required")):
-        return None
+    strict_continuation_required = bool(control_center.get("strict_continuation_required"))
     state = load_state(task_id)
-    if state.status != "completed" or _goal_completion_proof_ready(task_id):
+    delivery_schedule = (state.metadata.get("delivery_schedule", {}) or {})
+    delivery_cadence = str(delivery_schedule.get("cadence", "")).strip()
+    periodic_delivery = delivery_cadence not in {"", "once", "event_driven"}
+    if not (strict_continuation_required or periodic_delivery):
         return None
-    verify_stage = state.stages.get("verify")
-    if verify_stage:
-        verify_stage.status = "pending"
-        verify_stage.summary = ""
-        verify_stage.verification_status = "not-run"
-        verify_stage.blocker = ""
-        verify_stage.completed_at = ""
-        verify_stage.updated_at = utc_now_iso()
-    state.status = "planning"
-    state.current_stage = "verify" if verify_stage else state.current_stage
-    state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+    if state.status != "completed":
+        return None
+    proof_ready = _goal_completion_proof_ready(task_id)
+    if strict_continuation_required and not proof_ready:
+        verify_stage = state.stages.get("verify")
+        if verify_stage:
+            verify_stage.status = "pending"
+            verify_stage.summary = ""
+            verify_stage.verification_status = "not-run"
+            verify_stage.blocker = ""
+            verify_stage.completed_at = ""
+            verify_stage.updated_at = utc_now_iso()
+        state.status = "planning"
+        state.current_stage = "verify" if verify_stage else state.current_stage
+        state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+        state.blockers = list(
+            dict.fromkeys([*state.blockers, "strict continuation requires goal-completion proof before terminal completion"])
+        )
+        state.metadata.pop("completion_notice_sent", None)
+        state.last_update_at = utc_now_iso()
+        save_state(state)
+        log_event(task_id, "goal_continuation_reopened_for_missing_goal_proof")
+        return {
+            "task_id": task_id,
+            "status": state.status,
+            "current_stage": state.current_stage,
+            "next_action": state.next_action,
+            "action": "goal_continuation_reopened_for_missing_goal_proof",
+        }
+    if not periodic_delivery or not proof_ready:
+        return None
+    execute_stage = state.stages.get("execute")
+    if execute_stage:
+        execute_stage.status = "pending"
+        execute_stage.summary = ""
+        execute_stage.completed_at = ""
+        execute_stage.updated_at = utc_now_iso()
+    state.status = "blocked"
+    state.current_stage = "execute" if execute_stage else state.current_stage
+    state.next_action = "await_scheduled_delivery_window"
     state.blockers = list(
-        dict.fromkeys([*state.blockers, "strict continuation requires goal-completion proof before terminal completion"])
+        dict.fromkeys(
+            [
+                *state.blockers,
+                f"scheduled delivery cadence {delivery_cadence or 'periodic'} keeps this task active for the next delivery window",
+            ]
+        )
     )
     state.metadata.pop("completion_notice_sent", None)
+    _sync_blocked_runtime_metadata(state)
     state.last_update_at = utc_now_iso()
     save_state(state)
-    log_event(task_id, "goal_continuation_reopened_for_missing_goal_proof")
+    log_event(task_id, "goal_continuation_reopened_for_scheduled_delivery", delivery_schedule=delivery_schedule)
     return {
         "task_id": task_id,
         "status": state.status,
         "current_stage": state.current_stage,
         "next_action": state.next_action,
-        "action": "goal_continuation_reopened_for_missing_goal_proof",
+        "action": "goal_continuation_reopened_for_scheduled_delivery",
+        "delivery_schedule": delivery_schedule,
     }
 
 
@@ -2216,6 +2254,17 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
                 "current_stage": state.current_stage,
                 "next_action": state.next_action,
                 "action": "awaiting_human_guidance",
+                "blocked_runtime_state": blocked_runtime_state,
+                "mission_cycle": mission_cycle,
+            }
+        if state.next_action == "await_scheduled_delivery_window":
+            return {
+                "task_id": task_id,
+                "status": state.status,
+                "current_stage": state.current_stage,
+                "next_action": state.next_action,
+                "action": "awaiting_scheduled_delivery_window",
+                "delivery_schedule": state.metadata.get("delivery_schedule", {}) or {},
                 "blocked_runtime_state": blocked_runtime_state,
                 "mission_cycle": mission_cycle,
             }

@@ -510,6 +510,7 @@ def _build_doctor_coverage_bundle() -> Dict[str, Any]:
                 "doctor_checks": [
                     "goal_continuation_contract",
                     "terminal_reopen_gate",
+                    "scheduled_delivery_continuation_contract",
                     "authoritative_summary_visibility",
                 ],
                 "primary_monitor": "system_doctor.integration_health.goal_continuation",

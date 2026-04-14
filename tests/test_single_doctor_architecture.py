@@ -96,6 +96,7 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertTrue((integration.get('goal_continuation', {}) or {}).get('ok'))
         self.assertTrue((integration.get('goal_continuation', {}) or {}).get('goal_continuation_contract'))
         self.assertTrue((integration.get('goal_continuation', {}) or {}).get('terminal_reopen_gate_contract'))
+        self.assertTrue((integration.get('goal_continuation', {}) or {}).get('scheduled_delivery_continuation_contract'))
         self.assertTrue((integration.get('goal_continuation', {}) or {}).get('authoritative_summary_visibility_contract'))
         self.assertEqual(integration.get('capability_gap_chain'), 'ok')
         self.assertTrue((integration.get('capability_gap', {}) or {}).get('ok'))
