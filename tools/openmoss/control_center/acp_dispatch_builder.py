@@ -26,6 +26,7 @@ def build_acp_dispatch_request(contract: Dict[str, Any], stage_context: Dict[str
     protocol_pack = coding_payload.get('protocol_pack', {}) or {}
     operating_discipline = coding_payload.get('operating_discipline', {}) or {}
     skill_guidance = coding_payload.get('skill_guidance', {}) or {}
+    skill_action_plane = coding_payload.get('skill_action_plane', {}) or {}
     acquisition_hand = coding_payload.get('acquisition_hand', {}) or {}
     response_handoff = coding_payload.get('response_handoff', {}) or {}
     metadata = contract.get('metadata', {}) or {}
@@ -60,6 +61,9 @@ def build_acp_dispatch_request(contract: Dict[str, Any], stage_context: Dict[str
             'operating_discipline_rules': (operating_discipline.get('enabled_rule_keys', []) or [])[:10],
             'skill_guidance_enabled': bool(skill_guidance.get('enabled')),
             'matched_skill_names': skill_guidance.get('matched_skill_names', []),
+            'skill_action_plane_enabled': bool(skill_action_plane.get('enabled')),
+            'preferred_skill_name': str(skill_action_plane.get('preferred_skill_name', '')),
+            'preferred_skill_action_id': str(skill_action_plane.get('preferred_action_id', '')),
             'acquisition_enabled': bool(acquisition_hand.get('enabled')),
             'acquisition_primary_route': str(((acquisition_hand.get('summary', {}) or {}).get('primary_route', {}) or {}).get('route_id', '')),
             'response_handoff_status': str(response_handoff.get('status', '')),

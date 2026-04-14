@@ -69,8 +69,10 @@ class RuntimeDispatchPromptIntegrationTest(unittest.TestCase):
         )
         prompt = _dispatch_prompt('runtime-dispatch-ziniao-integration', 'execute')
         self.assertIn('skill_guidance:', prompt)
+        self.assertIn('skill_action_plane:', prompt)
         self.assertIn('GET /zclaw/tools', prompt)
         self.assertIn('ziniao-assistant', prompt)
+        self.assertIn('temu_finance_export_history_confirmation', prompt)
 
 
 if __name__ == '__main__':

@@ -64,6 +64,9 @@ class ZiniaoSkillPlanningTest(unittest.TestCase):
         self.assertTrue(cc['skill_guidance']['enabled'])
         self.assertIn('ziniao-assistant', cc['skill_guidance']['matched_skill_names'])
         self.assertTrue(cc['skill_guidance']['matched_skills'][0]['reference_paths'])
+        self.assertTrue(cc['skill_action_plane']['enabled'])
+        self.assertEqual(cc['skill_action_plane']['preferred_skill_name'], 'ziniao-assistant')
+        self.assertEqual(cc['skill_action_plane']['preferred_action_id'], 'temu_finance_export_history_confirmation')
         self.assertIn('curl', package['allowed_tools'])
 
     def test_runtime_dispatch_prompt_includes_skill_guidance_for_non_coding_ziniao_task(self):
@@ -74,8 +77,10 @@ class ZiniaoSkillPlanningTest(unittest.TestCase):
         prompt = _dispatch_prompt('test-ziniao-dispatch', 'execute')
         self.assertIn('[Autonomy runtime execution request]', prompt)
         self.assertIn('skill_guidance:', prompt)
+        self.assertIn('skill_action_plane:', prompt)
         self.assertIn('GET /zclaw/tools', prompt)
         self.assertIn('ziniao-assistant', prompt)
+        self.assertIn('temu_finance_export_history_confirmation', prompt)
         contract = {
             'user_goal': package['goal'],
             'done_definition': package['done_definition'],
@@ -95,9 +100,13 @@ class ZiniaoSkillPlanningTest(unittest.TestCase):
         payload = build_coding_session_payload(contract, context)
         request = build_acp_dispatch_request(contract, context)
         self.assertTrue(context['skill_guidance']['enabled'])
+        self.assertTrue(context['skill_action_plane']['enabled'])
         self.assertIn('Skill guidance:', payload['base_prompt'])
+        self.assertIn('Skill action plane:', payload['base_prompt'])
         self.assertTrue(request['metadata']['skill_guidance_enabled'])
+        self.assertTrue(request['metadata']['skill_action_plane_enabled'])
         self.assertIn('ziniao-assistant', request['metadata']['matched_skill_names'])
+        self.assertEqual(request['metadata']['preferred_skill_action_id'], 'temu_finance_export_history_confirmation')
 
     def test_marketplace_without_image_no_longer_forces_image_pipeline(self):
         package = build_control_center_package(

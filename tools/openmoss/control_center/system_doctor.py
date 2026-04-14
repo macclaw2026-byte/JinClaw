@@ -135,6 +135,15 @@ CAPABILITY_GAP_REQUIRED_FILES = [
     WORKSPACE_ROOT / 'tools/openmoss/control_center/task_status_snapshot.py',
     WORKSPACE_ROOT / 'tools/openmoss/control_center/system_doctor.py',
 ]
+SKILL_ACTION_PLANE_REQUIRED_FILES = [
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/orchestrator.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/context_builder.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/coding_session_adapter.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/acp_dispatch_builder.py',
+    WORKSPACE_ROOT / 'tools/openmoss/autonomy/action_executor.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/task_status_snapshot.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/system_doctor.py',
+]
 GSTACK_LIFECYCLE = ['think', 'plan', 'build', 'review', 'test', 'ship', 'reflect']
 DOCTOR_RESOLUTION_REQUIRED_FIELDS = [
     "scope",
@@ -3423,6 +3432,123 @@ def _run_capability_gap_integration_checks() -> Dict[str, object]:
     }
 
 
+def _run_skill_action_plane_integration_checks() -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：验证 skill action plane 已经从 orchestrator 贯通到 runtime prompt、dispatch metadata 和 authoritative snapshot。
+    - 输入角色：消费 ziniao skill 的控制中心包、stage context、dispatch request 与 snapshot。
+    - 输出角色：供 canonical doctor 判断技能是否已从提示升级为可执行合同。
+    """
+    errors = []
+    for path in SKILL_ACTION_PLANE_REQUIRED_FILES:
+        if not path.exists():
+            errors.append(f'missing_required_file:{path}')
+
+    if str(CONTROL_CENTER_ROOT) not in sys.path:
+        sys.path.insert(0, str(CONTROL_CENTER_ROOT))
+    if str(AUTONOMY_DIR) not in sys.path:
+        sys.path.insert(0, str(AUTONOMY_DIR))
+
+    from context_builder import build_stage_context
+    from coding_session_adapter import build_coding_session_payload
+    from acp_dispatch_builder import build_acp_dispatch_request
+    from action_executor import _dispatch_prompt
+
+    task_id = 'doctor-skill-action-plane-contract'
+    task_path = task_dir(task_id)
+    try:
+        if task_path.exists():
+            shutil.rmtree(task_path, ignore_errors=True)
+        package = build_control_center_package(
+            task_id,
+            '用 ziniao 浏览器打开 Temu 店铺后台，进入对账中心并导出三月份账务明细，在导出历史确认结果',
+            source='system-doctor',
+        )
+        control_center = (package.get('metadata', {}) or {}).get('control_center', {}) or {}
+        skill_action_plane = control_center.get('skill_action_plane', {}) or {}
+        if not bool(skill_action_plane.get('enabled')):
+            errors.append('skill_action_plane_missing_package_contract')
+        if str(skill_action_plane.get('preferred_skill_name', '')).strip() != 'ziniao-assistant':
+            errors.append('skill_action_plane_missing_preferred_skill')
+        if str(skill_action_plane.get('preferred_action_id', '')).strip() != 'temu_finance_export_history_confirmation':
+            errors.append('skill_action_plane_missing_preferred_action')
+
+        contract = TaskContract.from_dict({
+            'task_id': task_id,
+            'user_goal': package['goal'],
+            'done_definition': package['done_definition'],
+            'allowed_tools': package.get('allowed_tools', []),
+            'forbidden_actions': package.get('forbidden_actions', []),
+            'stages': package['stages'],
+            'metadata': package['metadata'],
+        })
+        create_task_from_contract(contract)
+        state = {
+            'current_stage': 'execute',
+            'status': 'running',
+            'next_action': 'start_stage:execute',
+            'blockers': [],
+            'stages': {'execute': {'attempts': 1, 'completed_subtasks': []}},
+            'metadata': {},
+        }
+        stage_context = build_stage_context(task_id, 'execute', contract.to_dict(), state)
+        if not bool((stage_context.get('skill_action_plane', {}) or {}).get('enabled')):
+            errors.append('skill_action_plane_missing_stage_context')
+        payload = build_coding_session_payload(contract.to_dict(), stage_context)
+        if 'Skill action plane:' not in str(payload.get('base_prompt', '')):
+            errors.append('skill_action_plane_missing_base_prompt_attachment')
+        request = build_acp_dispatch_request(contract.to_dict(), stage_context)
+        request_meta = request.get('metadata', {}) or {}
+        if not bool(request_meta.get('skill_action_plane_enabled')):
+            errors.append('skill_action_plane_missing_dispatch_enable_marker')
+        if str(request_meta.get('preferred_skill_action_id', '')).strip() != 'temu_finance_export_history_confirmation':
+            errors.append('skill_action_plane_missing_dispatch_action_id')
+        runtime_prompt = _dispatch_prompt(task_id, 'execute')
+        if 'skill_action_plane:' not in runtime_prompt:
+            errors.append('skill_action_plane_missing_runtime_prompt_contract')
+        if 'temu_finance_export_history_confirmation' not in runtime_prompt:
+            errors.append('skill_action_plane_missing_runtime_prompt_action_id')
+        snapshot = build_task_status_snapshot(task_id)
+        if not bool((snapshot.get('skill_action_plane', {}) or {}).get('enabled')):
+            errors.append('skill_action_plane_missing_snapshot_contract')
+        if 'Skill action plane prefers' not in str(snapshot.get('authoritative_summary', '')).strip():
+            errors.append('skill_action_plane_missing_summary_signal')
+    finally:
+        if task_path.exists():
+            shutil.rmtree(task_path, ignore_errors=True)
+
+    return {
+        'single_doctor_rule': True,
+        'authoritative_doctor': 'tools/openmoss/control_center/system_doctor.py',
+        'required_files_checked': len(SKILL_ACTION_PLANE_REQUIRED_FILES),
+        'required_files': [str(path.relative_to(WORKSPACE_ROOT)) for path in SKILL_ACTION_PLANE_REQUIRED_FILES],
+        'skill_action_plane_contract': not any(
+            item in {
+                'skill_action_plane_missing_package_contract',
+                'skill_action_plane_missing_preferred_skill',
+                'skill_action_plane_missing_preferred_action',
+                'skill_action_plane_missing_stage_context',
+                'skill_action_plane_missing_snapshot_contract',
+            }
+            for item in errors
+        ),
+        'runtime_prompt_attachment_contract': not any(
+            item in {
+                'skill_action_plane_missing_base_prompt_attachment',
+                'skill_action_plane_missing_dispatch_enable_marker',
+                'skill_action_plane_missing_dispatch_action_id',
+                'skill_action_plane_missing_runtime_prompt_contract',
+                'skill_action_plane_missing_runtime_prompt_action_id',
+            }
+            for item in errors
+        ),
+        'authoritative_summary_visibility_contract': 'skill_action_plane_missing_summary_signal' not in errors,
+        'skill_action_plane_chain': 'ok' if not errors else 'error',
+        'errors': errors,
+        'ok': not errors,
+    }
+
+
 def _run_integration_health_checks() -> Dict[str, object]:
     """
     中文注解：
@@ -3439,6 +3565,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
     completion_reflection = _run_completion_reflection_integration_checks()
     goal_continuation = _run_goal_continuation_integration_checks()
     capability_gap = _run_capability_gap_integration_checks()
+    skill_action_plane = _run_skill_action_plane_integration_checks()
     errors = (
         list(gstack.get('errors', []) or [])
         + list(acquisition_hand.get('errors', []) or [])
@@ -3449,6 +3576,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         + list(completion_reflection.get('errors', []) or [])
         + list(goal_continuation.get('errors', []) or [])
         + list(capability_gap.get('errors', []) or [])
+        + list(skill_action_plane.get('errors', []) or [])
     )
     return {
         'single_doctor_rule': True,
@@ -3462,7 +3590,8 @@ def _run_integration_health_checks() -> Dict[str, object]:
         + int(execution_events.get('required_files_checked', 0) or 0)
         + int(completion_reflection.get('required_files_checked', 0) or 0)
         + int(goal_continuation.get('required_files_checked', 0) or 0)
-        + int(capability_gap.get('required_files_checked', 0) or 0),
+        + int(capability_gap.get('required_files_checked', 0) or 0)
+        + int(skill_action_plane.get('required_files_checked', 0) or 0),
         'lifecycle': GSTACK_LIFECYCLE,
         'gstack': gstack,
         'acquisition_hand': acquisition_hand,
@@ -3473,6 +3602,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         'completion_reflection': completion_reflection,
         'goal_continuation': goal_continuation,
         'capability_gap': capability_gap,
+        'skill_action_plane': skill_action_plane,
         'coding_chain': gstack.get('coding_chain', 'unknown'),
         'noncoding_chain': gstack.get('noncoding_chain', 'unknown'),
         'acquisition_chain': acquisition_hand.get('acquisition_chain', 'unknown'),
@@ -3483,6 +3613,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         'completion_reflection_chain': completion_reflection.get('completion_reflection_chain', 'unknown'),
         'goal_continuation_chain': goal_continuation.get('goal_continuation_chain', 'unknown'),
         'capability_gap_chain': capability_gap.get('capability_gap_chain', 'unknown'),
+        'skill_action_plane_chain': skill_action_plane.get('skill_action_plane_chain', 'unknown'),
         'errors': errors,
         'ok': (
             bool(gstack.get('ok'))
@@ -3494,6 +3625,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
             and bool(completion_reflection.get('ok'))
             and bool(goal_continuation.get('ok'))
             and bool(capability_gap.get('ok'))
+            and bool(skill_action_plane.get('ok'))
         ),
     }
 

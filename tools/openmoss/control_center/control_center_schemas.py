@@ -843,6 +843,68 @@ def build_capability_gap_schema(
     }
 
 
+def build_skill_action_contract_schema(
+    *,
+    action_id: str = "",
+    skill_name: str = "",
+    scenario: str = "",
+    when_to_use: str = "",
+    required_tools: List[str] | None = None,
+    prerequisites: List[str] | None = None,
+    execution_steps: List[str] | None = None,
+    verification_recipe: List[str] | None = None,
+    fallback_ladder: List[str] | None = None,
+    stop_conditions: List[str] | None = None,
+    evidence_requirements: List[str] | None = None,
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：构造 skill action contract schema。
+    - 设计意图：把 skill 从“提示性 guidance”升级成可执行动作合同，让 runtime/doctor 可以消费统一结构。
+    """
+    return {
+        "action_id": str(action_id).strip(),
+        "skill_name": str(skill_name).strip(),
+        "scenario": str(scenario).strip(),
+        "when_to_use": str(when_to_use).strip(),
+        "required_tools": list(required_tools or []),
+        "prerequisites": list(prerequisites or []),
+        "execution_steps": list(execution_steps or []),
+        "verification_recipe": list(verification_recipe or []),
+        "fallback_ladder": list(fallback_ladder or []),
+        "stop_conditions": list(stop_conditions or []),
+        "evidence_requirements": list(evidence_requirements or []),
+    }
+
+
+def build_skill_action_plane_schema(
+    *,
+    enabled: bool = False,
+    preferred_skill_name: str = "",
+    preferred_action_id: str = "",
+    matched_skill_names: List[str] | None = None,
+    action_contracts: List[Dict[str, Any]] | None = None,
+    runtime_rules: List[str] | None = None,
+    verification_priority: str = "",
+    contract_source: str = "",
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：构造 skill action plane schema。
+    - 设计意图：把 skill 附着、动作、验收和 fallback 统一成一个 transport-neutral 的执行平面合同。
+    """
+    return {
+        "enabled": bool(enabled),
+        "preferred_skill_name": str(preferred_skill_name).strip(),
+        "preferred_action_id": str(preferred_action_id).strip(),
+        "matched_skill_names": list(matched_skill_names or []),
+        "action_contracts": list(action_contracts or []),
+        "runtime_rules": list(runtime_rules or []),
+        "verification_priority": str(verification_priority).strip(),
+        "contract_source": str(contract_source).strip(),
+    }
+
+
 def build_acquisition_answer_synthesis_schema(
     *,
     scope: str = "site",

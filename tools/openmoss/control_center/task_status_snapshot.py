@@ -600,6 +600,7 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
     capability_gap = snapshot.get("capability_gap", {}) or {}
     outcome_evaluation = snapshot.get("outcome_evaluation", {}) or {}
     reflection_report = snapshot.get("reflection_report", {}) or {}
+    skill_action_plane = snapshot.get("skill_action_plane", {}) or {}
     execution_suffix = ""
     if bool(execution_handoff.get("enabled")):
         handoff_status = str(execution_handoff.get("handoff_status", "")).strip()
@@ -652,6 +653,12 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
         )
         if str(capability_gap.get("missing_dependency", "")).strip():
             capability_gap_suffix += f" Missing dependency is {str(capability_gap.get('missing_dependency', '')).strip()}."
+    skill_action_suffix = ""
+    if bool(skill_action_plane.get("enabled")):
+        skill_action_suffix += (
+            f" Skill action plane prefers {str(skill_action_plane.get('preferred_action_id', '')).strip() or 'unknown_action'}"
+            f" via {str(skill_action_plane.get('preferred_skill_name', '')).strip() or 'unknown_skill'}."
+        )
     if business.get("goal_satisfied") is True and business.get("user_visible_result_confirmed") is True:
         return (
             f"Authoritative task state says {task_id} is completed. "
@@ -661,6 +668,7 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
             f"{completion_suffix}"
             f"{continuation_suffix}"
             f"{capability_gap_suffix}"
+            f"{skill_action_suffix}"
         ).strip()
     if diagnosis and diagnosis != "none":
         return (
@@ -672,6 +680,7 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
             f"{completion_suffix}"
             f"{continuation_suffix}"
             f"{capability_gap_suffix}"
+            f"{skill_action_suffix}"
         ).strip()
     return (
         f"Authoritative task state says {task_id} is {status or 'unknown'} "
@@ -681,6 +690,7 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
         f"{completion_suffix}"
         f"{continuation_suffix}"
         f"{capability_gap_suffix}"
+        f"{skill_action_suffix}"
     ).strip()
 
 
@@ -741,6 +751,7 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
         "governance": governance,
         "control_center_governance": control_center.get("governance", {}),
         "protocol_pack": control_center.get("protocol_pack", {}),
+        "skill_action_plane": control_center.get("skill_action_plane", {}) or {},
         "plan_reviews": control_center.get("plan_reviews", {}),
         "readiness_dashboard": control_center.get("readiness_dashboard", {}),
         "outcome_evaluation": ((state.get("metadata", {}) or {}).get("outcome_evaluation", {}) or {}),
@@ -792,6 +803,7 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
         "execution_handoff": snapshot.get("execution_handoff", {}),
         "goal_continuation": snapshot.get("goal_continuation", {}),
         "capability_gap": snapshot.get("capability_gap", {}),
+        "skill_action_plane": snapshot.get("skill_action_plane", {}),
         "completion_reflection": {
             "outcome_evaluation_enabled": bool((snapshot.get("outcome_evaluation", {}) or {}).get("enabled")),
             "reflection_report_enabled": bool((snapshot.get("reflection_report", {}) or {}).get("enabled")),

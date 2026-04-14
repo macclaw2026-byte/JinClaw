@@ -417,6 +417,7 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
         f"operating_discipline: {json.dumps(stage_context.get('operating_discipline', {}), ensure_ascii=False)}",
         f"protocol_pack: {json.dumps(stage_context.get('protocol_pack', {}), ensure_ascii=False)}",
         f"skill_guidance: {json.dumps(stage_context.get('skill_guidance', {}), ensure_ascii=False)}",
+        f"skill_action_plane: {json.dumps(stage_context.get('skill_action_plane', {}), ensure_ascii=False)}",
         f"knowledge_basis: {json.dumps(stage_context.get('knowledge_basis', {}), ensure_ascii=False)}",
         f"readiness_dashboard: {json.dumps(stage_context.get('readiness_dashboard', {}), ensure_ascii=False)}",
         f"acquisition_hand: {json.dumps(stage_context.get('acquisition_hand', {}), ensure_ascii=False)}",
@@ -435,10 +436,26 @@ def _dispatch_prompt(task_id: str, stage_name: str) -> str:
     ]
     batch_focus = stage_context.get("batch_focus", {}) or {}
     skill_guidance = stage_context.get("skill_guidance", {}) or {}
+    skill_action_plane = stage_context.get("skill_action_plane", {}) or {}
     if skill_guidance.get("enabled"):
         prompt_lines.append("Local skill execution rule: when matched skill guidance exists, follow it before generic browser experimentation.")
         for line in [str(item).strip() for item in (skill_guidance.get("runtime_prompt_lines", []) or []) if str(item).strip()][:6]:
             prompt_lines.append(f"Local skill rule: {line}")
+    if skill_action_plane.get("enabled"):
+        prompt_lines.append("Skill action plane rule: treat the preferred skill action contract as the default execution path for this task.")
+        prompt_lines.append(
+            f"Skill action plane preferred contract: {str(skill_action_plane.get('preferred_action_id', '')).strip()} via {str(skill_action_plane.get('preferred_skill_name', '')).strip()}."
+        )
+        for action_contract in (skill_action_plane.get("action_contracts", []) or [])[:2]:
+            action_id = str(action_contract.get("action_id", "")).strip()
+            if not action_id:
+                continue
+            prompt_lines.append(
+                f"Skill action contract {action_id} steps: {json.dumps((action_contract.get('execution_steps', []) or [])[:5], ensure_ascii=False)}"
+            )
+            prompt_lines.append(
+                f"Skill action contract {action_id} verification: {json.dumps((action_contract.get('verification_recipe', []) or [])[:4], ensure_ascii=False)}"
+            )
     normalized_goal = str(stage_context.get("goal", contract.user_goal) or "").lower()
     # 下面这些附加规则不是通用提示词噪音，而是 runtime 在已知高风险业务域上
     # 给 agent 增加的“硬约束补丁”，用于压住会重复出现的错误行为。
