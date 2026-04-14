@@ -22,11 +22,11 @@ import time
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from brain_router import route_instruction
 from paths import BRAIN_ROUTES_ROOT
 from route_guardrails import persist_route, reroot_route_if_needed
 from task_receipt_engine import emit_route_receipt, session_has_assistant_reply_after
 from task_status_snapshot import build_task_status_snapshot
+from transport_binding import bind_transport_message
 
 SESSIONS_ROOT = Path("/Users/mac_claw/.openclaw/agents/main/sessions")
 MAIN_SESSION_KEY = "agent:main:main"
@@ -241,7 +241,7 @@ def _route_governance_summary(route: Dict[str, object]) -> Dict[str, object]:
     }
 
 
-def _resolve_route_for_message(latest_user: Dict[str, object]) -> Tuple[Dict[str, object], Path]:
+def _resolve_route_for_message(latest_user: Dict[str, object]) -> Tuple[Dict[str, object], Path, Dict[str, object]]:
     """
     中文注解：
     - 功能：实现 `_resolve_route_for_message` 对应的处理逻辑。
@@ -251,17 +251,21 @@ def _resolve_route_for_message(latest_user: Dict[str, object]) -> Tuple[Dict[str
     route_path = BRAIN_ROUTES_ROOT / "openclaw-main" / "main.json"
     route = _load_json(route_path)
     if str(route.get("message_id", "")) != str(latest_user["message_id"]):
-        route = route_instruction(
+        binding = bind_transport_message(
             provider="openclaw-main",
             conversation_id="main",
             conversation_type="direct",
-            text=str(latest_user["text"]),
-            source="brain_enforcer",
             sender_id="user",
             sender_name="openclaw-user",
             message_id=str(latest_user["message_id"]),
+            text=str(latest_user["text"]),
+            source="brain_enforcer",
             session_key="agent:main:main",
+            emit_receipt=False,
         )
+        route = dict(binding.get("brain_route", {}) or {})
+        route_path = Path(str(binding.get("route_store", "")).strip() or str(route_path))
+        return route, route_path, binding
     route = reroot_route_if_needed(
         route=route,
         provider="openclaw-main",
@@ -271,7 +275,7 @@ def _resolve_route_for_message(latest_user: Dict[str, object]) -> Tuple[Dict[str
         session_key="agent:main:main",
     )
     persist_route("openclaw-main", "main", route)
-    return route, route_path
+    return route, route_path, {}
 
 
 def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
@@ -294,7 +298,7 @@ def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
         "agent:main:main",
         str(latest_prompt_error.get("record_id", "")),
     ) and str(latest_prompt_error.get("record_id", "")) != last_prompt_error_id:
-        route, route_path = _resolve_route_for_message(latest_user)
+        route, route_path, _ = _resolve_route_for_message(latest_user)
         route = dict(route)
         route["mode"] = "authoritative_task_status"
         route["prompt_error"] = latest_prompt_error
@@ -373,7 +377,7 @@ def enforce_brain_first(limit: int = 20) -> Dict[str, object]:
             "route_store": str(route_path),
         }
 
-    route, route_path = _resolve_route_for_message(latest_user)
+    route, route_path, _ = _resolve_route_for_message(latest_user)
     receipt = emit_route_receipt(
         route,
         provider="openclaw-main",

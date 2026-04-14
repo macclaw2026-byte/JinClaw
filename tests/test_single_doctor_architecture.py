@@ -29,6 +29,7 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertIn('goal-continuation-kernel', names)
         self.assertIn('capability-gap-kernel', names)
         self.assertIn('skill-action-plane-kernel', names)
+        self.assertIn('transport-binding-kernel', names)
 
     def test_control_plane_exposes_doctor_coverage(self):
         plane = build_control_plane(stale_after_seconds=300, escalation_after_seconds=900)
@@ -104,6 +105,12 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertTrue((integration.get('skill_action_plane', {}) or {}).get('skill_action_plane_contract'))
         self.assertTrue((integration.get('skill_action_plane', {}) or {}).get('runtime_prompt_attachment_contract'))
         self.assertTrue((integration.get('skill_action_plane', {}) or {}).get('authoritative_summary_visibility_contract'))
+        self.assertEqual(integration.get('transport_binding_chain'), 'ok')
+        self.assertTrue((integration.get('transport_binding', {}) or {}).get('ok'))
+        self.assertTrue((integration.get('transport_binding', {}) or {}).get('shared_transport_binding_contract'))
+        self.assertTrue((integration.get('transport_binding', {}) or {}).get('telegram_binding_delegation_contract'))
+        self.assertTrue((integration.get('transport_binding', {}) or {}).get('openclaw_main_binding_delegation_contract'))
+        self.assertTrue((integration.get('transport_binding', {}) or {}).get('event_chain_parity_contract'))
 
 
 if __name__ == '__main__':
