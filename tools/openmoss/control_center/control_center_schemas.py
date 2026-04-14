@@ -745,6 +745,48 @@ def build_reflection_report_schema(
     }
 
 
+def build_goal_continuation_schema(
+    *,
+    enabled: bool = False,
+    strict_continuation_required: bool = False,
+    continuation_required: bool = False,
+    goal_reached: bool = False,
+    proof_ready: bool = False,
+    stop_condition: str = "",
+    requires_goal_completion_proof: bool = False,
+    treat_pr_as_milestone_only: bool = False,
+    treat_round_as_milestone_only: bool = False,
+    non_terminal_milestones: List[str] | None = None,
+    terminal_boundaries: List[str] | None = None,
+    non_terminal_reasons: List[str] | None = None,
+    next_required_stage: str = "",
+    next_required_action: str = "",
+    contract_source: str = "",
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：构造 goal continuation schema。
+    - 设计意图：把“现在是否仍必须继续推进、哪些里程碑不能当终点”升级成统一合同，避免代理把 PR、单轮修复或局部绿灯误当完成。
+    """
+    return {
+        "enabled": bool(enabled),
+        "strict_continuation_required": bool(strict_continuation_required),
+        "continuation_required": bool(continuation_required),
+        "goal_reached": bool(goal_reached),
+        "proof_ready": bool(proof_ready),
+        "stop_condition": str(stop_condition).strip(),
+        "requires_goal_completion_proof": bool(requires_goal_completion_proof),
+        "treat_pr_as_milestone_only": bool(treat_pr_as_milestone_only),
+        "treat_round_as_milestone_only": bool(treat_round_as_milestone_only),
+        "non_terminal_milestones": list(non_terminal_milestones or []),
+        "terminal_boundaries": list(terminal_boundaries or []),
+        "non_terminal_reasons": list(non_terminal_reasons or []),
+        "next_required_stage": str(next_required_stage).strip(),
+        "next_required_action": str(next_required_action).strip(),
+        "contract_source": str(contract_source).strip(),
+    }
+
+
 def build_acquisition_answer_synthesis_schema(
     *,
     scope: str = "site",

@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from canonical_active_task import resolve_canonical_active_task
-from control_center_schemas import build_acquisition_response_handoff_schema, build_execution_handoff_schema
+from control_center_schemas import build_acquisition_response_handoff_schema, build_execution_handoff_schema, build_goal_continuation_schema
 from conversation_context import load_conversation_focus
 from execution_governor import classify_blocked_runtime_state
 from governance_runtime import build_governance_bundle
@@ -491,6 +491,57 @@ def _build_execution_handoff(snapshot: Dict[str, Any], state: Dict[str, Any]) ->
     )
 
 
+def _build_goal_continuation(contract: Dict[str, Any], snapshot: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：生成“当前是否还必须继续推进”的权威 continuation 合同。
+    - 设计意图：把 PR/测试通过/局部修复视为 milestone，而不是终点，避免 terminal status 被误读成真正完成。
+    """
+    control_center = (contract.get("metadata", {}) or {}).get("control_center", {}) or {}
+    operating_discipline = control_center.get("operating_discipline", {}) or {}
+    completion_guard = operating_discipline.get("completion_guard", {}) or {}
+    strict = bool(control_center.get("strict_continuation_required"))
+    business = snapshot.get("business_outcome", {}) or {}
+    outcome_evaluation = snapshot.get("outcome_evaluation", {}) or {}
+    proof_ready = bool(
+        business.get("goal_satisfied") is True
+        and business.get("user_visible_result_confirmed") is True
+        and str(business.get("proof_summary", "")).strip()
+    )
+    goal_reached = proof_ready or str(outcome_evaluation.get("outcome_status", "")).strip() == "goal_reached"
+    continuation_required = bool(strict and not goal_reached)
+    non_terminal_reasons: List[str] = []
+    if strict:
+        non_terminal_reasons.append("strict_continuation_required")
+    if strict and not proof_ready:
+        non_terminal_reasons.append("goal_completion_proof_missing")
+    if str(state.get("status", "")).strip() == "completed" and continuation_required:
+        non_terminal_reasons.append("terminal_status_without_goal_proof")
+    milestones = (completion_guard.get("non_terminal_milestones", []) or [])
+    next_required_stage = str(state.get("current_stage", "")).strip()
+    next_required_action = str(state.get("next_action", "")).strip()
+    if continuation_required and str(state.get("status", "")).strip() == "completed":
+        next_required_stage = "verify"
+        next_required_action = "start_stage:verify"
+    return build_goal_continuation_schema(
+        enabled=bool(strict or completion_guard),
+        strict_continuation_required=strict,
+        continuation_required=continuation_required,
+        goal_reached=goal_reached,
+        proof_ready=proof_ready,
+        stop_condition=str(completion_guard.get("default_stop_condition", "")).strip(),
+        requires_goal_completion_proof=bool(completion_guard.get("requires_goal_completion_proof")),
+        treat_pr_as_milestone_only=bool(completion_guard.get("treat_pr_as_milestone_only")),
+        treat_round_as_milestone_only=bool(completion_guard.get("treat_round_as_milestone_only")),
+        non_terminal_milestones=milestones,
+        terminal_boundaries=completion_guard.get("terminal_boundaries", []) or [],
+        non_terminal_reasons=non_terminal_reasons,
+        next_required_stage=next_required_stage,
+        next_required_action=next_required_action,
+        contract_source="authoritative_task_state",
+    )
+
+
 def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: Dict[str, Any], browser_signals: Dict[str, Any]) -> str:
     """
     中文注解：
@@ -505,6 +556,7 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
     diagnosis = str(browser_signals.get("diagnosis", "none"))
     acquisition_response = ((snapshot.get("reply_contract", {}) or {}).get("acquisition_response", {}) or {})
     execution_handoff = snapshot.get("execution_handoff", {}) or {}
+    goal_continuation = snapshot.get("goal_continuation", {}) or {}
     outcome_evaluation = snapshot.get("outcome_evaluation", {}) or {}
     reflection_report = snapshot.get("reflection_report", {}) or {}
     execution_suffix = ""
@@ -544,6 +596,13 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
         completion_suffix += (
             f" Reflection report has {len(reflection_report.get('optimization_proposals', []) or [])} optimization proposals."
         )
+    continuation_suffix = ""
+    if bool(goal_continuation.get("enabled")) and bool(goal_continuation.get("continuation_required")):
+        continuation_suffix += (
+            f" Continuation is still required because {', '.join(goal_continuation.get('non_terminal_reasons', []) or ['goal_not_reached'])}."
+        )
+        if str(goal_continuation.get("next_required_action", "")).strip():
+            continuation_suffix += f" Next required action is {str(goal_continuation.get('next_required_action', '')).strip()}."
     if business.get("goal_satisfied") is True and business.get("user_visible_result_confirmed") is True:
         return (
             f"Authoritative task state says {task_id} is completed. "
@@ -551,6 +610,7 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
             f"{execution_suffix}"
             f"{acquisition_suffix}"
             f"{completion_suffix}"
+            f"{continuation_suffix}"
         ).strip()
     if diagnosis and diagnosis != "none":
         return (
@@ -560,6 +620,7 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
             f"{execution_suffix}"
             f"{acquisition_suffix}"
             f"{completion_suffix}"
+            f"{continuation_suffix}"
         ).strip()
     return (
         f"Authoritative task state says {task_id} is {status or 'unknown'} "
@@ -567,6 +628,7 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
         f"{execution_suffix}"
         f"{acquisition_suffix}"
         f"{completion_suffix}"
+        f"{continuation_suffix}"
     ).strip()
 
 
@@ -665,6 +727,7 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
     }
     snapshot["output_attachments"] = _discover_output_attachments(canonical_task_id, state, business)
     snapshot["execution_handoff"] = _build_execution_handoff(snapshot, state)
+    snapshot["goal_continuation"] = _build_goal_continuation(contract, snapshot, state)
     snapshot["reply_contract"] = {
         "must_use_authoritative_snapshot": True,
         "must_prefer_task_state_over_chat_memory": True,
@@ -673,6 +736,7 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
         ),
         "acquisition_response": _build_acquisition_reply_contract(snapshot),
         "execution_handoff": snapshot.get("execution_handoff", {}),
+        "goal_continuation": snapshot.get("goal_continuation", {}),
         "completion_reflection": {
             "outcome_evaluation_enabled": bool((snapshot.get("outcome_evaluation", {}) or {}).get("enabled")),
             "reflection_report_enabled": bool((snapshot.get("reflection_report", {}) or {}).get("enabled")),
