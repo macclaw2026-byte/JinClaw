@@ -14,7 +14,9 @@ from system_doctor import run_system_doctor  # type: ignore
 def main():
     result = run_system_doctor()
     integration = result.get('integration_health', {}) or {}
-    if integration.get('ok'):
+    gstack = integration.get('gstack', {}) or {}
+    compat_ok = bool(integration.get('single_doctor_rule')) and bool(gstack.get('ok'))
+    if compat_ok:
         print('jinclaw-gstack-integration-doctor COMPAT_SHIM_OK')
         print('Delegated to canonical system doctor.')
         print(json.dumps(integration, ensure_ascii=False, indent=2))

@@ -25,6 +25,7 @@ from typing import Dict, Set
 from intent_analyzer import analyze_intent
 from goal_sanitizer import sanitize_goal_text
 from orchestrator import build_control_center_package
+from conversation_context import conversation_focus_path, record_conversation_context
 from paths import BRAIN_ROUTES_ROOT
 from task_status_snapshot import build_task_status_snapshot
 AUTONOMY_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy")
@@ -249,6 +250,19 @@ def reroot_route_if_needed(
     - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
     """
+    def _finalize(updated_route: Dict[str, object]) -> Dict[str, object]:
+        finalized = dict(updated_route)
+        focus = record_conversation_context(
+            finalized,
+            provider=provider,
+            conversation_id=conversation_id,
+            conversation_type=conversation_type,
+            session_key=session_key,
+        )
+        finalized["conversation_focus"] = focus
+        finalized["conversation_focus_path"] = str(conversation_focus_path(provider, conversation_id))
+        return finalized
+
     goal = sanitize_goal_text(goal)
     route_intent = route.get("intent", {}) or analyze_intent(goal, source="route_guardrails:actionability")
     actionable = (
@@ -262,12 +276,12 @@ def reroot_route_if_needed(
         route["authoritative_task_status"] = snapshot
         route["created_task"] = False
         route["attached_existing"] = True
-        return route
+        return _finalize(route)
 
     existing_task_id = str(route.get("task_id", "")).strip()
     predecessor_task_id = str(route.get("predecessor_task_id", "")).strip()
     if not existing_task_id:
-        return route
+        return _finalize(route)
 
     snapshot = build_task_status_snapshot(existing_task_id)
     route = dict(route)
@@ -276,7 +290,7 @@ def reroot_route_if_needed(
         route["mode"] = "authoritative_task_status"
         route["created_task"] = False
         route["attached_existing"] = True
-        return route
+        return _finalize(route)
 
     comparison_task_id = predecessor_task_id or existing_task_id
     current_intent = _extract_current_intent(comparison_task_id) or _extract_current_intent(str(route.get("lineage_root_task_id", "")).strip())
@@ -284,7 +298,7 @@ def reroot_route_if_needed(
     current_contract = _safe_contract(comparison_task_id)
     current_goal = str(current_contract.user_goal if current_contract else "")
     if not _topic_diverged(current_intent, new_intent, current_goal, goal):
-        return route
+        return _finalize(route)
 
     new_task_id = _next_root_task_id(goal)
     if predecessor_task_id:
@@ -336,4 +350,4 @@ def reroot_route_if_needed(
     route["task_id"] = new_task_id
     route["lineage_root_task_id"] = new_task_id
     route["link_path"] = link_path
-    return route
+    return _finalize(route)

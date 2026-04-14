@@ -34,6 +34,7 @@ from execution_governor import should_prefer_governance_status_reply, summarize_
 from intent_analyzer import analyze_intent
 from mission_profiles import detect_root_mission_profile
 from orchestrator import build_control_center_package
+from conversation_context import build_instruction_envelope, conversation_focus_path, load_conversation_focus, record_conversation_context, write_instruction_envelope
 from paths import BRAIN_ROUTES_ROOT
 from task_status_snapshot import build_task_status_snapshot
 from task_alias_registry import resolve_task_selector
@@ -654,13 +655,46 @@ def route_instruction(
     - 调用关系：Telegram / 主会话入口先调用这里，后续 receipt engine、runtime、doctor 都依赖这里写回的 task_id 和 link。
     """
     raw_goal = _strip_transport_wrapper(text)
+    prior_focus = load_conversation_focus(provider, conversation_id)
+    recovered_from_focus = False
     explicit_task_selector = _extract_explicit_task_selector(raw_goal)
     goal = str((explicit_task_selector or {}).get("remaining_text", "")).strip() if explicit_task_selector else raw_goal
-    goal_for_intent = goal or raw_goal
+    existing = read_link(provider, conversation_id)
+    if not existing and str(prior_focus.get("current_task_id", "")).strip():
+        focused_task_id = str(prior_focus.get("current_task_id", "")).strip()
+        if contract_path(focused_task_id).exists():
+            existing = {
+                "provider": provider,
+                "conversation_id": conversation_id,
+                "conversation_type": conversation_type,
+                "task_id": focused_task_id,
+                "goal": str(prior_focus.get("current_goal", "")).strip(),
+                "last_goal": str(prior_focus.get("current_goal", "")).strip(),
+                "lineage_root_task_id": str(prior_focus.get("lineage_root_task_id", "")).strip(),
+                "session_key": str(session_key or prior_focus.get("session_key", "")).strip(),
+                "restored_from_conversation_focus": True,
+            }
+            recovered_from_focus = True
+    instruction_envelope = build_instruction_envelope(
+        provider=provider,
+        conversation_id=conversation_id,
+        conversation_type=conversation_type,
+        source=source,
+        raw_text=text,
+        cleaned_text=raw_goal,
+        goal_text=goal or raw_goal,
+        message_id=message_id,
+        sender_id=sender_id,
+        sender_name=sender_name,
+        session_key=session_key,
+        existing_link=existing,
+        prior_focus=prior_focus,
+    )
+    envelope_path = write_instruction_envelope(provider, conversation_id, instruction_envelope)
+    goal_for_intent = str(instruction_envelope.get("contextual_goal", "")).strip() or goal or raw_goal
     intent = analyze_intent(goal_for_intent, source=source)
     mission_profile = detect_root_mission_profile(goal_for_intent, intent=intent)
     canonical_project_task = _detect_canonical_project_task(goal_for_intent)
-    existing = read_link(provider, conversation_id)
     route: Dict[str, object] = {
         "routed_at": utc_now_iso(),
         "provider": provider,
@@ -681,7 +715,25 @@ def route_instruction(
         "mission_profile": mission_profile,
         "canonical_project_task": canonical_project_task,
         "explicit_task_selector": explicit_task_selector or {},
+        "instruction_envelope": instruction_envelope,
+        "instruction_envelope_path": envelope_path,
+        "conversation_focus_used": bool(prior_focus),
+        "focus_restored_link": recovered_from_focus,
     }
+
+    def _finalize_route(updated_route: Dict[str, object]) -> Dict[str, object]:
+        finalized = dict(updated_route)
+        finalized["route_path"] = _write_json(BRAIN_ROUTES_ROOT / provider / f"{conversation_id}.json", finalized)
+        focus = record_conversation_context(
+            finalized,
+            provider=provider,
+            conversation_id=conversation_id,
+            conversation_type=conversation_type,
+            session_key=session_key,
+        )
+        finalized["conversation_focus"] = focus
+        finalized["conversation_focus_path"] = str(conversation_focus_path(provider, conversation_id))
+        return finalized
 
     if provider == "openclaw-main" and conversation_id == "main" and source == "brain_enforcer" and _is_heartbeat_probe(raw_goal):
         selected_task_id = _resolve_linked_active_task_id(str(existing.get("task_id", ""))) if existing else ""
@@ -694,8 +746,7 @@ def route_instruction(
             snapshot = build_task_status_snapshot(selected_task_id)
             route["authoritative_task_status"] = snapshot
             route["governance_attention"] = summarize_snapshot_governance(snapshot)
-        route["route_path"] = _write_json(BRAIN_ROUTES_ROOT / provider / f"{conversation_id}.json", route)
-        return route
+        return _finalize_route(route)
 
     if explicit_task_selector:
         requested_task_ref = str(explicit_task_selector.get("task_id", "")).strip()
@@ -706,8 +757,7 @@ def route_instruction(
             route["mode"] = "explicit_task_not_found"
             route["task_id"] = requested_task_ref
             route["brain_required"] = False
-            route["route_path"] = _write_json(BRAIN_ROUTES_ROOT / provider / f"{conversation_id}.json", route)
-            return route
+            return _finalize_route(route)
 
         matched_by = str(selector_resolution.get("matched_by", "")).strip()
         selected_task_id = requested_task_id
@@ -749,7 +799,10 @@ def route_instruction(
         route["selected_task_group_alias"] = str(selector_resolution.get("task_group_alias", "")).strip()
         route["attached_existing"] = bool(existing)
 
-        explicit_status_query = not goal or (_looks_like_status_query(goal) and not _looks_actionable(goal, intent))
+        explicit_status_query = not goal or (
+            str(instruction_envelope.get("explicit_intent_type", "")).strip() == "status_followup"
+            or (_looks_like_status_query(goal) and not _looks_actionable(goal, intent))
+        )
         if explicit_status_query:
             snapshot = build_task_status_snapshot(selected_task_id)
             route["mode"] = "authoritative_task_status"
@@ -759,8 +812,7 @@ def route_instruction(
             route["mode"] = "append_to_existing_task"
 
         route["link_path"] = write_link(provider, conversation_id, payload)
-        route["route_path"] = _write_json(BRAIN_ROUTES_ROOT / provider / f"{conversation_id}.json", route)
-        return route
+        return _finalize_route(route)
 
     if canonical_project_task:
         canonical_task_id = str(canonical_project_task.get("task_id", "")).strip()
@@ -800,8 +852,7 @@ def route_instruction(
         route["task_id"] = canonical_task_id
         route["attached_existing"] = bool(existing)
         route["link_path"] = write_link(provider, conversation_id, payload)
-        route["route_path"] = _write_json(BRAIN_ROUTES_ROOT / provider / f"{conversation_id}.json", route)
-        return route
+        return _finalize_route(route)
 
     if existing:
         # 如果当前会话已经绑过任务，先把它解析到真正活跃的 canonical task。
@@ -825,8 +876,9 @@ def route_instruction(
         existing["last_sender_id"] = sender_id
         existing["last_sender_name"] = sender_name
         existing["last_goal"] = goal
-        actionable = _looks_actionable(goal, intent)
-        status_query = _looks_like_status_query(goal) and not actionable
+        explicit_intent_type = str(instruction_envelope.get("explicit_intent_type", "")).strip()
+        actionable = explicit_intent_type in {"continue_current_task", "contextual_followup"} or _looks_actionable(goal, intent)
+        status_query = explicit_intent_type == "status_followup" or (_looks_like_status_query(goal) and not actionable)
         if status_query:
             # 状态问询不应该把系统再次推入任务创建链。
             # 这里直接读取权威状态快照，确保回复和真实 state / control plane 对齐。
@@ -1014,8 +1066,7 @@ def route_instruction(
         route["task_id"] = task_id
         route["link_path"] = write_link(provider, conversation_id, payload)
 
-    route["route_path"] = _write_json(BRAIN_ROUTES_ROOT / provider / f"{conversation_id}.json", route)
-    return route
+    return _finalize_route(route)
 
 
 def main() -> int:

@@ -65,6 +65,11 @@ def is_lightweight_followup_prompt(text: str, intent: Dict[str, object]) -> bool
         "continue",
         "goon",
         "start",
+        "然后呢",
+        "接下来呢",
+        "那现在呢",
+        "现在呢",
+        "下一步呢",
     }
     if normalized in lightweight_tokens:
         return True
@@ -82,6 +87,10 @@ def looks_like_followup_goal(text: str, intent: Dict[str, object]) -> bool:
         "继续",
         "继续推进",
         "接着",
+        "然后呢",
+        "接下来呢",
+        "那现在呢",
+        "下一步呢",
         "下一步",
         "后续",
         "剩下",

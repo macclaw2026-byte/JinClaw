@@ -51,7 +51,7 @@ AUTONOMY_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy
 if str(AUTONOMY_DIR) not in sys.path:
     sys.path.insert(0, str(AUTONOMY_DIR))
 
-from manager import LINKS_ROOT, TASKS_ROOT, create_task_from_contract, ensure_autonomy_root_mission_link, events_path, find_link_by_task_id, load_contract, load_state, log_event, save_contract, save_state, task_dir
+from manager import LINKS_ROOT, TASKS_ROOT, create_task_from_contract, ensure_autonomy_root_mission_link, events_path, find_link_by_task_id, link_path, load_contract, load_state, log_event, save_contract, save_state, task_dir
 from learning_engine import load_task_summary, record_error, record_learning, update_task_summary
 from promotion_engine import promote_doctor_strategy, resolve_doctor_strategy, resolve_rule_for_error
 from task_contract import TaskContract
@@ -89,6 +89,14 @@ ACQUISITION_REQUIRED_FILES = [
     WORKSPACE_ROOT / 'tools/openmoss/control_center/challenge_classifier.py',
     WORKSPACE_ROOT / 'tools/openmoss/control_center/crawler_probe_runner.py',
     WORKSPACE_ROOT / 'tools/openmoss/control_center/task_status_snapshot.py',
+]
+CONVERSATION_CONTEXT_REQUIRED_FILES = [
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/conversation_context.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/brain_router.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/route_guardrails.py',
+    WORKSPACE_ROOT / 'tools/openmoss/autonomy/telegram_binding.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/brain_enforcer.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/control_plane_builder.py',
 ]
 GSTACK_LIFECYCLE = ['think', 'plan', 'build', 'review', 'test', 'ship', 'reflect']
 DOCTOR_RESOLUTION_REQUIRED_FIELDS = [
@@ -2323,6 +2331,193 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
     }
 
 
+def _run_conversation_context_integration_checks() -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：验证 transport-neutral conversation context kernel 是否已经接进 Telegram/直连的主执行链。
+    - 输入角色：消费 route、focus、envelope 与 control-plane registry。
+    - 输出角色：供 canonical doctor 判定“然后呢/继续这个”类跟进是否有真源支撑。
+    """
+    errors = []
+    for path in CONVERSATION_CONTEXT_REQUIRED_FILES:
+        if not path.exists():
+            errors.append(f'missing_required_file:{path}')
+
+    if str(CONTROL_CENTER_ROOT) not in sys.path:
+        sys.path.insert(0, str(CONTROL_CENTER_ROOT))
+    from brain_router import route_instruction
+    from control_plane_builder import build_control_plane
+    from conversation_context import (
+        build_conversation_focus_registry,
+        conversation_focus_path,
+        instruction_envelope_path,
+        load_conversation_focus,
+    )
+    from route_guardrails import persist_route, reroot_route_if_needed
+
+    provider = 'doctor-context'
+    conversation_id = 'followup-kernel'
+    session_key = 'agent:main:doctor-context:followup-kernel'
+    focus_path = conversation_focus_path(provider, conversation_id)
+    envelope_path = instruction_envelope_path(provider, conversation_id)
+    link_file = link_path(provider, conversation_id)
+    touched_task_ids: set[str] = set()
+    for path in [focus_path, envelope_path, link_file]:
+        if path.exists():
+            path.unlink()
+    try:
+        route = route_instruction(
+            provider=provider,
+            conversation_id=conversation_id,
+            conversation_type='direct',
+            text='用 ziniao 浏览器打开已绑定店铺，进入对账中心导出三月份账务明细，并在导出历史确认结果',
+            source='system_doctor:conversation_context',
+            sender_id='user',
+            sender_name='doctor-context-user',
+            message_id='seed-1',
+            session_key=session_key,
+        )
+        route = reroot_route_if_needed(
+            route=route,
+            provider=provider,
+            conversation_id=conversation_id,
+            conversation_type='direct',
+            goal=str(route.get('goal') or ''),
+            session_key=session_key,
+        )
+        persist_route(provider, conversation_id, route)
+        if not envelope_path.exists():
+            errors.append('conversation_context_missing_instruction_envelope')
+        if not focus_path.exists():
+            errors.append('conversation_context_missing_focus_file')
+        focus = load_conversation_focus(provider, conversation_id)
+        if not str(focus.get('current_task_id', '')).strip():
+            errors.append('conversation_context_missing_task_binding')
+        if not bool(focus.get('context_ready')):
+            errors.append('conversation_context_context_not_ready')
+        if str(focus.get('explicit_intent_type', '')).strip() not in {'action_request', 'contextual_followup', 'continue_current_task'}:
+            errors.append('conversation_context_invalid_seed_intent_type')
+        task_id = str(route.get('task_id', '')).strip()
+        if task_id:
+            touched_task_ids.add(task_id)
+
+        if link_file.exists():
+            link_file.unlink()
+        followup = route_instruction(
+            provider=provider,
+            conversation_id=conversation_id,
+            conversation_type='direct',
+            text='然后呢？',
+            source='system_doctor:conversation_context',
+            sender_id='user',
+            sender_name='doctor-context-user',
+            message_id='seed-2',
+            session_key=session_key,
+        )
+        followup = reroot_route_if_needed(
+            route=followup,
+            provider=provider,
+            conversation_id=conversation_id,
+            conversation_type='direct',
+            goal=str(followup.get('goal') or ''),
+            session_key=session_key,
+        )
+        persist_route(provider, conversation_id, followup)
+        if not bool(followup.get('focus_restored_link')):
+            errors.append('conversation_context_missing_focus_link_recovery')
+        if str((followup.get('instruction_envelope', {}) or {}).get('explicit_intent_type', '')).strip() != 'status_followup':
+            errors.append('conversation_context_missing_status_followup_resolution')
+        if str(followup.get('mode', '')).strip() != 'authoritative_task_status':
+            errors.append('conversation_context_followup_not_routed_to_authoritative_status')
+
+        contextual = route_instruction(
+            provider=provider,
+            conversation_id=conversation_id,
+            conversation_type='direct',
+            text='还是三月',
+            source='system_doctor:conversation_context',
+            sender_id='user',
+            sender_name='doctor-context-user',
+            message_id='seed-3',
+            session_key=session_key,
+        )
+        contextual = reroot_route_if_needed(
+            route=contextual,
+            provider=provider,
+            conversation_id=conversation_id,
+            conversation_type='direct',
+            goal=str(contextual.get('goal') or ''),
+            session_key=session_key,
+        )
+        persist_route(provider, conversation_id, contextual)
+        if str((contextual.get('instruction_envelope', {}) or {}).get('explicit_intent_type', '')).strip() != 'contextual_followup':
+            errors.append('conversation_context_missing_contextual_followup_resolution')
+        if '当前任务目标' not in str((contextual.get('instruction_envelope', {}) or {}).get('contextual_goal', '')):
+            errors.append('conversation_context_missing_contextual_goal_binding')
+
+        registry = build_conversation_focus_registry()
+        if int((registry.get('summary', {}) or {}).get('focus_total', 0) or 0) <= 0:
+            errors.append('conversation_context_missing_focus_registry')
+        if not any(
+            str(item.get('provider', '')).strip() == provider and str(item.get('conversation_id', '')).strip() == conversation_id
+            for item in (registry.get('items', []) or [])
+        ):
+            errors.append('conversation_context_registry_missing_row')
+
+        plane = build_control_plane(stale_after_seconds=300, escalation_after_seconds=900)
+        summary = (plane.get('system_snapshot', {}) or {}).get('summary', {}) or {}
+        if 'conversation_focus_total' not in summary:
+            errors.append('conversation_context_control_plane_missing_summary')
+    finally:
+        for path in [focus_path, envelope_path, link_file]:
+            if path.exists():
+                path.unlink()
+        for task_id in touched_task_ids:
+            task_path = task_dir(task_id)
+            if task_path.exists():
+                shutil.rmtree(task_path)
+
+    return {
+        'single_doctor_rule': True,
+        'authoritative_doctor': 'tools/openmoss/control_center/system_doctor.py',
+        'required_files_checked': len(CONVERSATION_CONTEXT_REQUIRED_FILES),
+        'required_files': [str(path.relative_to(WORKSPACE_ROOT)) for path in CONVERSATION_CONTEXT_REQUIRED_FILES],
+        'instruction_envelope_contract': not any(
+            item in {'conversation_context_missing_instruction_envelope'}
+            for item in errors
+        ),
+        'focus_contract': not any(
+            item in {
+                'conversation_context_missing_focus_file',
+                'conversation_context_missing_task_binding',
+                'conversation_context_context_not_ready',
+            }
+            for item in errors
+        ),
+        'followup_resolution_contract': not any(
+            item in {
+                'conversation_context_missing_focus_link_recovery',
+                'conversation_context_missing_status_followup_resolution',
+                'conversation_context_followup_not_routed_to_authoritative_status',
+                'conversation_context_missing_contextual_followup_resolution',
+                'conversation_context_missing_contextual_goal_binding',
+            }
+            for item in errors
+        ),
+        'control_plane_visibility_contract': not any(
+            item in {
+                'conversation_context_missing_focus_registry',
+                'conversation_context_registry_missing_row',
+                'conversation_context_control_plane_missing_summary',
+            }
+            for item in errors
+        ),
+        'conversation_context_chain': 'ok' if not errors else 'error',
+        'errors': errors,
+        'ok': not errors,
+    }
+
+
 def _run_integration_health_checks() -> Dict[str, object]:
     """
     中文注解：
@@ -2332,21 +2527,29 @@ def _run_integration_health_checks() -> Dict[str, object]:
     """
     gstack = _run_gstack_integration_checks()
     acquisition_hand = _run_acquisition_integration_checks()
-    errors = list(gstack.get('errors', []) or []) + list(acquisition_hand.get('errors', []) or [])
+    conversation_context = _run_conversation_context_integration_checks()
+    errors = (
+        list(gstack.get('errors', []) or [])
+        + list(acquisition_hand.get('errors', []) or [])
+        + list(conversation_context.get('errors', []) or [])
+    )
     return {
         'single_doctor_rule': True,
         'authoritative_doctor': 'tools/openmoss/control_center/system_doctor.py',
         'registered_integrations': _build_doctor_coverage_bundle().get('registered_integrations', []),
         'required_files_checked': int(gstack.get('required_files_checked', 0) or 0)
-        + int(acquisition_hand.get('required_files_checked', 0) or 0),
+        + int(acquisition_hand.get('required_files_checked', 0) or 0)
+        + int(conversation_context.get('required_files_checked', 0) or 0),
         'lifecycle': GSTACK_LIFECYCLE,
         'gstack': gstack,
         'acquisition_hand': acquisition_hand,
+        'conversation_context': conversation_context,
         'coding_chain': gstack.get('coding_chain', 'unknown'),
         'noncoding_chain': gstack.get('noncoding_chain', 'unknown'),
         'acquisition_chain': acquisition_hand.get('acquisition_chain', 'unknown'),
+        'conversation_context_chain': conversation_context.get('conversation_context_chain', 'unknown'),
         'errors': errors,
-        'ok': bool(gstack.get('ok')) and bool(acquisition_hand.get('ok')),
+        'ok': bool(gstack.get('ok')) and bool(acquisition_hand.get('ok')) and bool(conversation_context.get('ok')),
     }
 
 
