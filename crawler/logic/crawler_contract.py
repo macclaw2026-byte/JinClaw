@@ -33,6 +33,14 @@ SITE_FORCED_BLOCKED_TOOLS = {
     }
 }
 
+REQUIRED_FIELDS_BY_SITE = {
+    'amazon': ['title', 'link'],
+    'walmart': ['title', 'price', 'link'],
+    'temu': ['title', 'price', 'link'],
+    '1688': [],
+    '1688-authenticated': ['title', 'price', 'link'],
+}
+
 FIELD_HINTS = {
     'title': ['title', '商品', 'product', 'mouse'],
     'price': ['$', 'ca$', 'price', '售价', '价格'],
@@ -41,6 +49,12 @@ FIELD_HINTS = {
     'link': ['http', '/dp/', '/ip/', '/offer/', 'href'],
     'promo': ['free shipping', 'coupon', '折扣', '优惠'],
 }
+
+SHELL_PAGE_PREFIXES = (
+    '<!doctype html',
+    '<html',
+    '![](',
+)
 
 
 @dataclass
@@ -112,7 +126,51 @@ def _extract_task_ready_fields(site: str, text: str) -> dict[str, Any]:
             'title': '', 'price': '', 'rating': '', 'reviews': '', 'link': '', 'promo': '',
             'evidence_excerpt': lines[:5],
         }
-    return result
+    return _sanitize_task_ready_fields(site, result)
+
+
+def _sanitize_task_ready_fields(site: str, fields: dict[str, Any]) -> dict[str, Any]:
+    """
+    清洗 task-ready 字段，避免把整段 HTML、站点壳页标题或明显的 shell 输出误判成可交付字段。
+    """
+    cleaned = dict(fields or {})
+    for key in ('title', 'price', 'rating', 'reviews', 'link', 'promo'):
+        value = str(cleaned.get(key, '') or '').strip()
+        lowered = value.lower()
+        if any(lowered.startswith(prefix) for prefix in SHELL_PAGE_PREFIXES):
+            cleaned[key] = ''
+            continue
+        if '<html' in lowered or '<head' in lowered or '<body' in lowered:
+            cleaned[key] = ''
+            continue
+        if len(value) > 180 and ('<' in value and '>' in value):
+            cleaned[key] = ''
+            continue
+        if key == 'title' and site == 'walmart' and lowered.endswith('- walmart.com') and 'price' not in lowered:
+            cleaned[key] = ''
+        elif key == 'link' and value and not (
+            value.startswith('http') or value.startswith('/') or '/dp/' in value or '/ip/' in value or '/offer/' in value
+        ):
+            cleaned[key] = ''
+    return cleaned
+
+
+def _meets_required_fields(site: str, fields: dict[str, Any]) -> bool:
+    required = REQUIRED_FIELDS_BY_SITE.get(site, [])
+    if not required:
+        return True
+    return all(bool(str(fields.get(name, '')).strip()) for name in required)
+
+
+def _missing_required_fields(site: str, fields: dict[str, Any]) -> list[str]:
+    required = REQUIRED_FIELDS_BY_SITE.get(site, [])
+    return [name for name in required if not bool(str((fields or {}).get(name, '')).strip())]
+
+
+def _site_aliases(site: str) -> list[str]:
+    if site == '1688-authenticated':
+        return ['1688-authenticated', '1688']
+    return [site]
 
 
 def load_latest_report(site: str) -> dict[str, Any]:
@@ -131,7 +189,7 @@ def summarize_site_from_matrix(site: str, matrix: dict[str, Any]) -> dict[str, A
 
     for row in site_row['tool_results']:
         text = f"{row.get('stdout_head', '')}\n{row.get('stderr_head', '')}"
-        reasons = [m for m in BLOCK_MARKERS.get(site, []) if m.lower() in text.lower()]
+        reasons = [m for alias in _site_aliases(site) for m in BLOCK_MARKERS.get(alias, []) if m.lower() in text.lower()]
         field_score = _field_score(text)
         notes = row.get('notes')
         status = row['status']
@@ -200,6 +258,15 @@ def summarize_site_from_matrix(site: str, matrix: dict[str, Any]) -> dict[str, A
     if best:
         best_row = next(r for r in site_row['tool_results'] if r['tool'] == best.tool)
         task_ready_fields = _extract_task_ready_fields(site, best_row.get('stdout_head', ''))
+    if best and not _meets_required_fields(site, task_ready_fields):
+        blocked_tools.append(best.tool)
+        usable = [d for d in usable if d.tool != best.tool]
+        preferred = [d.tool for d in usable] + [d.tool for d in tool_decisions if d.tool not in {u.tool for u in usable}]
+        best = usable[0] if usable else None
+        task_ready_fields = {'title': '', 'price': '', 'rating': '', 'reviews': '', 'link': '', 'promo': '', 'evidence_excerpt': []}
+        if best:
+            best_row = next(r for r in site_row['tool_results'] if r['tool'] == best.tool)
+            task_ready_fields = _extract_task_ready_fields(site, best_row.get('stdout_head', ''))
 
     markdown_lines = [
         f'# {site.capitalize()} Site Profile',
@@ -301,6 +368,22 @@ def build_contract(site: str) -> SiteContract:
     usable.sort(key=lambda d: (-d.score, -d.field_completeness, -d.product_signal_count, -d.stdout_chars))
     best = usable[0] if usable else None
     task_fields = _extract_task_ready_fields(site, next((r.get('stdout_head', '') for r in report['toolResults'] if best and r['tool'] == best.tool), ''))
+    disqualified_tools: list[dict[str, Any]] = []
+    while best and not _meets_required_fields(site, task_fields):
+        missing_fields = _missing_required_fields(site, task_fields)
+        blocked_tools.append(best.tool)
+        disqualified_tools.append(
+            {
+                'tool': best.tool,
+                'reason': 'missing_required_fields',
+                'missing_required_fields': missing_fields,
+            }
+        )
+        usable = [d for d in usable if d.tool != best.tool]
+        best = usable[0] if usable else None
+        task_fields = _extract_task_ready_fields(site, next((r.get('stdout_head', '') for r in report['toolResults'] if best and r['tool'] == best.tool), ''))
+    if not best:
+        task_fields = {'title': '', 'price': '', 'rating': '', 'reviews': '', 'link': '', 'promo': '', 'evidence_excerpt': []}
 
     auth_policy = {
         'anonymous_mode': 'allowed' if site != '1688' else 'truth-check-only',
@@ -323,6 +406,9 @@ def build_contract(site: str) -> SiteContract:
             'best_tool': best.tool if best else None,
             'best_status': best.status if best else 'blocked',
             'best_score': best.score if best else 0,
+            'required_fields_met': bool(best and _meets_required_fields(site, task_fields)),
+            'missing_required_fields': _missing_required_fields(site, task_fields) if best else REQUIRED_FIELDS_BY_SITE.get(site, []),
+            'disqualified_tools': disqualified_tools,
             'usable_tools': [asdict(d) for d in usable],
             'all_tools': [asdict(d) for d in tool_decisions],
         },

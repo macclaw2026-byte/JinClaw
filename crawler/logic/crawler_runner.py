@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote_plus
 
-from crawler.logic.crawler_contract import save_contract, summarize_site_from_matrix
+from crawler.logic.crawler_contract import _extract_task_ready_fields, _field_score, _meets_required_fields, save_contract, summarize_site_from_matrix
 
 ROOT = Path('/Users/mac_claw/.openclaw/workspace')
 SITE_PROFILES = ROOT / 'crawler' / 'logic' / 'site_profiles.json'
@@ -85,8 +85,29 @@ def choose_best(tool_results: list[dict], site: str | None = None) -> dict | Non
         and r['tool'] not in blocked_for_site
     ]
     if survivors:
-        survivors.sort(key=lambda r: (-r['score'], -r.get('field_completeness', 0), -r['product_signal_count'], -r['stdout_chars']))
-        return survivors[0]
+        ranked = []
+        for row in survivors:
+            text = f"{row.get('stdout_head', '')}\n{row.get('stderr_head', '')}"
+            task_fields = _extract_task_ready_fields(site or '', row.get('stdout_head', '')) if site else {}
+            required_fields_met = _meets_required_fields(site or '', task_fields) if site else True
+            field_completeness = float(row.get('field_completeness', 0) or _field_score(text).get('completeness', 0))
+            ranked.append(
+                (
+                    1 if required_fields_met else 0,
+                    int(row.get('score', 0) or 0),
+                    field_completeness,
+                    int(row.get('product_signal_count', 0) or 0),
+                    int(row.get('stdout_chars', 0) or 0),
+                    row,
+                )
+            )
+        ranked.sort(key=lambda item: (-item[0], -item[1], -item[2], -item[3], -item[4]))
+        if site:
+            for item in ranked:
+                if item[0] > 0:
+                    return item[-1]
+            return None
+        return ranked[0][-1]
     return None
 
 

@@ -191,6 +191,7 @@ def _score_stack(stack: Dict[str, object], requirements: Dict[str, object], site
         selected_tool = str(site.get("selected_tool", "")).strip().lower()
         readiness = str(site.get("readiness", "")).strip()
         access_posture = str(site.get("access_posture", "")).strip()
+        route_preference_strength = str(site.get("route_preference_strength", "none")).strip().lower()
         blocked = {
             str(item).strip().lower()
             for item in site.get("primary_limitations", [])
@@ -200,9 +201,12 @@ def _score_stack(stack: Dict[str, object], requirements: Dict[str, object], site
             selected_tool in stack_tools or
             (selected_tool == "local-agent-browser-cli" and stack_id == "authorized_session")
         )
-        if readiness == "production_ready" and selected_matches:
+        if readiness == "production_ready" and selected_matches and route_preference_strength == "strong":
             score += 8
             rationale.append(f"{site.get('site', '')} 当前生产可用，优先沿已验证工具路线")
+        elif readiness == "production_ready" and selected_matches and route_preference_strength == "guarded":
+            score += 3
+            rationale.append(f"{site.get('site', '')} 当前存在多份执行证据分歧，仅保守参考已验证路线")
         if access_posture == "governed_authenticated_ready" and stack_id == "authorized_session":
             score += 8
             rationale.append(f"{site.get('site', '')} 已具备受治理授权态可用性，优先走 authorized_session")

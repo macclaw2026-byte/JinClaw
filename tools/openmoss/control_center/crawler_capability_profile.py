@@ -54,15 +54,115 @@ def _write_json(path: Path, payload: Dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _score_site(profile: Dict[str, Any], latest_run: Dict[str, Any], auth_policy_exists: bool) -> Dict[str, Any]:
-    tested_tools = [str(item).strip() for item in profile.get("tested_tools", []) if str(item).strip()]
-    usable_tools = [str(item).strip() for item in profile.get("usable_tools", []) if str(item).strip()]
-    blocked_tools = [str(item).strip() for item in profile.get("blocked_tools", []) if str(item).strip()]
-    task_output_fields = profile.get("task_output_fields", {}) or {}
-    populated_fields = [name for name, value in task_output_fields.items() if str(value or "").strip()]
-    field_count = len(task_output_fields) or 1
+def _tool_names(items: List[Any]) -> List[str]:
+    names: List[str] = []
+    for item in items:
+        if isinstance(item, dict):
+            value = str(item.get("tool", "")).strip()
+        else:
+            value = str(item).strip()
+        if value and value not in names:
+            names.append(value)
+    return names
+
+
+def _nonempty_field_names(fields: Dict[str, Any]) -> List[str]:
+    return [name for name, value in (fields or {}).items() if name != "evidence_excerpt" and str(value or "").strip()]
+
+
+def _derive_execution_truth(
+    profile: Dict[str, Any],
+    latest_run: Dict[str, Any],
+    contract: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：统一整理 site-profile、latest-run、contract 三层证据，生成单一可消费的执行真值。
+    - 输入角色：profile 更像站点摘要缓存，latest-run 是运行摘要，contract 是带字段门禁的执行裁决。
+    - 输出角色：供 capability profile、router、doctor 使用，避免每层各自挑一个 best tool 造成漂移。
+    """
+    comparison_summary = contract.get("comparison_summary", {}) or {}
+    profile_selected_tool = str(profile.get("selected_tool", "")).strip()
+    latest_selected_tool = str(latest_run.get("bestTool", "")).strip()
+    contract_selected_tool = str(comparison_summary.get("best_tool", "")).strip()
+    latest_best_status = str(latest_run.get("bestStatus", "")).strip().lower()
+    contract_best_status = str(comparison_summary.get("best_status", "")).strip().lower()
+    profile_usable_tools = _tool_names(profile.get("usable_tools", []) or [])
+    contract_usable_tools = _tool_names(comparison_summary.get("usable_tools", []) or [])
+    latest_usable_tools = [latest_selected_tool] if latest_selected_tool and latest_best_status == "usable" else []
+    task_output_fields = (contract.get("task_ready_fields", {}) or {}) or (profile.get("task_output_fields", {}) or {})
+    execution_selected_tool = ""
+    execution_truth_source = "profile"
+    execution_usable_tools = profile_usable_tools
+    execution_best_status = str(profile.get("taskReadiness", "") or "").strip().lower()
+    if contract_selected_tool or contract_usable_tools:
+        execution_selected_tool = contract_selected_tool
+        execution_truth_source = "contract"
+        execution_usable_tools = contract_usable_tools
+        execution_best_status = contract_best_status or execution_best_status
+    elif latest_selected_tool or latest_usable_tools:
+        execution_selected_tool = latest_selected_tool
+        execution_truth_source = "latest_run"
+        execution_usable_tools = latest_usable_tools
+        execution_best_status = latest_best_status or execution_best_status
+    elif profile_selected_tool or profile_usable_tools:
+        execution_selected_tool = profile_selected_tool
+        execution_truth_source = "profile"
+        execution_usable_tools = profile_usable_tools
+
+    profile_has_selection = bool(profile_selected_tool or profile_usable_tools)
+    execution_has_selection = bool(execution_selected_tool or execution_usable_tools)
+    execution_conflict = bool(contract_selected_tool and latest_selected_tool and contract_selected_tool != latest_selected_tool)
+    profile_stale = execution_has_selection and (
+        not profile_has_selection
+        or profile_selected_tool != execution_selected_tool
+        or set(profile_usable_tools) != set(execution_usable_tools)
+    )
+    if execution_conflict and profile_stale:
+        alignment_status = "execution_conflict_and_profile_stale"
+    elif execution_conflict:
+        alignment_status = "execution_conflict"
+    elif profile_stale:
+        alignment_status = "profile_stale"
+    elif execution_has_selection:
+        alignment_status = "aligned"
+    elif latest_best_status == "blocked" or contract_best_status == "blocked":
+        alignment_status = "blocked_consensus"
+    else:
+        alignment_status = "no_execution_evidence"
+    has_drift = alignment_status in {"profile_stale", "execution_conflict", "execution_conflict_and_profile_stale"}
+    route_preference_strength = "none"
+    if alignment_status in {"aligned", "profile_stale"} and execution_selected_tool:
+        route_preference_strength = "strong"
+    elif alignment_status in {"execution_conflict", "execution_conflict_and_profile_stale"} and execution_selected_tool:
+        route_preference_strength = "guarded"
+    return {
+        "selected_tool": execution_selected_tool,
+        "best_status": execution_best_status or latest_best_status or contract_best_status,
+        "usable_tools": execution_usable_tools,
+        "task_output_fields": task_output_fields,
+        "execution_truth_source": execution_truth_source,
+        "route_preference_strength": route_preference_strength,
+        "evidence_alignment": {
+            "status": alignment_status,
+            "has_drift": has_drift,
+            "profile_selected_tool": profile_selected_tool,
+            "latest_run_selected_tool": latest_selected_tool,
+            "contract_selected_tool": contract_selected_tool,
+        },
+    }
+
+
+def _score_site(profile: Dict[str, Any], latest_run: Dict[str, Any], contract: Dict[str, Any], auth_policy_exists: bool) -> Dict[str, Any]:
+    tested_tools = [str(item).strip() for item in (profile.get("tested_tools", []) or contract.get("tested_tools", [])) if str(item).strip()]
+    execution_truth = _derive_execution_truth(profile, latest_run, contract)
+    usable_tools = _tool_names(execution_truth.get("usable_tools", []) or [])
+    blocked_tools = [str(item).strip() for item in (profile.get("blocked_tools", []) or contract.get("blocked_tools", [])) if str(item).strip()]
+    task_output_fields = execution_truth.get("task_output_fields", {}) or {}
+    populated_fields = _nonempty_field_names(task_output_fields)
+    field_count = len([name for name in task_output_fields if name != "evidence_excerpt"]) or 1
     field_coverage_ratio = len(populated_fields) / field_count
-    best_status = str(latest_run.get("bestStatus", "") or "").strip().lower()
+    best_status = str(execution_truth.get("best_status", "") or latest_run.get("bestStatus", "")).strip().lower()
     confidence = str(profile.get("confidence", "") or "").strip().lower()
     authenticated_supported = bool((profile.get("authenticated_mode", {}) or {}).get("supported")) or auth_policy_exists
     mode = str(profile.get("mode", "") or "").strip()
@@ -126,9 +226,13 @@ def _score_site(profile: Dict[str, Any], latest_run: Dict[str, Any], auth_policy
         "site": profile.get("site") or latest_run.get("site") or "",
         "mode": profile.get("mode", ""),
         "confidence": profile.get("confidence", ""),
-        "preferred_tool_order": profile.get("preferred_tool_order", []),
-        "selected_tool": profile.get("selected_tool", "") or latest_run.get("bestTool", ""),
-        "best_status": latest_run.get("bestStatus", "") or profile.get("taskReadiness", ""),
+        "preferred_tool_order": (contract.get("preferred_tool_order", []) or profile.get("preferred_tool_order", [])),
+        "selected_tool": execution_truth.get("selected_tool", ""),
+        "best_status": best_status,
+        "usable_tools": usable_tools,
+        "execution_truth_source": execution_truth.get("execution_truth_source", ""),
+        "route_preference_strength": execution_truth.get("route_preference_strength", "none"),
+        "evidence_alignment": execution_truth.get("evidence_alignment", {}),
         "tested_tools_count": len(tested_tools),
         "usable_tools_count": len(usable_tools),
         "blocked_tools_count": len(blocked_tools),
@@ -280,10 +384,11 @@ def build_crawler_capability_profile() -> Dict[str, Any]:
         site_id = profile_path.stem
         profile = _read_json(profile_path, {})
         latest_run = _read_json(REPORTS_ROOT / f"{site_id}-latest-run.json", {})
+        contract = _read_json(REPORTS_ROOT / f"{site_id}-contract.json", {})
         auth_policy_exists = (SITE_PROFILES_ROOT / f"{site_id}-auth-policy.md").exists()
-        if not profile and not latest_run:
+        if not profile and not latest_run and not contract:
             continue
-        sites.append(_score_site(profile, latest_run, auth_policy_exists))
+        sites.append(_score_site(profile, latest_run, contract, auth_policy_exists))
 
     sites_total = len(sites)
     usable_sites = [site for site in sites if site.get("readiness") == "production_ready"]
@@ -291,8 +396,14 @@ def build_crawler_capability_profile() -> Dict[str, Any]:
     authenticated_sites = [site for site in sites if site.get("authenticated_supported")]
     governed_ready_sites = [site for site in sites if site.get("governed_ready")]
     authorized_session_ready_sites = [site for site in sites if site.get("access_posture") == "governed_authenticated_ready"]
+    drift_sites = [site for site in sites if bool((site.get("evidence_alignment", {}) or {}).get("has_drift"))]
+    aligned_sites = [
+        site for site in sites
+        if str(((site.get("evidence_alignment", {}) or {}).get("status", ""))).strip() in {"aligned", "blocked_consensus"}
+    ]
     width_score = round((len(usable_sites) / max(1, sites_total)) * 100, 2)
     governed_width_score = round((len(governed_ready_sites) / max(1, sites_total)) * 100, 2)
+    evidence_alignment_score = round((len(aligned_sites) / max(1, sites_total)) * 100, 2)
     breadth_score = round(sum(site.get("breadth_score", 0.0) for site in sites) / max(1, sites_total), 2)
     depth_score = round(sum(site.get("depth_score", 0.0) for site in sites) / max(1, sites_total), 2)
     stability_score = round(sum(site.get("stability_score", 0.0) for site in sites) / max(1, sites_total), 2)
@@ -309,8 +420,10 @@ def build_crawler_capability_profile() -> Dict[str, Any]:
         "authenticated_sites": len(authenticated_sites),
         "sites_governed_ready": len(governed_ready_sites),
         "sites_authorized_session_ready": len(authorized_session_ready_sites),
+        "sites_with_evidence_drift": len(drift_sites),
         "width_score": width_score,
         "governed_width_score": governed_width_score,
+        "evidence_alignment_score": evidence_alignment_score,
         "breadth_score": breadth_score,
         "depth_score": depth_score,
         "stability_score": stability_score,
@@ -343,6 +456,14 @@ def build_crawler_capability_profile() -> Dict[str, Any]:
                 "priority": "high",
                 "action": "increase_project_memory_feedback_coverage",
                 "reason": "project-target memory writeback coverage is too thin",
+            }
+        )
+    if drift_sites:
+        priority_actions.append(
+            {
+                "priority": "high",
+                "action": "reconcile_site_execution_truth",
+                "reason": f"{len(drift_sites)} site profiles drift from execution evidence",
             }
         )
     profile = {

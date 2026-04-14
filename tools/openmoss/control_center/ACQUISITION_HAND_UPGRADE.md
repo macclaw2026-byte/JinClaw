@@ -31,6 +31,8 @@ The current phase also extends that control surface into execution evidence:
 - acquisition summaries now also emit structured `answer_synthesis`, so downstream reply/runtime layers can directly consume a governed answer contract instead of reverse-engineering `final_fields`
 - task snapshots and response policy now consume that answer contract directly, so user-visible authoritative replies can distinguish `auto_answer`, `guarded_answer`, `confirm_then_guarded_answer`, and `pause_and_recapture`
 - stage context, ACP dispatch, and runtime execution prompts now consume a structured `response_handoff`, so acquisition answer governance reaches the execution chain instead of stopping at status receipts
+- crawler execution truth is now explicitly reconciled across `site-profile`, `latest-run`, and `contract`, so router/doctor no longer treat those three layers as independent truths
+- crawler capability health now exposes `sites_with_evidence_drift` and `evidence_alignment_score`, and the canonical doctor treats this execution-truth alignment as a first-class monitored contract
 
 ## New Core Structures
 
@@ -61,6 +63,17 @@ The current phase also extends that control surface into execution evidence:
     - structured release disclosure
     - site-level and task-level answer synthesis contracts
     - overall consensus status
+- crawler execution-truth alignment
+  - Capability profile now derives a single execution truth from:
+    - site profile cache
+    - latest-run summary
+    - contract-level field-gated execution decision
+  - It also exposes:
+    - `execution_truth_source`
+    - `evidence_alignment.status`
+    - `route_preference_strength`
+    - summary-level `sites_with_evidence_drift`
+    - summary-level `evidence_alignment_score`
 - structured `challenge` signals
   - Challenge classification now emits severity, signals, safe next routes, and anti-bot posture hints.
 
@@ -95,3 +108,4 @@ It also means the system can now explain:
 5. whether the current result may be auto-delivered, only guarded-delivered, or must first gather fresher / higher-trust evidence
 6. what exact caveat text should accompany a guarded release
 7. what response mode the downstream layer should use right now: auto answer, guarded answer, confirmation-first answer, or pause-and-recapture
+8. whether a site's route preference is backed by aligned execution evidence or only guarded because profile/latest-run/contract still disagree
