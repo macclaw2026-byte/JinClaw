@@ -463,6 +463,23 @@ def _build_doctor_coverage_bundle() -> Dict[str, Any]:
                 "primary_monitor": "system_doctor.integration_health.conversation_events",
                 "backstop_monitor": "tools/openmoss/runtime/control_center/control_plane/conversation_event_registry.json",
                 "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.conversation_events",
+            },
+            {
+                "name": "execution-event-kernel",
+                "required_files": [
+                    "tools/openmoss/control_center/conversation_events.py",
+                    "tools/openmoss/autonomy/action_executor.py",
+                    "tools/openmoss/control_center/task_status_snapshot.py",
+                    "tools/openmoss/control_center/control_plane_builder.py",
+                ],
+                "doctor_checks": [
+                    "execution_event_persistence",
+                    "execution_handoff_snapshot_contract",
+                    "control_plane_execution_visibility",
+                ],
+                "primary_monitor": "system_doctor.integration_health.execution_events",
+                "backstop_monitor": "tools/openmoss/runtime/control_center/control_plane/conversation_event_registry.json",
+                "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.execution_events",
             }
         ],
     }

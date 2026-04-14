@@ -21,7 +21,8 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from canonical_active_task import resolve_canonical_active_task
-from control_center_schemas import build_acquisition_response_handoff_schema
+from control_center_schemas import build_acquisition_response_handoff_schema, build_execution_handoff_schema
+from conversation_context import load_conversation_focus
 from execution_governor import classify_blocked_runtime_state
 from governance_runtime import build_governance_bundle
 from paths import BROWSER_SIGNALS_ROOT, OPENMOSS_ROOT, TASK_STATUS_ROOT, WORKSPACE_ROOT
@@ -30,6 +31,7 @@ from run_liveness_verifier import build_run_liveness
 
 
 AUTONOMY_TASKS_ROOT = OPENMOSS_ROOT / "runtime/autonomy/tasks"
+LINKS_ROOT = OPENMOSS_ROOT / "runtime/autonomy/links"
 ATTACHMENT_SUFFIXES = {
     ".md",
     ".markdown",
@@ -239,6 +241,21 @@ def _discover_output_attachments(task_id: str, state: Dict[str, Any], business: 
     return attachments[:5]
 
 
+def _find_link_for_task(task_id: str) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：为 snapshot 查找当前任务绑定的会话 link。
+    - 设计意图：execution handoff 需要知道 transport/provider 和当前会话模式，不能只看 task state。
+    """
+    if not LINKS_ROOT.exists():
+        return {}
+    for path in sorted(LINKS_ROOT.glob("*.json")):
+        payload = _read_json(path, {})
+        if str((payload or {}).get("task_id", "")).strip() == str(task_id or "").strip():
+            return payload if isinstance(payload, dict) else {}
+    return {}
+
+
 def _derive_business_outcome_from_workspace_guards(task_id: str, state: Dict[str, Any]) -> Dict[str, Any]:
     """
     中文注解：
@@ -410,6 +427,53 @@ def _build_acquisition_reply_contract(snapshot: Dict[str, Any]) -> Dict[str, Any
     )
 
 
+def _build_execution_handoff(snapshot: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：把 runtime dispatch/poll 的执行真相压成权威 snapshot 合同。
+    - 设计意图：让 reply chain、doctor、ops 能看到“任务是否已经真正交给执行内核”，而不是只看 planning/status 字样。
+    """
+    metadata = state.get("metadata", {}) or {}
+    active_execution = metadata.get("active_execution", {}) or {}
+    waiting_external = metadata.get("waiting_external", {}) or {}
+    status = str(state.get("status", "")).strip()
+    if not active_execution and not waiting_external and status != "waiting_external":
+        return build_execution_handoff_schema(enabled=False)
+    task_id = str(snapshot.get("task_id", "")).strip()
+    link = _find_link_for_task(task_id)
+    provider = str((link or {}).get("provider", "")).strip()
+    conversation_id = str((link or {}).get("conversation_id", "")).strip()
+    focus = load_conversation_focus(provider, conversation_id) if provider and conversation_id else {}
+    stage_name = str(active_execution.get("stage_name", "")).strip() or str(state.get("current_stage", "")).strip()
+    handoff_status = (
+        "waiting_external"
+        if status == "waiting_external"
+        else str((active_execution or {}).get("status", "")).strip() or status or "unknown"
+    )
+    return build_execution_handoff_schema(
+        enabled=bool(provider and conversation_id),
+        contract_source="authoritative_task_state",
+        task_id=task_id,
+        stage_name=stage_name,
+        handoff_status=handoff_status,
+        provider=provider,
+        conversation_id=conversation_id,
+        session_key=str(focus.get("session_key", "") or (link or {}).get("session_key", "")).strip(),
+        linked_session_key=str((active_execution or {}).get("linked_session_key", "") or (link or {}).get("session_key", "")).strip(),
+        execution_session_key=str((active_execution or {}).get("session_key", "")).strip(),
+        run_id=str((active_execution or {}).get("run_id", "") or (waiting_external or {}).get("run_id", "")).strip(),
+        runtime_mode=str(focus.get("resolved_mode", "") or focus.get("requested_mode", "")).strip(),
+        runtime_mode_reason=str(focus.get("resolved_mode_reason", "") or focus.get("requested_mode_reason", "")).strip(),
+        next_action=str(state.get("next_action", "")).strip(),
+        wait_status=str((waiting_external or {}).get("wait_status", "")).strip(),
+        wait_error=str((waiting_external or {}).get("wait_error", "")).strip(),
+        dispatched_at=str((active_execution or {}).get("dispatched_at", "")).strip(),
+        updated_at=str(state.get("last_update_at", "")).strip(),
+        conversation_focus_ready=bool(focus.get("context_ready")),
+        must_use_authoritative_snapshot=True,
+    )
+
+
 def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: Dict[str, Any], browser_signals: Dict[str, Any]) -> str:
     """
     中文注解：
@@ -423,6 +487,17 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
     next_action = str(state.get("next_action", ""))
     diagnosis = str(browser_signals.get("diagnosis", "none"))
     acquisition_response = ((snapshot.get("reply_contract", {}) or {}).get("acquisition_response", {}) or {})
+    execution_handoff = snapshot.get("execution_handoff", {}) or {}
+    execution_suffix = ""
+    if bool(execution_handoff.get("enabled")):
+        handoff_status = str(execution_handoff.get("handoff_status", "")).strip()
+        runtime_mode = str(execution_handoff.get("runtime_mode", "")).strip() or "runtime"
+        handoff_stage = str(execution_handoff.get("stage_name", "")).strip() or current_stage or "unknown"
+        wait_status = str(execution_handoff.get("wait_status", "")).strip()
+        if handoff_status in {"dispatched", "waiting_external", "completed", "preflight_blocked"}:
+            execution_suffix = f" Execution handoff is {handoff_status} via {runtime_mode} for stage {handoff_stage}."
+            if wait_status and handoff_status == "waiting_external":
+                execution_suffix += f" External wait status is {wait_status}."
     acquisition_suffix = ""
     if acquisition_response.get("enabled"):
         mode = str(acquisition_response.get("response_mode", "")).strip()
@@ -441,6 +516,7 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
         return (
             f"Authoritative task state says {task_id} is completed. "
             f"Business outcome is confirmed: {business.get('proof_summary', '')}"
+            f"{execution_suffix}"
             f"{acquisition_suffix}"
         ).strip()
     if diagnosis and diagnosis != "none":
@@ -448,11 +524,13 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
             f"Authoritative task state says {task_id} is {status or 'unknown'} "
             f"at stage {current_stage or 'none'} with next action {next_action or 'none'}. "
             f"Latest browser diagnosis is {diagnosis}."
+            f"{execution_suffix}"
             f"{acquisition_suffix}"
         ).strip()
     return (
         f"Authoritative task state says {task_id} is {status or 'unknown'} "
         f"at stage {current_stage or 'none'} with next action {next_action or 'none'}."
+        f"{execution_suffix}"
         f"{acquisition_suffix}"
     ).strip()
 
@@ -549,6 +627,7 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
         "recent_events": _recent_events(canonical_task_id),
     }
     snapshot["output_attachments"] = _discover_output_attachments(canonical_task_id, state, business)
+    snapshot["execution_handoff"] = _build_execution_handoff(snapshot, state)
     snapshot["reply_contract"] = {
         "must_use_authoritative_snapshot": True,
         "must_prefer_task_state_over_chat_memory": True,
@@ -556,6 +635,7 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
             business.get("goal_satisfied") and business.get("user_visible_result_confirmed")
         ),
         "acquisition_response": _build_acquisition_reply_contract(snapshot),
+        "execution_handoff": snapshot.get("execution_handoff", {}),
     }
     snapshot["authoritative_summary"] = _build_authoritative_summary(canonical_task_id, snapshot, state, browser_signals)
     snapshot["snapshot_path"] = _write_json(TASK_STATUS_ROOT / f"{canonical_task_id}.json", snapshot)

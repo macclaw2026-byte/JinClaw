@@ -112,6 +112,12 @@ CONVERSATION_EVENT_REQUIRED_FILES = [
     WORKSPACE_ROOT / 'tools/openmoss/control_center/task_receipt_engine.py',
     WORKSPACE_ROOT / 'tools/openmoss/control_center/control_plane_builder.py',
 ]
+EXECUTION_EVENT_REQUIRED_FILES = [
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/conversation_events.py',
+    WORKSPACE_ROOT / 'tools/openmoss/autonomy/action_executor.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/task_status_snapshot.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/control_plane_builder.py',
+]
 GSTACK_LIFECYCLE = ['think', 'plan', 'build', 'review', 'test', 'ship', 'reflect']
 DOCTOR_RESOLUTION_REQUIRED_FIELDS = [
     "scope",
@@ -2817,6 +2823,198 @@ def _run_conversation_event_integration_checks() -> Dict[str, object]:
     }
 
 
+def _run_execution_event_integration_checks() -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：验证 runtime 执行交接是否已经进入同一条 conversation event 与 authoritative snapshot 真源。
+    - 输入角色：消费 Telegram route、task state、execution handoff schema 与 control-plane registry。
+    - 输出角色：供 canonical doctor 判定执行链是否仍有 transport/runtime 分叉。
+    """
+    errors = []
+    for path in EXECUTION_EVENT_REQUIRED_FILES:
+        if not path.exists():
+            errors.append(f'missing_required_file:{path}')
+
+    if str(CONTROL_CENTER_ROOT) not in sys.path:
+        sys.path.insert(0, str(CONTROL_CENTER_ROOT))
+    if str(AUTONOMY_DIR) not in sys.path:
+        sys.path.insert(0, str(AUTONOMY_DIR))
+
+    from control_center_schemas import build_execution_handoff_schema
+    from control_plane_builder import build_control_plane
+    from conversation_context import conversation_focus_path, instruction_envelope_path, load_conversation_focus
+    from conversation_events import build_conversation_event_registry, conversation_event_path, load_conversation_events, record_execution_handoff_event
+    from telegram_binding import bind_telegram_message
+
+    provider = 'telegram'
+    conversation_id = 'doctor-execution-kernel'
+    focus_path = conversation_focus_path(provider, conversation_id)
+    envelope_path = instruction_envelope_path(provider, conversation_id)
+    event_path = conversation_event_path(provider, conversation_id)
+    route_path = BRAIN_ROUTES_ROOT / provider / f'{conversation_id}.json'
+    receipt_path = BRAIN_RECEIPTS_ROOT / provider / f'{conversation_id}.json'
+    link_file = link_path(provider, conversation_id)
+    touched_task_ids: set[str] = set()
+    for path in [focus_path, envelope_path, event_path, route_path, receipt_path, link_file]:
+        if path.exists():
+            path.unlink()
+    try:
+        result = bind_telegram_message(
+            chat_id=conversation_id,
+            chat_type='group',
+            sender_id='doctor-user',
+            sender_name='doctor-execution-user',
+            message_id='exec-1',
+            text='用 ziniao 浏览器打开已绑定店铺，进入对账中心导出三月份账务明细，并在导出历史确认结果',
+        )
+        task_id = str(((result.get('brain_route', {}) or {}).get('task_id', ''))).strip()
+        if task_id:
+            touched_task_ids.add(task_id)
+        focus = load_conversation_focus(provider, conversation_id)
+        link = find_link_by_task_id(task_id) if task_id else {}
+        state = load_state(task_id) if task_id else None
+        if state and task_id:
+            state.status = 'waiting_external'
+            state.current_stage = state.current_stage or 'execute'
+            state.next_action = 'poll_run:doctor-run-1'
+            state.metadata['active_execution'] = {
+                'run_id': 'doctor-run-1',
+                'stage_name': state.current_stage,
+                'session_key': f"{str(link.get('session_key', '')).strip()}:autonomy:{task_id}",
+                'linked_session_key': str(link.get('session_key', '')).strip(),
+                'dispatched_at': _utc_now_iso(),
+            }
+            state.metadata['waiting_external'] = {
+                'run_id': 'doctor-run-1',
+                'stage_name': state.current_stage,
+                'reason': 'doctor_execution_check',
+                'wait_status': 'timeout',
+                'wait_error': '',
+                'last_polled_at': _utc_now_iso(),
+            }
+            save_state(state)
+        record_execution_handoff_event(
+            provider=provider,
+            conversation_id=conversation_id,
+            execution_handoff=build_execution_handoff_schema(
+                enabled=True,
+                contract_source='doctor_execution_check',
+                task_id=task_id,
+                stage_name='execute',
+                handoff_status='waiting_external',
+                provider=provider,
+                conversation_id=conversation_id,
+                session_key=str(focus.get('session_key', '')).strip(),
+                linked_session_key=str(link.get('session_key', '')).strip(),
+                execution_session_key=f"{str(link.get('session_key', '')).strip()}:autonomy:{task_id}",
+                run_id='doctor-run-1',
+                runtime_mode=str(focus.get('resolved_mode', '')).strip(),
+                runtime_mode_reason=str(focus.get('resolved_mode_reason', '')).strip(),
+                next_action='poll_run:doctor-run-1',
+                wait_status='timeout',
+                dispatched_at=_utc_now_iso(),
+                updated_at=_utc_now_iso(),
+                conversation_focus_ready=bool(focus.get('context_ready')),
+            ),
+        )
+        snapshot = build_task_status_snapshot(task_id) if task_id else {}
+
+        events = load_conversation_events(provider, conversation_id, limit=20)
+        event_types = [str(item.get('event_type', '')).strip() for item in events]
+        if 'execution_handoff_updated' not in event_types:
+            errors.append('execution_event_missing_execution_event')
+        if {'route_resolved', 'execution_handoff_updated'}.issubset(set(event_types)):
+            if event_types.index('route_resolved') > event_types.index('execution_handoff_updated'):
+                errors.append('execution_event_invalid_event_order')
+        execution_events = [item for item in events if str(item.get('event_type', '')).strip() == 'execution_handoff_updated']
+        execution_payload = ((execution_events[-1] if execution_events else {}).get('payload', {}) or {})
+        execution_handoff = execution_payload.get('execution_handoff', {}) or {}
+        if str(execution_payload.get('handoff_status', '') or execution_handoff.get('handoff_status', '')).strip() != 'waiting_external':
+            errors.append('execution_event_missing_handoff_status')
+        if not str((execution_handoff.get('execution_session_key', ''))).strip():
+            errors.append('execution_event_missing_execution_session_key')
+        if not str((execution_handoff.get('runtime_mode', ''))).strip():
+            errors.append('execution_event_missing_runtime_mode')
+        if not bool((snapshot.get('execution_handoff', {}) or {}).get('enabled')):
+            errors.append('execution_event_snapshot_missing_handoff')
+        if str(((snapshot.get('execution_handoff', {}) or {}).get('handoff_status', '')).strip()) != 'waiting_external':
+            errors.append('execution_event_snapshot_missing_waiting_status')
+        if str((((snapshot.get('reply_contract', {}) or {}).get('execution_handoff', {}) or {}).get('handoff_status', '')).strip()) != 'waiting_external':
+            errors.append('execution_event_reply_contract_missing_handoff')
+
+        registry = build_conversation_event_registry()
+        row = next(
+            (
+                item
+                for item in (registry.get('items', []) or [])
+                if str(item.get('provider', '')).strip() == provider and str(item.get('conversation_id', '')).strip() == conversation_id
+            ),
+            {},
+        )
+        if not row:
+            errors.append('execution_event_registry_missing_row')
+        if not bool(row.get('has_execution_event')):
+            errors.append('execution_event_registry_missing_execution_flag')
+        if str(row.get('latest_execution_status', '')).strip() != 'waiting_external':
+            errors.append('execution_event_registry_missing_latest_status')
+
+        plane = build_control_plane(stale_after_seconds=300, escalation_after_seconds=900)
+        summary = (plane.get('system_snapshot', {}) or {}).get('summary', {}) or {}
+        if 'conversation_event_with_execution_total' not in summary:
+            errors.append('execution_event_control_plane_missing_execution_total')
+    finally:
+        for path in [focus_path, envelope_path, event_path, route_path, receipt_path, link_file]:
+            if path.exists():
+                path.unlink()
+        for parent in [event_path.parent, route_path.parent, receipt_path.parent]:
+            if parent.exists():
+                try:
+                    next(parent.iterdir())
+                except StopIteration:
+                    parent.rmdir()
+        for task_id in touched_task_ids:
+            task_path = task_dir(task_id)
+            if task_path.exists():
+                shutil.rmtree(task_path, ignore_errors=True)
+
+    return {
+        'single_doctor_rule': True,
+        'authoritative_doctor': 'tools/openmoss/control_center/system_doctor.py',
+        'required_files_checked': len(EXECUTION_EVENT_REQUIRED_FILES),
+        'required_files': [str(path.relative_to(WORKSPACE_ROOT)) for path in EXECUTION_EVENT_REQUIRED_FILES],
+        'execution_event_contract': not any(
+            item in {
+                'execution_event_missing_execution_event',
+                'execution_event_invalid_event_order',
+            }
+            for item in errors
+        ),
+        'execution_handoff_payload_contract': not any(
+            item in {
+                'execution_event_missing_handoff_status',
+                'execution_event_missing_execution_session_key',
+                'execution_event_missing_runtime_mode',
+                'execution_event_snapshot_missing_handoff',
+                'execution_event_snapshot_missing_waiting_status',
+                'execution_event_reply_contract_missing_handoff',
+            }
+            for item in errors
+        ),
+        'control_plane_visibility_contract': not any(
+            item in {
+                'execution_event_registry_missing_row',
+                'execution_event_registry_missing_execution_flag',
+                'execution_event_registry_missing_latest_status',
+                'execution_event_control_plane_missing_execution_total',
+            }
+            for item in errors
+        ),
+        'execution_event_chain': 'ok' if not errors else 'error',
+        'errors': errors,
+        'ok': not errors,
+    }
+
+
 def _run_integration_health_checks() -> Dict[str, object]:
     """
     中文注解：
@@ -2829,12 +3027,14 @@ def _run_integration_health_checks() -> Dict[str, object]:
     conversation_context = _run_conversation_context_integration_checks()
     reply_projection = _run_reply_projection_integration_checks()
     conversation_events = _run_conversation_event_integration_checks()
+    execution_events = _run_execution_event_integration_checks()
     errors = (
         list(gstack.get('errors', []) or [])
         + list(acquisition_hand.get('errors', []) or [])
         + list(conversation_context.get('errors', []) or [])
         + list(reply_projection.get('errors', []) or [])
         + list(conversation_events.get('errors', []) or [])
+        + list(execution_events.get('errors', []) or [])
     )
     return {
         'single_doctor_rule': True,
@@ -2844,19 +3044,22 @@ def _run_integration_health_checks() -> Dict[str, object]:
         + int(acquisition_hand.get('required_files_checked', 0) or 0)
         + int(conversation_context.get('required_files_checked', 0) or 0)
         + int(reply_projection.get('required_files_checked', 0) or 0)
-        + int(conversation_events.get('required_files_checked', 0) or 0),
+        + int(conversation_events.get('required_files_checked', 0) or 0)
+        + int(execution_events.get('required_files_checked', 0) or 0),
         'lifecycle': GSTACK_LIFECYCLE,
         'gstack': gstack,
         'acquisition_hand': acquisition_hand,
         'conversation_context': conversation_context,
         'reply_projection': reply_projection,
         'conversation_events': conversation_events,
+        'execution_events': execution_events,
         'coding_chain': gstack.get('coding_chain', 'unknown'),
         'noncoding_chain': gstack.get('noncoding_chain', 'unknown'),
         'acquisition_chain': acquisition_hand.get('acquisition_chain', 'unknown'),
         'conversation_context_chain': conversation_context.get('conversation_context_chain', 'unknown'),
         'reply_projection_chain': reply_projection.get('reply_projection_chain', 'unknown'),
         'conversation_event_chain': conversation_events.get('conversation_event_chain', 'unknown'),
+        'execution_event_chain': execution_events.get('execution_event_chain', 'unknown'),
         'errors': errors,
         'ok': (
             bool(gstack.get('ok'))
@@ -2864,6 +3067,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
             and bool(conversation_context.get('ok'))
             and bool(reply_projection.get('ok'))
             and bool(conversation_events.get('ok'))
+            and bool(execution_events.get('ok'))
         ),
     }
 

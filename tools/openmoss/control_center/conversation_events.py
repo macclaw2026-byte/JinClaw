@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
+from control_center_schemas import build_execution_handoff_schema
 from paths import CONVERSATION_EVENT_REGISTRY_PATH, CONVERSATION_EVENTS_ROOT
 
 
@@ -90,6 +91,34 @@ def load_conversation_events(provider: str, conversation_id: str, *, limit: int 
     return rows
 
 
+def record_execution_handoff_event(
+    *,
+    provider: str,
+    conversation_id: str,
+    execution_handoff: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：把 runtime 执行交接事实写入 conversation event 流。
+    - 输入角色：消费 action executor / doctor 合成出的 execution_handoff 合同。
+    - 输出角色：供 doctor、status、control plane 判断 transport 和 runtime 是否已经共用同一条执行真源。
+    """
+    payload = build_execution_handoff_schema(**dict(execution_handoff or {}))
+    return record_conversation_event(
+        provider=provider,
+        conversation_id=conversation_id,
+        event_type="execution_handoff_updated",
+        payload={
+            "task_id": str(payload.get("task_id", "")).strip(),
+            "stage_name": str(payload.get("stage_name", "")).strip(),
+            "handoff_status": str(payload.get("handoff_status", "")).strip(),
+            "runtime_mode": str(payload.get("runtime_mode", "")).strip(),
+            "execution_session_key": str(payload.get("execution_session_key", "")).strip(),
+            "execution_handoff": payload,
+        },
+    )
+
+
 def build_conversation_event_registry() -> Dict[str, Any]:
     """
     中文注解：
@@ -114,6 +143,9 @@ def build_conversation_event_registry() -> Dict[str, Any]:
             latest = events[-1]
             event_types = [str(item.get("event_type", "")).strip() for item in events if str(item.get("event_type", "")).strip()]
             latest_payload = latest.get("payload", {}) or {}
+            execution_events = [item for item in events if str(item.get("event_type", "")).strip() == "execution_handoff_updated"]
+            latest_execution_payload = ((execution_events[-1] if execution_events else {}).get("payload", {}) or {})
+            latest_execution_handoff = latest_execution_payload.get("execution_handoff", {}) or {}
             rows.append(
                 {
                     "provider": str(latest.get("provider", "")).strip(),
@@ -123,11 +155,15 @@ def build_conversation_event_registry() -> Dict[str, Any]:
                     "latest_task_id": str(latest_payload.get("task_id", "")).strip(),
                     "latest_mode": str(latest_payload.get("mode", "")).strip(),
                     "latest_message_kind": str((latest_payload.get("reply_projection", {}) or {}).get("message_kind", "")).strip(),
+                    "latest_execution_status": str(latest_execution_payload.get("handoff_status", "") or latest_execution_handoff.get("handoff_status", "")).strip(),
+                    "latest_execution_stage": str(latest_execution_payload.get("stage_name", "") or latest_execution_handoff.get("stage_name", "")).strip(),
+                    "latest_execution_runtime_mode": str(latest_execution_payload.get("runtime_mode", "") or latest_execution_handoff.get("runtime_mode", "")).strip(),
                     "latest_recorded_at": str(latest.get("recorded_at", "")).strip(),
                     "path": str(path),
                     "has_ingress_event": "ingress_received" in event_types,
                     "has_route_event": "route_resolved" in event_types,
                     "has_reply_event": "reply_projection_emitted" in event_types,
+                    "has_execution_event": bool(execution_events),
                 }
             )
     rows.sort(key=lambda item: (str(item.get("provider", "")), str(item.get("conversation_id", ""))))
@@ -140,6 +176,7 @@ def build_conversation_event_registry() -> Dict[str, Any]:
             "with_ingress_total": sum(1 for item in rows if item.get("has_ingress_event")),
             "with_route_total": sum(1 for item in rows if item.get("has_route_event")),
             "with_reply_total": sum(1 for item in rows if item.get("has_reply_event")),
+            "with_execution_total": sum(1 for item in rows if item.get("has_execution_event")),
         },
     }
     CONVERSATION_EVENT_REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)

@@ -605,6 +605,58 @@ def build_acquisition_response_handoff_schema(
     }
 
 
+def build_execution_handoff_schema(
+    *,
+    enabled: bool = False,
+    contract_source: str = "",
+    task_id: str = "",
+    stage_name: str = "",
+    handoff_status: str = "",
+    provider: str = "",
+    conversation_id: str = "",
+    session_key: str = "",
+    linked_session_key: str = "",
+    execution_session_key: str = "",
+    run_id: str = "",
+    runtime_mode: str = "",
+    runtime_mode_reason: str = "",
+    next_action: str = "",
+    wait_status: str = "",
+    wait_error: str = "",
+    dispatched_at: str = "",
+    updated_at: str = "",
+    conversation_focus_ready: bool = False,
+    must_use_authoritative_snapshot: bool = True,
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：构造 execution handoff schema。
+    - 设计意图：把“任务已经真正交给 runtime/agent 执行”的事实升级成统一协议，供 snapshot、doctor、ops、transport event 一致消费。
+    """
+    return {
+        "enabled": bool(enabled),
+        "contract_source": str(contract_source).strip(),
+        "task_id": str(task_id).strip(),
+        "stage_name": str(stage_name).strip(),
+        "handoff_status": str(handoff_status).strip(),
+        "provider": str(provider).strip(),
+        "conversation_id": str(conversation_id).strip(),
+        "session_key": str(session_key).strip(),
+        "linked_session_key": str(linked_session_key).strip(),
+        "execution_session_key": str(execution_session_key).strip(),
+        "run_id": str(run_id).strip(),
+        "runtime_mode": str(runtime_mode).strip(),
+        "runtime_mode_reason": str(runtime_mode_reason).strip(),
+        "next_action": str(next_action).strip(),
+        "wait_status": str(wait_status).strip(),
+        "wait_error": str(wait_error).strip(),
+        "dispatched_at": str(dispatched_at).strip(),
+        "updated_at": str(updated_at).strip(),
+        "conversation_focus_ready": bool(conversation_focus_ready),
+        "must_use_authoritative_snapshot": bool(must_use_authoritative_snapshot),
+    }
+
+
 def build_acquisition_answer_synthesis_schema(
     *,
     scope: str = "site",

@@ -76,6 +76,11 @@ DOCTOR_REQUIRED_CONVERSATION_EVENT_CONTRACTS = (
     "reply_event_contract",
     "control_plane_visibility_contract",
 )
+DOCTOR_REQUIRED_EXECUTION_EVENT_CONTRACTS = (
+    "execution_event_contract",
+    "execution_handoff_payload_contract",
+    "control_plane_visibility_contract",
+)
 
 
 def utc_now() -> datetime:
@@ -409,6 +414,7 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
     conversation_context = integration_health.get("conversation_context", {}) or {}
     reply_projection = integration_health.get("reply_projection", {}) or {}
     conversation_events = integration_health.get("conversation_events", {}) or {}
+    execution_events = integration_health.get("execution_events", {}) or {}
     checked_at = str(payload.get("checked_at", "")).strip()
     return {
         "last_run_exists": DOCTOR_LAST_RUN_PATH.exists(),
@@ -461,6 +467,7 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
             "conversation_context_chain": str(integration_health.get("conversation_context_chain", "")).strip(),
             "reply_projection_chain": str(integration_health.get("reply_projection_chain", "")).strip(),
             "conversation_event_chain": str(integration_health.get("conversation_event_chain", "")).strip(),
+            "execution_event_chain": str(integration_health.get("execution_event_chain", "")).strip(),
             "conversation_context": {
                 "instruction_envelope_contract": bool(conversation_context.get("instruction_envelope_contract")),
                 "focus_contract": bool(conversation_context.get("focus_contract")),
@@ -477,6 +484,11 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
                 "route_event_contract": bool(conversation_events.get("route_event_contract")),
                 "reply_event_contract": bool(conversation_events.get("reply_event_contract")),
                 "control_plane_visibility_contract": bool(conversation_events.get("control_plane_visibility_contract")),
+            },
+            "execution_events": {
+                "execution_event_contract": bool(execution_events.get("execution_event_contract")),
+                "execution_handoff_payload_contract": bool(execution_events.get("execution_handoff_payload_contract")),
+                "control_plane_visibility_contract": bool(execution_events.get("control_plane_visibility_contract")),
             },
         },
     }
@@ -508,6 +520,8 @@ def _doctor_runtime_payload_complete(payload: Dict[str, Any]) -> bool:
         return False
     if not str(integration.get("conversation_event_chain", "")).strip():
         return False
+    if not str(integration.get("execution_event_chain", "")).strip():
+        return False
     acquisition_hand = integration.get("acquisition_hand", {}) or {}
     if not isinstance(acquisition_hand, dict) or not acquisition_hand:
         return False
@@ -520,12 +534,17 @@ def _doctor_runtime_payload_complete(payload: Dict[str, Any]) -> bool:
     conversation_events = integration.get("conversation_events", {}) or {}
     if not isinstance(conversation_events, dict) or not conversation_events:
         return False
+    execution_events = integration.get("execution_events", {}) or {}
+    if not isinstance(execution_events, dict) or not execution_events:
+        return False
     return all(name in acquisition_hand for name in DOCTOR_REQUIRED_ACQUISITION_CONTRACTS) and all(
         name in conversation_context for name in DOCTOR_REQUIRED_CONVERSATION_CONTEXT_CONTRACTS
     ) and all(
         name in reply_projection for name in DOCTOR_REQUIRED_REPLY_PROJECTION_CONTRACTS
     ) and all(
         name in conversation_events for name in DOCTOR_REQUIRED_CONVERSATION_EVENT_CONTRACTS
+    ) and all(
+        name in execution_events for name in DOCTOR_REQUIRED_EXECUTION_EVENT_CONTRACTS
     )
 
 

@@ -24,6 +24,7 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertIn('conversation-context-kernel', names)
         self.assertIn('reply-projection-kernel', names)
         self.assertIn('conversation-event-kernel', names)
+        self.assertIn('execution-event-kernel', names)
 
     def test_control_plane_exposes_doctor_coverage(self):
         plane = build_control_plane(stale_after_seconds=300, escalation_after_seconds=900)
@@ -73,6 +74,11 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertTrue((integration.get('conversation_events', {}) or {}).get('route_event_contract'))
         self.assertTrue((integration.get('conversation_events', {}) or {}).get('reply_event_contract'))
         self.assertTrue((integration.get('conversation_events', {}) or {}).get('control_plane_visibility_contract'))
+        self.assertEqual(integration.get('execution_event_chain'), 'ok')
+        self.assertTrue((integration.get('execution_events', {}) or {}).get('ok'))
+        self.assertTrue((integration.get('execution_events', {}) or {}).get('execution_event_contract'))
+        self.assertTrue((integration.get('execution_events', {}) or {}).get('execution_handoff_payload_contract'))
+        self.assertTrue((integration.get('execution_events', {}) or {}).get('control_plane_visibility_contract'))
 
 
 if __name__ == '__main__':
