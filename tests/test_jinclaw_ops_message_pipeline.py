@@ -73,6 +73,48 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
             'project_scheduler_policy': {},
         }
 
+    def _fresh_doctor_result(self):
+        return {
+            'checked_at': '2026-04-13T18:15:00+00:00',
+            'acquisition_health': {
+                'enabled': True,
+                'adapter_coverage': {
+                    'sites_total': 4,
+                    'sites_production_ready': 3,
+                    'sites_attention_required': 1,
+                    'available_adapter_total': 12,
+                    'validation_family_total': 6,
+                    'validation_families': ['official', 'browser', 'static'],
+                    'source_trust_tier_total': 6,
+                    'source_trust_tiers': ['official_source', 'public_fetch'],
+                    'browser_runtime_ready_total': 5,
+                    'browser_execution_profiles': ['dom_capture', 'stealth_scroll_capture'],
+                    'stability_score': 72.5,
+                },
+                'attention_sites': [],
+            },
+            'integration_health': {
+                'single_doctor_rule': True,
+                'authoritative_doctor': 'tools/openmoss/control_center/system_doctor.py',
+                'coding_chain': 'ok',
+                'noncoding_chain': 'ok',
+                'acquisition_chain': 'ok',
+                'acquisition_hand': {
+                    'field_synthesis_contract': True,
+                    'delivery_requirements_contract': True,
+                    'source_trust_contract': True,
+                    'release_governance_contract': True,
+                    'release_disclosure_contract': True,
+                    'answer_synthesis_contract': True,
+                    'answer_response_contract': True,
+                    'response_handoff_contract': True,
+                    'browser_execution_contract': True,
+                    'validation_family_contract': True,
+                },
+                'ok': True,
+            },
+        }
+
     def test_message_pipeline_reconciles_telegram_user_with_main_reply(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
@@ -176,6 +218,92 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
             with patch.object(jinclaw_ops, 'status_payload', return_value=self._base_status_payload(summary)):
                 payload = jinclaw_ops.doctor_payload()
             self.assertIn('telegram_user_message_without_substantive_reply', payload['issues'])
+
+    def test_doctor_runtime_summary_refreshes_incomplete_cache(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            last_run = tmp / 'last_run.json'
+            self._write_json(
+                last_run,
+                {
+                    'checked_at': '2026-04-13T18:00:00+00:00',
+                    'integration_health': {
+                        'ok': True,
+                        'coding_chain': 'ok',
+                        'noncoding_chain': 'ok',
+                    },
+                },
+            )
+            fresh = self._fresh_doctor_result()
+            with patch.object(jinclaw_ops, 'DOCTOR_LAST_RUN_PATH', last_run), patch.object(
+                jinclaw_ops,
+                '_run_canonical_doctor_refresh',
+                return_value={'ok': True, 'payload': fresh, 'error': ''},
+            ), patch.object(
+                jinclaw_ops,
+                'utc_now',
+                return_value=datetime(2026, 4, 13, 18, 10, 0, tzinfo=timezone.utc),
+            ):
+                summary = jinclaw_ops._doctor_runtime_summary(refresh_policy='if_needed')
+
+            self.assertEqual(summary['last_run_at'], fresh['checked_at'])
+            self.assertEqual(summary['integration_health']['acquisition_chain'], 'ok')
+            self.assertTrue(summary['acquisition_health']['field_synthesis_contract'])
+            self.assertTrue(summary['acquisition_health']['response_handoff_contract'])
+            self.assertTrue(summary['acquisition_health']['browser_execution_contract'])
+            self.assertTrue(summary['acquisition_health']['validation_family_contract'])
+            self.assertTrue(summary['refresh']['attempted'])
+            self.assertTrue(summary['refresh']['ok'])
+            self.assertEqual(summary['refresh']['reason'], 'incomplete')
+            self.assertEqual(summary['refresh']['source'], 'canonical_refresh')
+            self.assertTrue(summary['refresh']['payload_complete'])
+
+    def test_doctor_payload_requests_fresh_canonical_doctor(self):
+        summary = {
+            'sessions_index_exists': True,
+            'telegram_session_count': 1,
+            'latest_user_at': '',
+            'user_wait_seconds': None,
+            'assistant_after_latest_user': False,
+            'assistant_substantive_after_latest_user': False,
+            'internal_flow_leak_detected': False,
+        }
+        mock_status = self._base_status_payload(summary)
+        with patch.object(jinclaw_ops, 'status_payload', return_value=mock_status) as mocked_status:
+            payload = jinclaw_ops.doctor_payload()
+
+        mocked_status.assert_called_once_with(refresh_doctor=True)
+        self.assertTrue(payload['ok'])
+
+    def test_upgrade_check_requests_fresh_doctor_payload(self):
+        watch_payload = {
+            'checked_at': '2026-04-13T18:10:00+00:00',
+            'repo_count': 0,
+            'fetch_mode': 'fresh',
+            'degraded': False,
+            'degraded_sources': [],
+        }
+        with patch.object(
+            jinclaw_ops,
+            'run_cmd',
+            return_value={
+                'ok': True,
+                'returncode': 0,
+                'stdout': json.dumps(watch_payload, ensure_ascii=False),
+                'stderr': '',
+            },
+        ), patch.object(jinclaw_ops, 'doctor_payload', return_value={'ok': True}) as mocked_doctor, patch.object(
+            jinclaw_ops, 'git_summary', return_value={'branch': 'test'}
+        ), patch.object(
+            jinclaw_ops, 'UPSTREAM_WATCH_STATE_PATH', Path('/tmp/does-not-exist.json')
+        ), patch.object(
+            jinclaw_ops, 'UPSTREAM_WATCH_REPORT_PATH', Path('/tmp/does-not-exist.md')
+        ):
+            payload = jinclaw_ops.upgrade_check_payload()
+
+        mocked_doctor.assert_called_once_with(refresh_doctor=True)
+        self.assertTrue(payload['watch_run']['ok'])
+        self.assertTrue(payload['doctor']['ok'])
 
     def test_upgrade_check_surfaces_degraded_watch_run_metadata(self):
         with tempfile.TemporaryDirectory() as tmpdir:
