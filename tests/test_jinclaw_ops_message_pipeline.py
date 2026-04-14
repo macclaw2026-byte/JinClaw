@@ -100,6 +100,11 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                         'self_heal_ladder_contract': True,
                         'authoritative_summary_visibility_contract': True,
                     },
+                    'delivery_plane': {
+                        'delivery_contract_contract': True,
+                        'receipt_delivery_contract_contract': True,
+                        'authoritative_summary_visibility_contract': True,
+                    },
                     'skill_action_plane': {
                         'skill_action_plane_contract': True,
                         'runtime_prompt_attachment_contract': True,
@@ -161,6 +166,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                 'completion_reflection_chain': 'ok',
                 'goal_continuation_chain': 'ok',
                 'capability_gap_chain': 'ok',
+                'delivery_plane_chain': 'ok',
                 'skill_action_plane_chain': 'ok',
                 'transport_binding_chain': 'ok',
                 'acquisition_hand': {
@@ -214,6 +220,11 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                 'capability_gap': {
                     'capability_gap_contract': True,
                     'self_heal_ladder_contract': True,
+                    'authoritative_summary_visibility_contract': True,
+                },
+                'delivery_plane': {
+                    'delivery_contract_contract': True,
+                    'receipt_delivery_contract_contract': True,
                     'authoritative_summary_visibility_contract': True,
                 },
                 'skill_action_plane': {

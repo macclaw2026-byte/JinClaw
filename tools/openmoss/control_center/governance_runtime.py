@@ -534,6 +534,23 @@ def _build_doctor_coverage_bundle() -> Dict[str, Any]:
                 "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.capability_gap",
             },
             {
+                "name": "delivery-plane-kernel",
+                "required_files": [
+                    "tools/openmoss/control_center/control_center_schemas.py",
+                    "tools/openmoss/control_center/task_status_snapshot.py",
+                    "tools/openmoss/control_center/task_receipt_engine.py",
+                    "tools/openmoss/control_center/system_doctor.py",
+                ],
+                "doctor_checks": [
+                    "delivery_contract_contract",
+                    "receipt_delivery_contract_contract",
+                    "authoritative_summary_visibility",
+                ],
+                "primary_monitor": "system_doctor.integration_health.delivery_plane",
+                "backstop_monitor": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.delivery_plane",
+                "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.delivery_plane",
+            },
+            {
                 "name": "skill-action-plane-kernel",
                 "required_files": [
                     "tools/openmoss/control_center/orchestrator.py",

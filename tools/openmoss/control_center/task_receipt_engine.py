@@ -410,6 +410,8 @@ def emit_route_receipt(route: Dict[str, object], *, provider: str, conversation_
         "session_key": session_key,
         "governance": (route.get("authoritative_task_status", {}) or {}).get("governance", {}),
     }
+    delivery_contract = ((route.get("authoritative_task_status", {}) or {}).get("delivery_contract", {}) or {})
+    receipt["delivery_contract"] = delivery_contract
     _write_json(BRAIN_RECEIPTS_ROOT / provider / f"{conversation_id}.json", receipt)
 
     attachments = _attachment_candidates_from_route(route)
@@ -427,11 +429,12 @@ def emit_route_receipt(route: Dict[str, object], *, provider: str, conversation_
     receipt["delivery"] = delivery
     receipt["attachment_delivery"] = attachment_delivery
     receipt["attachments"] = attachments
-    receipt["delivery_strategy"] = (
-        "native_chat_attachment_first"
-        if attachments
-        else "session_receipt_only"
-    )
+    if bool(delivery_contract.get("prefer_attachment_delivery")) and attachments:
+        receipt["delivery_strategy"] = "delivery_contract_attachment_first"
+    elif attachments:
+        receipt["delivery_strategy"] = "native_chat_attachment_first"
+    else:
+        receipt["delivery_strategy"] = "session_receipt_only"
     record_conversation_event(
         provider=provider,
         conversation_id=conversation_id,
@@ -443,6 +446,7 @@ def emit_route_receipt(route: Dict[str, object], *, provider: str, conversation_
             "delivery_strategy": str(receipt.get("delivery_strategy", "")).strip(),
             "delivery_delivered": bool((delivery or {}).get("delivered")),
             "attachment_delivered": bool((attachment_delivery or {}).get("delivered")),
+            "delivery_contract": dict(delivery_contract or {}),
             "reply_projection": dict(reply_projection or {}),
         },
     )

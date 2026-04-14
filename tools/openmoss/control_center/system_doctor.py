@@ -135,6 +135,12 @@ CAPABILITY_GAP_REQUIRED_FILES = [
     WORKSPACE_ROOT / 'tools/openmoss/control_center/task_status_snapshot.py',
     WORKSPACE_ROOT / 'tools/openmoss/control_center/system_doctor.py',
 ]
+DELIVERY_PLANE_REQUIRED_FILES = [
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/control_center_schemas.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/task_status_snapshot.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/task_receipt_engine.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/system_doctor.py',
+]
 SKILL_ACTION_PLANE_REQUIRED_FILES = [
     WORKSPACE_ROOT / 'tools/openmoss/control_center/orchestrator.py',
     WORKSPACE_ROOT / 'tools/openmoss/control_center/context_builder.py',
@@ -3453,6 +3459,149 @@ def _run_capability_gap_integration_checks() -> Dict[str, object]:
     }
 
 
+def _run_delivery_plane_integration_checks() -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：验证 delivery contract 是否已经进入 authoritative snapshot 与 receipt 链。
+    - 输入角色：消费 terminal task、output attachment、link/provider 以及 receipt emission。
+    - 输出角色：供 doctor/ops 判断结果交付平面是否已经形成统一合同。
+    """
+    errors: List[str] = []
+    for path in DELIVERY_PLANE_REQUIRED_FILES:
+        if not path.exists():
+            errors.append(f"missing_required_file:{path.relative_to(WORKSPACE_ROOT)}")
+
+    from unittest.mock import patch
+
+    task_id = "doctor-delivery-plane"
+    provider = "telegram"
+    conversation_id = "doctor-delivery-plane"
+    task_path = task_dir(task_id)
+    receipt_path = BRAIN_RECEIPTS_ROOT / provider / f"{conversation_id}.json"
+    receipt_parent = receipt_path.parent
+    link_file = link_path(provider, conversation_id)
+    try:
+        if task_path.exists():
+            shutil.rmtree(task_path, ignore_errors=True)
+        if link_file.exists():
+            link_file.unlink()
+        if receipt_path.exists():
+            receipt_path.unlink()
+        contract = TaskContract(
+            task_id=task_id,
+            user_goal="Deliver a verified result attachment and summary back to Telegram.",
+            done_definition="delivery contract and receipt are both visible",
+            stages=[
+                StageContract(name="understand", goal="understand"),
+                StageContract(name="plan", goal="plan"),
+                StageContract(name="execute", goal="execute"),
+                StageContract(name="verify", goal="verify"),
+                StageContract(name="learn", goal="learn"),
+            ],
+        )
+        create_task_from_contract(contract)
+        state = load_state(task_id)
+        state.status = "completed"
+        state.current_stage = "learn"
+        state.next_action = "noop"
+        for name in state.stage_order:
+            stage = state.stages.get(name)
+            if not stage:
+                continue
+            stage.status = "completed"
+            stage.summary = f"{name} finished for delivery plane check"
+            if name == "verify":
+                stage.verification_status = "passed"
+            stage.updated_at = _utc_now_iso()
+            stage.completed_at = _utc_now_iso()
+        report_path = task_path / "delivery-report.csv"
+        report_path.write_text("id,value\n1,ok\n", encoding="utf-8")
+        state.metadata["business_outcome"] = {
+            "goal_satisfied": True,
+            "user_visible_result_confirmed": True,
+            "proof_summary": "doctor delivery contract proof",
+            "evidence": {"report": str(report_path)},
+        }
+        state.metadata["delivery_artifacts"] = [str(report_path)]
+        state.metadata["delivery_schedule"] = {"cadence": "daily"}
+        save_state(state)
+        link_payload = {
+            "provider": provider,
+            "conversation_id": conversation_id,
+            "conversation_type": "group",
+            "task_id": task_id,
+            "goal": contract.user_goal,
+            "last_goal": contract.user_goal,
+            "session_key": "agent:main:telegram:group:doctor-delivery-plane",
+        }
+        link_file.parent.mkdir(parents=True, exist_ok=True)
+        link_file.write_text(json.dumps(link_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        snapshot = build_task_status_snapshot(task_id)
+        delivery_contract = snapshot.get("delivery_contract", {}) or {}
+        if not bool(delivery_contract.get("enabled")):
+            errors.append("delivery_plane_missing_contract")
+        if not bool(delivery_contract.get("prefer_attachment_delivery")):
+            errors.append("delivery_plane_missing_attachment_preference")
+        if str(delivery_contract.get("cadence", "")).strip() != "daily":
+            errors.append("delivery_plane_missing_cadence")
+        if not (delivery_contract.get("summary_lines", []) or []):
+            errors.append("delivery_plane_missing_summary_lines")
+        if "Delivery contract is" not in str(snapshot.get("authoritative_summary", "")):
+            errors.append("delivery_plane_missing_summary_signal")
+        with patch("task_receipt_engine._send_attachments_via_openclaw", return_value={"delivered": True, "reason": "doctor_stub"}):
+            receipt = emit_route_receipt(
+                {
+                    "mode": "authoritative_task_status",
+                    "task_id": task_id,
+                    "authoritative_task_status": snapshot,
+                },
+                provider=provider,
+                conversation_id=conversation_id,
+                session_key="",
+            )
+        if "delivery_contract" not in receipt:
+            errors.append("delivery_plane_missing_receipt_contract")
+        elif str((receipt.get("delivery_contract", {}) or {}).get("delivery_mode", "")).strip() != str(delivery_contract.get("delivery_mode", "")).strip():
+            errors.append("delivery_plane_receipt_contract_mismatch")
+        if str(receipt.get("delivery_strategy", "")).strip() != "delivery_contract_attachment_first":
+            errors.append("delivery_plane_missing_delivery_strategy")
+    finally:
+        if task_path.exists():
+            shutil.rmtree(task_path, ignore_errors=True)
+        if link_file.exists():
+            link_file.unlink()
+        if receipt_path.exists():
+            receipt_path.unlink()
+        if receipt_parent.exists() and not any(receipt_parent.iterdir()):
+            receipt_parent.rmdir()
+
+    return {
+        "required_files_checked": len(DELIVERY_PLANE_REQUIRED_FILES),
+        "required_files": [str(path.relative_to(WORKSPACE_ROOT)) for path in DELIVERY_PLANE_REQUIRED_FILES],
+        "delivery_contract_contract": not any(
+            item in {
+                "delivery_plane_missing_contract",
+                "delivery_plane_missing_attachment_preference",
+                "delivery_plane_missing_cadence",
+                "delivery_plane_missing_summary_lines",
+            }
+            for item in errors
+        ),
+        "receipt_delivery_contract_contract": not any(
+            item in {
+                "delivery_plane_missing_receipt_contract",
+                "delivery_plane_receipt_contract_mismatch",
+                "delivery_plane_missing_delivery_strategy",
+            }
+            for item in errors
+        ),
+        "authoritative_summary_visibility_contract": "delivery_plane_missing_summary_signal" not in errors,
+        "delivery_plane_chain": "ok" if not errors else "error",
+        "errors": errors,
+        "ok": not errors,
+    }
+
+
 def _run_skill_action_plane_integration_checks() -> Dict[str, object]:
     """
     中文注解：
@@ -3687,6 +3836,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
     completion_reflection = _run_completion_reflection_integration_checks()
     goal_continuation = _run_goal_continuation_integration_checks()
     capability_gap = _run_capability_gap_integration_checks()
+    delivery_plane = _run_delivery_plane_integration_checks()
     skill_action_plane = _run_skill_action_plane_integration_checks()
     transport_binding = _run_transport_binding_integration_checks()
     errors = (
@@ -3699,6 +3849,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         + list(completion_reflection.get('errors', []) or [])
         + list(goal_continuation.get('errors', []) or [])
         + list(capability_gap.get('errors', []) or [])
+        + list(delivery_plane.get('errors', []) or [])
         + list(skill_action_plane.get('errors', []) or [])
         + list(transport_binding.get('errors', []) or [])
     )
@@ -3715,6 +3866,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         + int(completion_reflection.get('required_files_checked', 0) or 0)
         + int(goal_continuation.get('required_files_checked', 0) or 0)
         + int(capability_gap.get('required_files_checked', 0) or 0)
+        + int(delivery_plane.get('required_files_checked', 0) or 0)
         + int(skill_action_plane.get('required_files_checked', 0) or 0)
         + int(transport_binding.get('required_files_checked', 0) or 0),
         'lifecycle': GSTACK_LIFECYCLE,
@@ -3727,6 +3879,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         'completion_reflection': completion_reflection,
         'goal_continuation': goal_continuation,
         'capability_gap': capability_gap,
+        'delivery_plane': delivery_plane,
         'skill_action_plane': skill_action_plane,
         'transport_binding': transport_binding,
         'coding_chain': gstack.get('coding_chain', 'unknown'),
@@ -3739,6 +3892,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         'completion_reflection_chain': completion_reflection.get('completion_reflection_chain', 'unknown'),
         'goal_continuation_chain': goal_continuation.get('goal_continuation_chain', 'unknown'),
         'capability_gap_chain': capability_gap.get('capability_gap_chain', 'unknown'),
+        'delivery_plane_chain': delivery_plane.get('delivery_plane_chain', 'unknown'),
         'skill_action_plane_chain': skill_action_plane.get('skill_action_plane_chain', 'unknown'),
         'transport_binding_chain': transport_binding.get('transport_binding_chain', 'unknown'),
         'errors': errors,
@@ -3752,6 +3906,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
             and bool(completion_reflection.get('ok'))
             and bool(goal_continuation.get('ok'))
             and bool(capability_gap.get('ok'))
+            and bool(delivery_plane.get('ok'))
             and bool(skill_action_plane.get('ok'))
             and bool(transport_binding.get('ok'))
         ),
