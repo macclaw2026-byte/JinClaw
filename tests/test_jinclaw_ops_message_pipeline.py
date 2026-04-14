@@ -82,6 +82,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                     'sites_total': 4,
                     'sites_production_ready': 3,
                     'sites_attention_required': 1,
+                    'sites_with_evidence_drift': 1,
                     'available_adapter_total': 12,
                     'validation_family_total': 6,
                     'validation_families': ['official', 'browser', 'static'],
@@ -89,7 +90,13 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                     'source_trust_tiers': ['official_source', 'public_fetch'],
                     'browser_runtime_ready_total': 5,
                     'browser_execution_profiles': ['dom_capture', 'stealth_scroll_capture'],
+                    'effective_width_score': 100.0,
+                    'evidence_alignment_score': 75.0,
                     'stability_score': 72.5,
+                    'completion_status': 'complete',
+                    'completion_score': 100.0,
+                    'goal_reached': True,
+                    'completion_blocker_total': 0,
                 },
                 'attention_sites': [],
             },
@@ -108,8 +115,10 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                     'answer_synthesis_contract': True,
                     'answer_response_contract': True,
                     'response_handoff_contract': True,
+                    'execution_truth_contract': True,
                     'browser_execution_contract': True,
                     'validation_family_contract': True,
+                    'objective_completion_contract': True,
                 },
                 'ok': True,
             },
@@ -250,8 +259,12 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
             self.assertEqual(summary['integration_health']['acquisition_chain'], 'ok')
             self.assertTrue(summary['acquisition_health']['field_synthesis_contract'])
             self.assertTrue(summary['acquisition_health']['response_handoff_contract'])
+            self.assertTrue(summary['acquisition_health']['execution_truth_contract'])
             self.assertTrue(summary['acquisition_health']['browser_execution_contract'])
             self.assertTrue(summary['acquisition_health']['validation_family_contract'])
+            self.assertTrue(summary['acquisition_health']['objective_completion_contract'])
+            self.assertEqual(summary['acquisition_health']['completion_status'], 'complete')
+            self.assertTrue(summary['acquisition_health']['goal_reached'])
             self.assertTrue(summary['refresh']['attempted'])
             self.assertTrue(summary['refresh']['ok'])
             self.assertEqual(summary['refresh']['reason'], 'incomplete')

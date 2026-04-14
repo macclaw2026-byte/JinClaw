@@ -2045,6 +2045,7 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
     from acp_dispatch_builder import build_acp_dispatch_request
     from crawler_probe_runner import _derive_probe_execution_plan
     from acquisition_result_normalizer import build_acquisition_execution_summary
+    from crawler_capability_profile import build_crawler_capability_profile
     from task_contract import TaskContract
     from action_executor import _dispatch_prompt
 
@@ -2238,6 +2239,17 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
         'doctor-acquisition-chain',
         'Collect current public marketplace pricing data, compare multiple sources, and return structured evidence with citations',
     )
+    crawler_profile = build_crawler_capability_profile()
+    crawler_summary = crawler_profile.get('summary', {}) or {}
+    completion_contract = crawler_profile.get('completion_contract', {}) or {}
+    if 'sites_with_evidence_drift' not in crawler_summary:
+        errors.append('acquisition_chain_missing_execution_truth_drift_summary')
+    if 'evidence_alignment_score' not in crawler_summary:
+        errors.append('acquisition_chain_missing_evidence_alignment_score')
+    if not completion_contract:
+        errors.append('acquisition_chain_missing_objective_completion_contract')
+    elif not bool(completion_contract.get('goal_reached')):
+        errors.append('acquisition_chain_objective_not_complete')
     return {
         'single_doctor_rule': True,
         'authoritative_doctor': 'tools/openmoss/control_center/system_doctor.py',
@@ -2295,6 +2307,14 @@ def _run_acquisition_integration_checks() -> Dict[str, object]:
         ),
         'validation_family_contract': not any(
             item in {'acquisition_chain_missing_validation_families', 'acquisition_chain_missing_validation_diversity_status'}
+            for item in errors
+        ),
+        'execution_truth_contract': not any(
+            item in {'acquisition_chain_missing_execution_truth_drift_summary', 'acquisition_chain_missing_evidence_alignment_score'}
+            for item in errors
+        ),
+        'objective_completion_contract': not any(
+            item in {'acquisition_chain_missing_objective_completion_contract', 'acquisition_chain_objective_not_complete'}
             for item in errors
         ),
         'acquisition_chain': 'ok' if not errors else 'error',
@@ -2503,9 +2523,10 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
             "site": site.get("site", ""),
             "readiness": site.get("readiness", ""),
             "primary_limitations": site.get("primary_limitations", []),
+            "evidence_alignment": (site.get("evidence_alignment", {}) or {}).get("status", ""),
         }
         for site in (crawler_profile.get("sites", []) or [])
-        if site.get("readiness") != "production_ready"
+        if site.get("readiness") == "attention_required"
     ][:5]
     result = {
         "checked_at": _utc_now_iso(),
@@ -2536,7 +2557,17 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
                 "sites_total": int(crawler_summary.get("sites_total", 0) or 0),
                 "sites_production_ready": int(crawler_summary.get("sites_production_ready", 0) or 0),
                 "sites_attention_required": int(crawler_summary.get("sites_attention_required", 0) or 0),
+                "sites_governed_ready": int(crawler_summary.get("sites_governed_ready", 0) or 0),
+                "sites_authorized_session_ready": int(crawler_summary.get("sites_authorized_session_ready", 0) or 0),
+                "sites_with_evidence_drift": int(crawler_summary.get("sites_with_evidence_drift", 0) or 0),
+                "governed_width_score": float(crawler_summary.get("governed_width_score", 0.0) or 0.0),
+                "effective_width_score": float(crawler_summary.get("effective_width_score", 0.0) or 0.0),
+                "evidence_alignment_score": float(crawler_summary.get("evidence_alignment_score", 0.0) or 0.0),
                 "stability_score": float(crawler_summary.get("stability_score", 0.0) or 0.0),
+                "completion_status": str(crawler_summary.get("completion_status", "")).strip() or "unknown",
+                "completion_score": float(crawler_summary.get("completion_score", 0.0) or 0.0),
+                "goal_reached": bool(crawler_summary.get("goal_reached")),
+                "completion_blocker_total": int(crawler_summary.get("completion_blocker_total", 0) or 0),
                 "available_adapter_total": int(acquisition_market.get("available_adapter_total", 0) or 0),
                 "observed_only_adapter_total": len(acquisition_market.get("observed_only_adapter_ids", []) or []),
                 "validation_family_total": len(validation_families),
@@ -2548,6 +2579,7 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
                 "browser_execution_profiles": browser_profiles[:8],
                 "available_adapter_ids": (acquisition_market.get("available_adapter_ids", []) or [])[:10],
             },
+            "completion_contract": crawler_profile.get("completion_contract", {}) or {},
             "attention_sites": crawler_attention_sites,
             "priority_actions": (crawler_profile.get("priority_actions", []) or [])[:6],
             "feedback": crawler_profile.get("feedback", {}) or {},

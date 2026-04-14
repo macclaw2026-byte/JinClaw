@@ -33,6 +33,7 @@ for entry in (str(AUTONOMY_DIR), str(CONTROL_CENTER_DIR)):
         sys.path.insert(0, entry)
 
 from manager import TASKS_ROOT, build_args, create_task, read_json as manager_read_json, run_once
+from crawler_execution_truth_reconciler import reconcile_execution_truth_batch
 from orchestrator import build_control_center_package
 
 
@@ -65,18 +66,21 @@ def _start_bias_sort_key(item: Dict[str, Any], start_bias: str) -> tuple[int, in
     priority_rank = {"high": 0, "medium": 1, "low": 2}.get(str(item.get("priority", "medium")).strip().lower(), 9)
     execution_type = str(item.get("execution_type", "")).strip().lower()
     bias_rank = {
+        "execution_truth_reconcile": 0,
         "site_revalidation": 1,
         "manual_triage": 2,
         "field_coverage_upgrade": 3,
     }
     if start_bias == "route_unblock_first":
         bias_rank = {
+            "execution_truth_reconcile": 1,
             "manual_triage": 1,
             "site_revalidation": 2,
             "field_coverage_upgrade": 3,
         }
     elif start_bias == "repair_hotspot_first":
         bias_rank = {
+            "execution_truth_reconcile": 0,
             "site_revalidation": 1,
             "field_coverage_upgrade": 2,
             "manual_triage": 3,
@@ -138,6 +142,20 @@ def execute_crawler_remediation_plan(
     results: List[Dict[str, Any]] = []
     started_count = 0
     for item in items:
+        if str(item.get("execution_type", "")).strip().lower() == "execution_truth_reconcile":
+            reconcile_sites = [str(item.get("site", "")).strip().lower()] if str(item.get("site", "")).strip() else None
+            reconciliation = reconcile_execution_truth_batch(reconcile_sites)
+            results.append(
+                {
+                    "task_id": "",
+                    "source_remediation_id": item.get("id", ""),
+                    "site": item.get("site", ""),
+                    "execution_type": item.get("execution_type", ""),
+                    "status": "inline_reconciled" if reconciliation.get("applied_total") else "inline_needs_revalidation",
+                    "reconciliation": reconciliation,
+                }
+            )
+            continue
         task_id = _task_id_for_item(item)
         record: Dict[str, Any] = {
             "task_id": task_id,
@@ -194,6 +212,8 @@ def execute_crawler_remediation_plan(
         "started_total": sum(1 for item in results if item.get("started")),
         "created_total": sum(1 for item in results if item.get("status") == "created"),
         "existing_total": sum(1 for item in results if item.get("status") == "already_exists"),
+        "inline_reconciled_total": sum(1 for item in results if item.get("status") == "inline_reconciled"),
+        "inline_needs_revalidation_total": sum(1 for item in results if item.get("status") == "inline_needs_revalidation"),
         "max_start_tasks": max_start_tasks,
         "start_bias": start_bias,
         "items": results,

@@ -81,7 +81,7 @@ def _project_site_constraints(requested_sites: List[str]) -> Dict[str, object]:
         if str(site.get("site", "")).strip()
     }
     relevant = [site_map[site] for site in requested_sites if site in site_map]
-    attention_sites = [site for site in relevant if site.get("readiness") != "production_ready"]
+    attention_sites = [site for site in relevant if site.get("readiness") == "attention_required"]
     return {
         "summary": profile.get("summary", {}) or {},
         "feedback": profile.get("feedback", {}) or {},
@@ -190,6 +190,8 @@ def _score_stack(stack: Dict[str, object], requirements: Dict[str, object], site
     for site in relevant_sites:
         selected_tool = str(site.get("selected_tool", "")).strip().lower()
         readiness = str(site.get("readiness", "")).strip()
+        access_posture = str(site.get("access_posture", "")).strip()
+        route_preference_strength = str(site.get("route_preference_strength", "none")).strip().lower()
         blocked = {
             str(item).strip().lower()
             for item in site.get("primary_limitations", [])
@@ -199,10 +201,16 @@ def _score_stack(stack: Dict[str, object], requirements: Dict[str, object], site
             selected_tool in stack_tools or
             (selected_tool == "local-agent-browser-cli" and stack_id == "authorized_session")
         )
-        if readiness == "production_ready" and selected_matches:
+        if readiness == "production_ready" and selected_matches and route_preference_strength == "strong":
             score += 8
             rationale.append(f"{site.get('site', '')} 当前生产可用，优先沿已验证工具路线")
-        if readiness == "attention_required" and site.get("authenticated_supported") and stack_id == "authorized_session":
+        elif readiness == "production_ready" and selected_matches and route_preference_strength == "guarded":
+            score += 3
+            rationale.append(f"{site.get('site', '')} 当前存在多份执行证据分歧，仅保守参考已验证路线")
+        if access_posture == "governed_authenticated_ready" and stack_id == "authorized_session":
+            score += 8
+            rationale.append(f"{site.get('site', '')} 已具备受治理授权态可用性，优先走 authorized_session")
+        elif readiness == "attention_required" and site.get("authenticated_supported") and stack_id == "authorized_session":
             score += 6
             rationale.append(f"{site.get('site', '')} 当前更适合升级到授权态链路")
         blocked_text = " ".join(blocked)

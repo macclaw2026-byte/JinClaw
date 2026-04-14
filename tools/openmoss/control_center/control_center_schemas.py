@@ -320,6 +320,38 @@ def build_acquisition_release_governance_schema(
     }
 
 
+def build_acquisition_objective_completion_schema(
+    *,
+    objective: str = "",
+    status: str = "incomplete",
+    goal_reached: bool = False,
+    completion_score: float = 0.0,
+    effective_width_score: float = 0.0,
+    required_checks: List[Dict[str, Any]] | None = None,
+    satisfied_checks: List[str] | None = None,
+    blockers: List[Dict[str, Any]] | None = None,
+    rationale: List[str] | None = None,
+    terminal_boundaries: List[str] | None = None,
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：构造 acquisition objective completion schema。
+    - 设计意图：把“取数之手是否已经真正达到项目目标”单独结构化出来，避免继续拿某个局部指标当总代表。
+    """
+    return {
+        "objective": str(objective).strip(),
+        "status": str(status).strip() or "incomplete",
+        "goal_reached": bool(goal_reached),
+        "completion_score": round(float(completion_score or 0.0), 2),
+        "effective_width_score": round(float(effective_width_score or 0.0), 2),
+        "required_checks": list(required_checks or []),
+        "satisfied_checks": list(satisfied_checks or []),
+        "blockers": list(blockers or []),
+        "rationale": list(rationale or []),
+        "terminal_boundaries": list(terminal_boundaries or []),
+    }
+
+
 def build_acquisition_hand_schema(
     *,
     task_id: str,

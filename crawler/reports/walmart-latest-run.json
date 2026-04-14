@@ -3,58 +3,24 @@
   "query": "wireless mouse",
   "url": "https://www.walmart.com/search?q=wireless+mouse",
   "usedProfile": true,
-  "firstRunMode": true,
+  "firstRunMode": false,
   "preferredOrder": [
-    "direct-http-html",
-    "crawl4ai-cli",
     "curl-cffi",
-    "local-agent-browser-cli",
     "playwright",
-    "playwright-stealth",
-    "scrapy-cffi"
+    "scrapy-cffi",
+    "local-agent-browser-cli"
   ],
   "bestTool": "direct-http-html",
   "bestStatus": "usable",
-  "bestScore": 75,
+  "bestScore": 85,
   "taskReadySummary": {
     "recommendedAction": "use-best-tool",
-    "confidence": "medium",
+    "confidence": "high",
     "notes": [
-      "direct-http-html is the only currently verified anonymous usable path in the latest matrix",
-      "most browser-style and cffi-style runs were blocked by human verification"
+      "execution_truth_reconciled:fresh_contract_has_required_fields:selected_tool=direct-http-html:required_fields_met=True"
     ]
   },
   "toolResults": [
-    {
-      "site": "walmart",
-      "tool": "direct-http-html",
-      "url": "https://www.walmart.com/search?q=wireless+mouse",
-      "returncode": 0,
-      "stdout_chars": 300001,
-      "stderr_chars": 0,
-      "product_signal_count": 40,
-      "block_signal_count": 0,
-      "status": "usable",
-      "score": 75,
-      "notes": "raw urllib HTTP fetch",
-      "stdout_head": "<!DOCTYPE html><html lang=\"en-US\"><head><meta charSet=\"utf-8\"/><script id=\"ttp-marker\" blocking=\"render\" nonce=\"_evvbOaju4BvtBli\">(()=>{window.performance.mark(\"ttp\")})();</script><meta property=\"fb:app_id\" content=\"105223049547814\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, minimum-scale=1, interactive-widget=resizes-content\"/><meta name=\"pageContext\" content=\"searchResults\"/><link rel=\"dns-prefetch\" href=\"https://tap.walmart.com \" data-dca-id=\"L:29676E23A5\"/><title>wireless mouse - Walmart.com</title><meta property=\"og:title\" content=\"wireless mouse - Walmart.com\"/><meta name=\"description\" property=\"og:description\" content=\"wireless mouse - Walmart.com\"/><meta property=\"og:image\" content=\"https://i5.walmartimages.com/seo/Logitech-Compact-Wireless-Mouse-2-4-GHz-with-USB-Unifying-Receiver-Optical-Tracking-Blue_336cf638-3a93-4c74-9916-ee95a9796e4d_3.f3a886a40db9218455fb7df529ed74df.jpeg?odnHeight=180&amp;odnWidth=180&amp;odnBg=FFFFFF\"/><link fetchPriority=\"high\" rel=\"preload\" as=\"image\" href=\"https://i5.walmartimages.com/seo/Logitech-Icon-Combo-Keyboard-Lilac_637649ed-fa96-4859-af03-e3aabdfb8543.b0eecaa863b8cb594d8f01aef848f104.jpeg?odnHeight=320&amp;odnWidth=320&amp;odnBg=FFFFFF\" data-dca-id=\"L:105C79CD0A\"/><link fetchPriority=\"high\" rel=\"preload\" as=\"image\" href=\"https://i5.walmartimages.com/seo/Logitech-MX-Keys-S-Wireless-Keyboard-Low-Profile-Fluid-Precise-Quiet-Typing-Bluetooth-Black_3bf2660c-ee7d-4824-b536-0b478aea1c65.fda960502560a4a2d9e38dec50bd0e12.jpeg?odnHeight=320&amp;odnWidth=320&amp;odnBg=FFFFFF\" data-dca-id=\"L:105C79CD0A\"/><link fetchPriority=\"high\" rel=\"preload\" as=\"image\" href=\"https://i5.walmartimages.com/seo/Logitech-Compact-Wireless-Mouse-2-4-GHz-with-USB-Unifying-Receiver-Optical-Tracking-Blue_336cf638-3a93-4c74-9916-ee95a9796e4d_3.f3a886a40db9218455fb7df529ed74df.jpeg?odnHeight=576&amp;odnWidth=576&amp;odnBg=FFFFFF\" data-dca-id=\"L:105C79CD0A\"/><link fetchPriority=\"high\" rel=\"preload\" as=\"image\" href=\"https://i5.walmartimages.com/seo/Logitech-Silent-Wireless-Mouse-Black_cfe0592c-dd7d-4d65-9af9-52f5bf7bd47e_1.742d532fe35714dd47641a50658a2609.jpeg?odnHeight=576&amp;odnWidth=576&amp;odnBg=FFFFFF\" data-dca-id=\"L:105C79C",
-      "stderr_head": ""
-    },
-    {
-      "site": "walmart",
-      "tool": "crawl4ai-cli",
-      "url": "https://www.walmart.com/search?q=wireless+mouse",
-      "returncode": 0,
-      "stdout_chars": 511,
-      "stderr_chars": 70,
-      "product_signal_count": 0,
-      "block_signal_count": 3,
-      "status": "blocked",
-      "score": 0,
-      "notes": "crawl4ai CLI markdown extraction",
-      "stdout_head": "[ ](https://www.walmart.com/)\n#  Robot or human? \nActivate and hold the button to confirm that you’re human. Thank You!\n* * *\n[ Terms of Use ](https://help.walmart.com/app/answers/detail/a_id/8) [ Privacy Policy ](https://corporate.walmart.com/privacy-security) [ Do Not Sell My Personal Information ](https://www.walmart.com/account/api/ccpa-intake?native=false&type=sod) [ Request My Personal Information ](https://www.walmart.com/account/api/ccpa-intake?native=false&type=access)\n©2026 Walmart Stores, Inc.\n\n",
-      "stderr_head": "Invalid -W option ignored: invalid module name: 'requests.exceptions'\n"
-    },
     {
       "site": "walmart",
       "tool": "curl-cffi",
@@ -67,22 +33,28 @@
       "status": "blocked",
       "score": 0,
       "notes": "curl_cffi browser-impersonated HTTP fetch",
+      "field_completeness": 0.33,
+      "required_fields_met": false,
+      "missing_required_fields": [
+        "title",
+        "price"
+      ],
+      "task_ready_fields": {
+        "title": "",
+        "price": "",
+        "rating": "",
+        "reviews": "",
+        "link": "https://www.walmart.com/search?q=wireless+mouse",
+        "promo": "src: url(fd827841624904d4b8f51d20174fa3a4.woff2) format(\"woff2\"), url(5b38b158833d0265af2b1c1093e489bd.woff) format(\"wof",
+        "evidence_excerpt": [
+          "<html lang=\"en\">",
+          "<head>",
+          "<title>Robot or human?</title>",
+          "<meta name=\"viewport\" content=\"width=device-width\">",
+          "<style>"
+        ]
+      },
       "stdout_head": "<html lang=\"en\">\n\n<head>\n    <title>Robot or human?</title>\n    <meta name=\"viewport\" content=\"width=device-width\">\n    <style>\n    #sign-in-widget a,\n    #sign-in-widget a:active,\n    #sign-in-widget a:hover {\n        color: #000\n    }\n\n    #sign-in-widget h1 {\n        font-weight: 500;\n        font-size: 20px;\n        font-size: 1.25rem;\n        letter-spacing: -.6px;\n        margin: 1px auto\n    }\n\n    @media (min-width:30em) {\n        #sign-in-widget h1 {\n            margin-top: 24px;\n            font-size: 24px;\n            font-size: 1.5rem\n        }\n    }\n\n    #sign-in-widget {\n        font-family: BogleWeb, Helvetica Neue, Helvetica, Arial, sans-serif\n    }\n\n    #sign-in-widget * {\n        box-sizing: border-box\n    }\n\n    #sign-in-widget .text-right {\n        text-align: right\n    }\n\n    @font-face {\n        font-family: NewYorkIcons;\n        src: url(6255ed72d86ece856725a2d80878bce6.eot);\n        font-weight: 400;\n        font-style: normal\n    }\n\n    @font-face {\n        font-family: NewYorkIcons;\n        src: url(fd827841624904d4b8f51d20174fa3a4.woff2) format(\"woff2\"), url(5b38b158833d0265af2b1c1093e489bd.woff) format(\"woff\"), url(2ebae25dcb1bb39acbac9cffd8f10b15.ttf) format(\"truetype\");\n        font-weight: 400;\n        font-style: normal\n    }\n\n    @keyframes spin-clockwise {\n        0% {\n            transform: rotate(0)\n        }\n\n        to {\n            transform: rotate(1turn)\n        }\n    }\n\n    @keyframes zoom-inverse {\n        0% {\n            opacity: 0;\n            transform: scale(3)\n        }\n\n        33% {\n            opacity: 1\n        }\n\n        to {\n            transform: scale(1)\n        }\n    }\n\n    @keyframes blinker {\n        0% {\n            opacity: 1\n        }\n\n        to {\n            opacity: 0\n        }\n    }\n\n    @keyframes slide-from-bottom {\n        0% {\n            transform: translateY(100%)\n        }\n\n        to {\n            transform: translateY(0)\n        }\n    }\n\n    @keyframes slide-from-top {\n        0% {\n            transform: translateY(0)\n        }\n\n        to {\n            transform: translateY(100%)\n        }\n    }\n\n    @keyframes fade-in-opacity {\n        0% {\n            opacity: 0\n        }\n\n        to ",
-      "stderr_head": ""
-    },
-    {
-      "site": "walmart",
-      "tool": "local-agent-browser-cli",
-      "url": "https://www.walmart.com/search?q=wireless+mouse",
-      "returncode": 0,
-      "stdout_chars": 1886,
-      "stderr_chars": 0,
-      "product_signal_count": 0,
-      "block_signal_count": 5,
-      "status": "blocked",
-      "score": 0,
-      "notes": "local agent-browser CLI connected to Chrome CDP; redirected-to=https://www.walmart.com/blocked?url=L3NlYXJjaD9xPXdpcmVsZXNzK21vdXNl&uuid=5e205470-2c57-11f1-a144-b17f3633c4da&vid=9fc21b47-2473-11f1-a877-f471b61af65e&g=b",
-      "stdout_head": "opened_url=https://www.walmart.com/blocked?url=L3NlYXJjaD9xPXdpcmVsZXNzK21vdXNl&uuid=5e205470-2c57-11f1-a144-b17f3633c4da&vid=9fc21b47-2473-11f1-a877-f471b61af65e&g=b\nRobot or human?\n- generic\n  - generic\n    - link \"Walmart. Save Money. Live Better. Home Page\" [ref=e1]\n      - StaticText \"\"\n    - heading \"Robot or human?\" [level=1, ref=e2]\n      - StaticText \"Robot or human?\"\n    - paragraph\n      - StaticText \"Activate and hold the button to confirm that you’re human. Thank You!\"\n    - generic\n      - Iframe \"Human verification challenge\" [ref=e3]\n        - generic\n          - generic\n            - button \"Accessible challenge\" [ref=e8]\n              - generic\n                - StaticText \"Human Challenge requires verification. Please press the button once, wait for confirmation, and press again when prompted\"\n            - button \"Press & Hold Human Challenge\" [ref=e9]\n              - generic\n              - LayoutTable\n                - generic\n                - LayoutTable\n                  - paragraph\n                    - StaticText \"PRESS & HOLD\"\n                  - generic\n                    - StaticText \"HUMAN CHALLENGE REQUIRES VERIFICATION. PLEASE PRESS AND HOLD THE BUTTON UNTIL VERIFIED\"\n                  - generic\n      - generic\n        - StaticText \"Accessible challenge\"\n      - alert\n    - generic\n      - generic\n        - link \"Terms of Use\" [ref=e4]\n          - StaticText \"Terms of Use\"\n        - link \"Privacy Policy\" [ref=e5]\n          - StaticText \"Privacy Policy\"\n        - link \"Do Not Sell My Personal Information\" [ref=e6]\n          - StaticText \"Do Not Sell My Personal Information\"\n        - link \"Request My Personal Information\" [ref=e7]\n          - StaticText \"Request My Personal Information\"\n      - paragraph\n        - StaticText \"©\"\n        - generic\n          - StaticText \"2026\"\n        - StaticText \" Walmart Stores, Inc.\"\n",
       "stderr_head": ""
     },
     {
@@ -90,29 +62,35 @@
       "tool": "playwright",
       "url": "https://www.walmart.com/search?q=wireless+mouse",
       "returncode": 0,
-      "stdout_chars": 16314,
+      "stdout_chars": 16445,
       "stderr_chars": 0,
       "product_signal_count": 0,
       "block_signal_count": 5,
       "status": "blocked",
       "score": 0,
       "notes": "plain Playwright Chromium render",
-      "stdout_head": "<html lang=\"en\"><head>\n    <title>Robot or human?</title>\n    <meta name=\"viewport\" content=\"width=device-width\">\n    <style>\n    #sign-in-widget a,\n    #sign-in-widget a:active,\n    #sign-in-widget a:hover {\n        color: #000\n    }\n\n    #sign-in-widget h1 {\n        font-weight: 500;\n        font-size: 20px;\n        font-size: 1.25rem;\n        letter-spacing: -.6px;\n        margin: 1px auto\n    }\n\n    @media (min-width:30em) {\n        #sign-in-widget h1 {\n            margin-top: 24px;\n            font-size: 24px;\n            font-size: 1.5rem\n        }\n    }\n\n    #sign-in-widget {\n        font-family: BogleWeb, Helvetica Neue, Helvetica, Arial, sans-serif\n    }\n\n    #sign-in-widget * {\n        box-sizing: border-box\n    }\n\n    #sign-in-widget .text-right {\n        text-align: right\n    }\n\n    @font-face {\n        font-family: NewYorkIcons;\n        src: url(6255ed72d86ece856725a2d80878bce6.eot);\n        font-weight: 400;\n        font-style: normal\n    }\n\n    @font-face {\n        font-family: NewYorkIcons;\n        src: url(fd827841624904d4b8f51d20174fa3a4.woff2) format(\"woff2\"), url(5b38b158833d0265af2b1c1093e489bd.woff) format(\"woff\"), url(2ebae25dcb1bb39acbac9cffd8f10b15.ttf) format(\"truetype\");\n        font-weight: 400;\n        font-style: normal\n    }\n\n    @keyframes spin-clockwise {\n        0% {\n            transform: rotate(0)\n        }\n\n        to {\n            transform: rotate(1turn)\n        }\n    }\n\n    @keyframes zoom-inverse {\n        0% {\n            opacity: 0;\n            transform: scale(3)\n        }\n\n        33% {\n            opacity: 1\n        }\n\n        to {\n            transform: scale(1)\n        }\n    }\n\n    @keyframes blinker {\n        0% {\n            opacity: 1\n        }\n\n        to {\n            opacity: 0\n        }\n    }\n\n    @keyframes slide-from-bottom {\n        0% {\n            transform: translateY(100%)\n        }\n\n        to {\n            transform: translateY(0)\n        }\n    }\n\n    @keyframes slide-from-top {\n        0% {\n            transform: translateY(0)\n        }\n\n        to {\n            transform: translateY(100%)\n        }\n    }\n\n    @keyframes fade-in-opacity {\n        0% {\n            opacity: 0\n        }\n\n        to {\n",
-      "stderr_head": ""
-    },
-    {
-      "site": "walmart",
-      "tool": "playwright-stealth",
-      "url": "https://www.walmart.com/search?q=wireless+mouse",
-      "returncode": 0,
-      "stdout_chars": 16720,
-      "stderr_chars": 0,
-      "product_signal_count": 0,
-      "block_signal_count": 5,
-      "status": "blocked",
-      "score": 0,
-      "notes": "Playwright + playwright_stealth render",
-      "stdout_head": "<html lang=\"en\"><head>\n    <title>Robot or human?</title>\n    <meta name=\"viewport\" content=\"width=device-width\">\n    <style>\n    #sign-in-widget a,\n    #sign-in-widget a:active,\n    #sign-in-widget a:hover {\n        color: #000\n    }\n\n    #sign-in-widget h1 {\n        font-weight: 500;\n        font-size: 20px;\n        font-size: 1.25rem;\n        letter-spacing: -.6px;\n        margin: 1px auto\n    }\n\n    @media (min-width:30em) {\n        #sign-in-widget h1 {\n            margin-top: 24px;\n            font-size: 24px;\n            font-size: 1.5rem\n        }\n    }\n\n    #sign-in-widget {\n        font-family: BogleWeb, Helvetica Neue, Helvetica, Arial, sans-serif\n    }\n\n    #sign-in-widget * {\n        box-sizing: border-box\n    }\n\n    #sign-in-widget .text-right {\n        text-align: right\n    }\n\n    @font-face {\n        font-family: NewYorkIcons;\n        src: url(6255ed72d86ece856725a2d80878bce6.eot);\n        font-weight: 400;\n        font-style: normal\n    }\n\n    @font-face {\n        font-family: NewYorkIcons;\n        src: url(fd827841624904d4b8f51d20174fa3a4.woff2) format(\"woff2\"), url(5b38b158833d0265af2b1c1093e489bd.woff) format(\"woff\"), url(2ebae25dcb1bb39acbac9cffd8f10b15.ttf) format(\"truetype\");\n        font-weight: 400;\n        font-style: normal\n    }\n\n    @keyframes spin-clockwise {\n        0% {\n            transform: rotate(0)\n        }\n\n        to {\n            transform: rotate(1turn)\n        }\n    }\n\n    @keyframes zoom-inverse {\n        0% {\n            opacity: 0;\n            transform: scale(3)\n        }\n\n        33% {\n            opacity: 1\n        }\n\n        to {\n            transform: scale(1)\n        }\n    }\n\n    @keyframes blinker {\n        0% {\n            opacity: 1\n        }\n\n        to {\n            opacity: 0\n        }\n    }\n\n    @keyframes slide-from-bottom {\n        0% {\n            transform: translateY(100%)\n        }\n\n        to {\n            transform: translateY(0)\n        }\n    }\n\n    @keyframes slide-from-top {\n        0% {\n            transform: translateY(0)\n        }\n\n        to {\n            transform: translateY(100%)\n        }\n    }\n\n    @keyframes fade-in-opacity {\n        0% {\n            opacity: 0\n        }\n\n        to {\n",
+      "field_completeness": 0.33,
+      "required_fields_met": false,
+      "missing_required_fields": [
+        "title",
+        "price"
+      ],
+      "task_ready_fields": {
+        "title": "",
+        "price": "",
+        "rating": "",
+        "reviews": "",
+        "link": "https://www.walmart.com/blocked?url=L3NlYXJjaD9xPXdpcmVsZXNzK21vdXNl&uuid=fac58c0f-37ae-11f1-b105-ee22300970b2&vid=&g=b",
+        "promo": "src: url(fd827841624904d4b8f51d20174fa3a4.woff2) format(\"woff2\"), url(5b38b158833d0265af2b1c1093e489bd.woff) format(\"wof",
+        "evidence_excerpt": [
+          "opened_url=https://www.walmart.com/blocked?url=L3NlYXJjaD9xPXdpcmVsZXNzK21vdXNl&uuid=fac58c0f-37ae-11f1-b105-ee22300970b2&vid=&g=b",
+          "<html lang=\"en\"><head>",
+          "<title>Robot or human?</title>",
+          "<meta name=\"viewport\" content=\"width=device-width\">",
+          "<style>"
+        ]
+      },
+      "stdout_head": "opened_url=https://www.walmart.com/blocked?url=L3NlYXJjaD9xPXdpcmVsZXNzK21vdXNl&uuid=fac58c0f-37ae-11f1-b105-ee22300970b2&vid=&g=b\n<html lang=\"en\"><head>\n    <title>Robot or human?</title>\n    <meta name=\"viewport\" content=\"width=device-width\">\n    <style>\n    #sign-in-widget a,\n    #sign-in-widget a:active,\n    #sign-in-widget a:hover {\n        color: #000\n    }\n\n    #sign-in-widget h1 {\n        font-weight: 500;\n        font-size: 20px;\n        font-size: 1.25rem;\n        letter-spacing: -.6px;\n        margin: 1px auto\n    }\n\n    @media (min-width:30em) {\n        #sign-in-widget h1 {\n            margin-top: 24px;\n            font-size: 24px;\n            font-size: 1.5rem\n        }\n    }\n\n    #sign-in-widget {\n        font-family: BogleWeb, Helvetica Neue, Helvetica, Arial, sans-serif\n    }\n\n    #sign-in-widget * {\n        box-sizing: border-box\n    }\n\n    #sign-in-widget .text-right {\n        text-align: right\n    }\n\n    @font-face {\n        font-family: NewYorkIcons;\n        src: url(6255ed72d86ece856725a2d80878bce6.eot);\n        font-weight: 400;\n        font-style: normal\n    }\n\n    @font-face {\n        font-family: NewYorkIcons;\n        src: url(fd827841624904d4b8f51d20174fa3a4.woff2) format(\"woff2\"), url(5b38b158833d0265af2b1c1093e489bd.woff) format(\"woff\"), url(2ebae25dcb1bb39acbac9cffd8f10b15.ttf) format(\"truetype\");\n        font-weight: 400;\n        font-style: normal\n    }\n\n    @keyframes spin-clockwise {\n        0% {\n            transform: rotate(0)\n        }\n\n        to {\n            transform: rotate(1turn)\n        }\n    }\n\n    @keyframes zoom-inverse {\n        0% {\n            opacity: 0;\n            transform: scale(3)\n        }\n\n        33% {\n            opacity: 1\n        }\n\n        to {\n            transform: scale(1)\n        }\n    }\n\n    @keyframes blinker {\n        0% {\n            opacity: 1\n        }\n\n        to {\n            opacity: 0\n        }\n    }\n\n    @keyframes slide-from-bottom {\n        0% {\n            transform: translateY(100%)\n        }\n\n        to {\n            transform: translateY(0)\n        }\n    }\n\n    @keyframes slide-from-top {\n        0% {\n            transform: translateY(0)\n        }\n\n        to {\n            transfo",
       "stderr_head": ""
     },
     {
@@ -127,9 +105,236 @@
       "status": "blocked",
       "score": 0,
       "notes": "Scrapy-style extraction stack using curl_cffi + parsel",
+      "field_completeness": 0.17,
+      "required_fields_met": false,
+      "missing_required_fields": [
+        "title",
+        "price"
+      ],
+      "task_ready_fields": {
+        "title": "",
+        "price": "",
+        "rating": "",
+        "reviews": "",
+        "link": "https://www.walmart.com/search?q=wireless+mouse",
+        "promo": "",
+        "evidence_excerpt": [
+          "Robot or human? Activate and hold the button to confirm that you’re human. Thank You! window._pxAppId = 'PXu6b0qd2S';",
+          "window._pxJsClientSrc = '/px/' + window._pxAppId + '/init.js';",
+          "window._pxFirstPartyEnabled = true;",
+          "window._pxHostUrl = '/px/' + window._pxAppId + '/xhr';",
+          "window._pxreCaptchaTheme = 'light';"
+        ]
+      },
       "stdout_head": "Robot or human? Activate and hold the button to confirm that you’re human. Thank You! window._pxAppId = 'PXu6b0qd2S';\n            window._pxJsClientSrc = '/px/' + window._pxAppId + '/init.js';\n            window._pxFirstPartyEnabled = true;\n            window._pxHostUrl = '/px/' + window._pxAppId + '/xhr';\n            window._pxreCaptchaTheme = 'light';\n            window._PXETnJ2Y5H = {\n                challenge: {\n                    view: {\n                         textFont: \"BogleWeb, Helvetica Neue, Helvetica, Arial, sans-serif\"\n                   }\n                }\n            };\n\n            var hc = getUrlParam('g', 'b');\n            var alt = hc\n            if (alt=='a') {\n                document.getElementById('message').innerHTML = '<p>Check the box to confirm that you’re human. Thank You!</p>';\n            }\n            var captchajs = \"/px/\" + window._pxAppId + \"/captcha/captcha.js?a=c&m=0&g=\" + hc document.getElementById('blockScript').src = captchajs; Terms of Use Privacy Policy Do Not Sell My Personal Information Request My Personal Information © document.getElementById(\"year\").innerHTML = (new Date().getFullYear()); Walmart Stores, Inc.\n",
+      "stderr_head": ""
+    },
+    {
+      "site": "walmart",
+      "tool": "local-agent-browser-cli",
+      "url": "https://www.walmart.com/search?q=wireless+mouse",
+      "returncode": 1,
+      "stdout_chars": 1,
+      "stderr_chars": 455,
+      "product_signal_count": 0,
+      "block_signal_count": 0,
+      "status": "failed",
+      "score": 1,
+      "notes": "local agent-browser CLI connected to Chrome CDP",
+      "field_completeness": 0.17,
+      "required_fields_met": false,
+      "missing_required_fields": [
+        "title",
+        "price"
+      ],
+      "task_ready_fields": {
+        "title": "",
+        "price": "",
+        "rating": "",
+        "reviews": "",
+        "link": "https://www.walmart.com/search?q=wireless+mouse",
+        "promo": "",
+        "evidence_excerpt": []
+      },
+      "stdout_head": "\n",
+      "stderr_head": "✗ Auto-launch failed: No running Chrome instance found. Launch Chrome with --remote-debugging-port or use --cdp.\n\n✗ Auto-launch failed: No running Chrome instance found. Launch Chrome with --remote-debugging-port or use --cdp.\n\n✗ Auto-launch failed: No running Chrome instance found. Launch Chrome with --remote-debugging-port or use --cdp.\n\n✗ Auto-launch failed: No running Chrome instance found. Launch Chrome with --remote-debugging-port or use --cdp.\n"
+    },
+    {
+      "site": "walmart",
+      "tool": "direct-http-html",
+      "url": "https://www.walmart.com/search?q=wireless+mouse",
+      "returncode": 0,
+      "stdout_chars": 300001,
+      "stderr_chars": 0,
+      "product_signal_count": 56,
+      "block_signal_count": 0,
+      "status": "usable",
+      "score": 85,
+      "notes": "raw urllib HTTP fetch via matrix-venv",
+      "field_completeness": 0.67,
+      "required_fields_met": true,
+      "missing_required_fields": [],
+      "task_ready_fields": {
+        "title": "wireless mouse - Walmart.com",
+        "price": "$47.67",
+        "rating": "",
+        "reviews": "",
+        "link": "https://www.walmart.com/ip/Logitech-Advanced-Combo-Wireless-Keyboard-and-Mouse-Black/1998877576?adsRedirect=true",
+        "promo": "off%7Csearch_default&classType=REGULAR\">  Advanced Wireless Mouse 2, White, Walmart Exclusive $24.88     <di",
+        "evidence_excerpt": [
+          "<!DOCTYPE html><html lang=\"en-US\"><head><meta charSet=\"utf-8\"/><script id=\"ttp-marker\" blocking=\"render\" nonce=\"lsG-3YVh27ldR5d0\">(()=>{window.performance.mark(\"ttp\")})();</script><meta property=\"fb:app_id\" content=\"105223049547814\"/><meta ",
+          "const link1 = document.createElement(\"link\");",
+          "link1.rel = \"preconnect\";",
+          "link1.href = `https://beacon.walmart.com`;",
+          "link1.setAttribute(\"data-dca-id\", \"L:E3A57B14A5\");"
+        ]
+      },
+      "stdout_head": "<!DOCTYPE html><html lang=\"en-US\"><head><meta charSet=\"utf-8\"/><script id=\"ttp-marker\" blocking=\"render\" nonce=\"lsG-3YVh27ldR5d0\">(()=>{window.performance.mark(\"ttp\")})();</script><meta property=\"fb:app_id\" content=\"105223049547814\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, minimum-scale=1, interactive-widget=resizes-content\"/><meta name=\"pageContext\" content=\"searchResults\"/><link rel=\"dns-prefetch\" href=\"https://tap.walmart.com \" data-dca-id=\"L:29676E23A5\"/><title>wireless mouse - Walmart.com</title><meta property=\"og:title\" content=\"wireless mouse - Walmart.com\"/><meta name=\"description\" property=\"og:description\" content=\"wireless mouse - Walmart.com\"/><meta property=\"og:image\" content=\"https://i5.walmartimages.com/seo/Advanced-Wireless-Mouse-2-White-Walmart-Exclusive_f09a011a-35f8-47f9-9031-9df750e2df71.61fd74aece4a5bbb5d208508068be75b.jpeg?odnHeight=180&amp;odnWidth=180&amp;odnBg=FFFFFF\"/><link fetchPriority=\"high\" rel=\"preload\" as=\"image\" href=\"https://i5.walmartimages.com/seo/Logitech-Advanced-Combo-Wireless-Keyboard-and-Mouse-Black_ba1dc2d0-b148-4286-9584-59700c13d4be.47698a624937f2bd8c6e10e357039fba.jpeg?odnHeight=320&amp;odnWidth=320&amp;odnBg=FFFFFF\" data-dca-id=\"L:105C79CD0A\"/><link fetchPriority=\"high\" rel=\"preload\" as=\"image\" href=\"https://i5.walmartimages.com/seo/Logitech-Icon-Combo-Keyboard-Lilac_637649ed-fa96-4859-af03-e3aabdfb8543.b0eecaa863b8cb594d8f01aef848f104.jpeg?odnHeight=320&amp;odnWidth=320&amp;odnBg=FFFFFF\" data-dca-id=\"L:105C79CD0A\"/><link fetchPriority=\"high\" rel=\"preload\" as=\"image\" href=\"https://i5.walmartimages.com/seo/Advanced-Wireless-Mouse-2-White-Walmart-Exclusive_f09a011a-35f8-47f9-9031-9df750e2df71.61fd74aece4a5bbb5d208508068be75b.jpeg?odnHeight=576&amp;odnWidth=576&amp;odnBg=FFFFFF\" data-dca-id=\"L:105C79CD0A\"/><link fetchPriority=\"high\" rel=\"preload\" as=\"image\" href=\"https://i5.walmartimages.com/seo/Logitech-Silent-Wireless-Mouse-Purple_3d278cab-a5bc-4056-9e52-861f3dbd7233.efd51abd6c0d2cd231d37ebd4214231d.jpeg?odnHeight=576&amp;odnWidth=576&amp;odnBg=FFFFFF\" data-dca-id=\"L:105C79CD0A\"/><link fetchPriority=\"high\" rel=\"preload\" as=\"image\" href=\"https://i5.walmartimages.com/seo/TECKNET-Bluetooth-Mo",
+      "stderr_head": ""
+    },
+    {
+      "site": "walmart",
+      "tool": "crawl4ai-cli",
+      "url": "https://www.walmart.com/search?q=wireless+mouse",
+      "returncode": 0,
+      "stdout_chars": 511,
+      "stderr_chars": 0,
+      "product_signal_count": 0,
+      "block_signal_count": 3,
+      "status": "blocked",
+      "score": 0,
+      "notes": "crawl4ai CLI markdown extraction",
+      "field_completeness": 0.33,
+      "required_fields_met": false,
+      "missing_required_fields": [
+        "price"
+      ],
+      "task_ready_fields": {
+        "title": "[ ](https://www.walmart.com/)",
+        "price": "",
+        "rating": "",
+        "reviews": "",
+        "link": "https://www.walmart.com/search?q=wireless+mouse",
+        "promo": "",
+        "evidence_excerpt": [
+          "[ ](https://www.walmart.com/)",
+          "#  Robot or human?",
+          "Activate and hold the button to confirm that you’re human. Thank You!",
+          "* * *",
+          "[ Terms of Use ](https://help.walmart.com/app/answers/detail/a_id/8) [ Privacy Policy ](https://corporate.walmart.com/privacy-security) [ Do Not Sell My Personal Information ](https://www.walmart.com/account/api/ccpa-intake?native=false&typ"
+        ]
+      },
+      "stdout_head": "[ ](https://www.walmart.com/)\n#  Robot or human? \nActivate and hold the button to confirm that you’re human. Thank You!\n* * *\n[ Terms of Use ](https://help.walmart.com/app/answers/detail/a_id/8) [ Privacy Policy ](https://corporate.walmart.com/privacy-security) [ Do Not Sell My Personal Information ](https://www.walmart.com/account/api/ccpa-intake?native=false&type=sod) [ Request My Personal Information ](https://www.walmart.com/account/api/ccpa-intake?native=false&type=access)\n©2026 Walmart Stores, Inc.\n\n",
+      "stderr_head": ""
+    },
+    {
+      "site": "walmart",
+      "tool": "playwright-scroll",
+      "url": "https://www.walmart.com/search?q=wireless+mouse",
+      "returncode": 0,
+      "stdout_chars": 16445,
+      "stderr_chars": 0,
+      "product_signal_count": 0,
+      "block_signal_count": 5,
+      "status": "blocked",
+      "score": 0,
+      "notes": "Playwright Chromium render with repeated scroll capture for lazy-loaded content",
+      "field_completeness": 0.33,
+      "required_fields_met": false,
+      "missing_required_fields": [
+        "title",
+        "price"
+      ],
+      "task_ready_fields": {
+        "title": "",
+        "price": "",
+        "rating": "",
+        "reviews": "",
+        "link": "https://www.walmart.com/blocked?url=L3NlYXJjaD9xPXdpcmVsZXNzK21vdXNl&uuid=004b7d09-37af-11f1-bac1-7184b70fd5cd&vid=&g=b",
+        "promo": "src: url(fd827841624904d4b8f51d20174fa3a4.woff2) format(\"woff2\"), url(5b38b158833d0265af2b1c1093e489bd.woff) format(\"wof",
+        "evidence_excerpt": [
+          "opened_url=https://www.walmart.com/blocked?url=L3NlYXJjaD9xPXdpcmVsZXNzK21vdXNl&uuid=004b7d09-37af-11f1-bac1-7184b70fd5cd&vid=&g=b",
+          "<html lang=\"en\"><head>",
+          "<title>Robot or human?</title>",
+          "<meta name=\"viewport\" content=\"width=device-width\">",
+          "<style>"
+        ]
+      },
+      "stdout_head": "opened_url=https://www.walmart.com/blocked?url=L3NlYXJjaD9xPXdpcmVsZXNzK21vdXNl&uuid=004b7d09-37af-11f1-bac1-7184b70fd5cd&vid=&g=b\n<html lang=\"en\"><head>\n    <title>Robot or human?</title>\n    <meta name=\"viewport\" content=\"width=device-width\">\n    <style>\n    #sign-in-widget a,\n    #sign-in-widget a:active,\n    #sign-in-widget a:hover {\n        color: #000\n    }\n\n    #sign-in-widget h1 {\n        font-weight: 500;\n        font-size: 20px;\n        font-size: 1.25rem;\n        letter-spacing: -.6px;\n        margin: 1px auto\n    }\n\n    @media (min-width:30em) {\n        #sign-in-widget h1 {\n            margin-top: 24px;\n            font-size: 24px;\n            font-size: 1.5rem\n        }\n    }\n\n    #sign-in-widget {\n        font-family: BogleWeb, Helvetica Neue, Helvetica, Arial, sans-serif\n    }\n\n    #sign-in-widget * {\n        box-sizing: border-box\n    }\n\n    #sign-in-widget .text-right {\n        text-align: right\n    }\n\n    @font-face {\n        font-family: NewYorkIcons;\n        src: url(6255ed72d86ece856725a2d80878bce6.eot);\n        font-weight: 400;\n        font-style: normal\n    }\n\n    @font-face {\n        font-family: NewYorkIcons;\n        src: url(fd827841624904d4b8f51d20174fa3a4.woff2) format(\"woff2\"), url(5b38b158833d0265af2b1c1093e489bd.woff) format(\"woff\"), url(2ebae25dcb1bb39acbac9cffd8f10b15.ttf) format(\"truetype\");\n        font-weight: 400;\n        font-style: normal\n    }\n\n    @keyframes spin-clockwise {\n        0% {\n            transform: rotate(0)\n        }\n\n        to {\n            transform: rotate(1turn)\n        }\n    }\n\n    @keyframes zoom-inverse {\n        0% {\n            opacity: 0;\n            transform: scale(3)\n        }\n\n        33% {\n            opacity: 1\n        }\n\n        to {\n            transform: scale(1)\n        }\n    }\n\n    @keyframes blinker {\n        0% {\n            opacity: 1\n        }\n\n        to {\n            opacity: 0\n        }\n    }\n\n    @keyframes slide-from-bottom {\n        0% {\n            transform: translateY(100%)\n        }\n\n        to {\n            transform: translateY(0)\n        }\n    }\n\n    @keyframes slide-from-top {\n        0% {\n            transform: translateY(0)\n        }\n\n        to {\n            transfo",
+      "stderr_head": ""
+    },
+    {
+      "site": "walmart",
+      "tool": "playwright-stealth",
+      "url": "https://www.walmart.com/search?q=wireless+mouse",
+      "returncode": 0,
+      "stdout_chars": 16445,
+      "stderr_chars": 0,
+      "product_signal_count": 0,
+      "block_signal_count": 5,
+      "status": "blocked",
+      "score": 0,
+      "notes": "Playwright + playwright_stealth render",
+      "field_completeness": 0.33,
+      "required_fields_met": false,
+      "missing_required_fields": [
+        "title",
+        "price"
+      ],
+      "task_ready_fields": {
+        "title": "",
+        "price": "",
+        "rating": "",
+        "reviews": "",
+        "link": "https://www.walmart.com/blocked?url=L3NlYXJjaD9xPXdpcmVsZXNzK21vdXNl&uuid=0f0406ab-37af-11f1-9c1d-4f726564fef5&vid=&g=b",
+        "promo": "src: url(fd827841624904d4b8f51d20174fa3a4.woff2) format(\"woff2\"), url(5b38b158833d0265af2b1c1093e489bd.woff) format(\"wof",
+        "evidence_excerpt": [
+          "opened_url=https://www.walmart.com/blocked?url=L3NlYXJjaD9xPXdpcmVsZXNzK21vdXNl&uuid=0f0406ab-37af-11f1-9c1d-4f726564fef5&vid=&g=b",
+          "<html lang=\"en\"><head>",
+          "<title>Robot or human?</title>",
+          "<meta name=\"viewport\" content=\"width=device-width\">",
+          "<style>"
+        ]
+      },
+      "stdout_head": "opened_url=https://www.walmart.com/blocked?url=L3NlYXJjaD9xPXdpcmVsZXNzK21vdXNl&uuid=0f0406ab-37af-11f1-9c1d-4f726564fef5&vid=&g=b\n<html lang=\"en\"><head>\n    <title>Robot or human?</title>\n    <meta name=\"viewport\" content=\"width=device-width\">\n    <style>\n    #sign-in-widget a,\n    #sign-in-widget a:active,\n    #sign-in-widget a:hover {\n        color: #000\n    }\n\n    #sign-in-widget h1 {\n        font-weight: 500;\n        font-size: 20px;\n        font-size: 1.25rem;\n        letter-spacing: -.6px;\n        margin: 1px auto\n    }\n\n    @media (min-width:30em) {\n        #sign-in-widget h1 {\n            margin-top: 24px;\n            font-size: 24px;\n            font-size: 1.5rem\n        }\n    }\n\n    #sign-in-widget {\n        font-family: BogleWeb, Helvetica Neue, Helvetica, Arial, sans-serif\n    }\n\n    #sign-in-widget * {\n        box-sizing: border-box\n    }\n\n    #sign-in-widget .text-right {\n        text-align: right\n    }\n\n    @font-face {\n        font-family: NewYorkIcons;\n        src: url(6255ed72d86ece856725a2d80878bce6.eot);\n        font-weight: 400;\n        font-style: normal\n    }\n\n    @font-face {\n        font-family: NewYorkIcons;\n        src: url(fd827841624904d4b8f51d20174fa3a4.woff2) format(\"woff2\"), url(5b38b158833d0265af2b1c1093e489bd.woff) format(\"woff\"), url(2ebae25dcb1bb39acbac9cffd8f10b15.ttf) format(\"truetype\");\n        font-weight: 400;\n        font-style: normal\n    }\n\n    @keyframes spin-clockwise {\n        0% {\n            transform: rotate(0)\n        }\n\n        to {\n            transform: rotate(1turn)\n        }\n    }\n\n    @keyframes zoom-inverse {\n        0% {\n            opacity: 0;\n            transform: scale(3)\n        }\n\n        33% {\n            opacity: 1\n        }\n\n        to {\n            transform: scale(1)\n        }\n    }\n\n    @keyframes blinker {\n        0% {\n            opacity: 1\n        }\n\n        to {\n            opacity: 0\n        }\n    }\n\n    @keyframes slide-from-bottom {\n        0% {\n            transform: translateY(100%)\n        }\n\n        to {\n            transform: translateY(0)\n        }\n    }\n\n    @keyframes slide-from-top {\n        0% {\n            transform: translateY(0)\n        }\n\n        to {\n            transfo",
+      "stderr_head": ""
+    },
+    {
+      "site": "walmart",
+      "tool": "playwright-stealth-scroll",
+      "url": "https://www.walmart.com/search?q=wireless+mouse",
+      "returncode": 0,
+      "stdout_chars": 16445,
+      "stderr_chars": 0,
+      "product_signal_count": 0,
+      "block_signal_count": 5,
+      "status": "blocked",
+      "score": 0,
+      "notes": "Playwright + playwright_stealth render with repeated scroll capture for dynamic lists",
+      "field_completeness": 0.33,
+      "required_fields_met": false,
+      "missing_required_fields": [
+        "title",
+        "price"
+      ],
+      "task_ready_fields": {
+        "title": "",
+        "price": "",
+        "rating": "",
+        "reviews": "",
+        "link": "https://www.walmart.com/blocked?url=L3NlYXJjaD9xPXdpcmVsZXNzK21vdXNl&uuid=14a7dc17-37af-11f1-8677-15a29d6a999b&vid=&g=b",
+        "promo": "src: url(fd827841624904d4b8f51d20174fa3a4.woff2) format(\"woff2\"), url(5b38b158833d0265af2b1c1093e489bd.woff) format(\"wof",
+        "evidence_excerpt": [
+          "opened_url=https://www.walmart.com/blocked?url=L3NlYXJjaD9xPXdpcmVsZXNzK21vdXNl&uuid=14a7dc17-37af-11f1-8677-15a29d6a999b&vid=&g=b",
+          "<html lang=\"en\"><head>",
+          "<title>Robot or human?</title>",
+          "<meta name=\"viewport\" content=\"width=device-width\">",
+          "<style>"
+        ]
+      },
+      "stdout_head": "opened_url=https://www.walmart.com/blocked?url=L3NlYXJjaD9xPXdpcmVsZXNzK21vdXNl&uuid=14a7dc17-37af-11f1-8677-15a29d6a999b&vid=&g=b\n<html lang=\"en\"><head>\n    <title>Robot or human?</title>\n    <meta name=\"viewport\" content=\"width=device-width\">\n    <style>\n    #sign-in-widget a,\n    #sign-in-widget a:active,\n    #sign-in-widget a:hover {\n        color: #000\n    }\n\n    #sign-in-widget h1 {\n        font-weight: 500;\n        font-size: 20px;\n        font-size: 1.25rem;\n        letter-spacing: -.6px;\n        margin: 1px auto\n    }\n\n    @media (min-width:30em) {\n        #sign-in-widget h1 {\n            margin-top: 24px;\n            font-size: 24px;\n            font-size: 1.5rem\n        }\n    }\n\n    #sign-in-widget {\n        font-family: BogleWeb, Helvetica Neue, Helvetica, Arial, sans-serif\n    }\n\n    #sign-in-widget * {\n        box-sizing: border-box\n    }\n\n    #sign-in-widget .text-right {\n        text-align: right\n    }\n\n    @font-face {\n        font-family: NewYorkIcons;\n        src: url(6255ed72d86ece856725a2d80878bce6.eot);\n        font-weight: 400;\n        font-style: normal\n    }\n\n    @font-face {\n        font-family: NewYorkIcons;\n        src: url(fd827841624904d4b8f51d20174fa3a4.woff2) format(\"woff2\"), url(5b38b158833d0265af2b1c1093e489bd.woff) format(\"woff\"), url(2ebae25dcb1bb39acbac9cffd8f10b15.ttf) format(\"truetype\");\n        font-weight: 400;\n        font-style: normal\n    }\n\n    @keyframes spin-clockwise {\n        0% {\n            transform: rotate(0)\n        }\n\n        to {\n            transform: rotate(1turn)\n        }\n    }\n\n    @keyframes zoom-inverse {\n        0% {\n            opacity: 0;\n            transform: scale(3)\n        }\n\n        33% {\n            opacity: 1\n        }\n\n        to {\n            transform: scale(1)\n        }\n    }\n\n    @keyframes blinker {\n        0% {\n            opacity: 1\n        }\n\n        to {\n            opacity: 0\n        }\n    }\n\n    @keyframes slide-from-bottom {\n        0% {\n            transform: translateY(100%)\n        }\n\n        to {\n            transform: translateY(0)\n        }\n    }\n\n    @keyframes slide-from-top {\n        0% {\n            transform: translateY(0)\n        }\n\n        to {\n            transfo",
       "stderr_head": ""
     }
   ],
-  "generatedAt": "2026-03-30T09:47:11.162139-07:00"
+  "generatedAt": "2026-04-13T20:09:55.940371-07:00"
 }
