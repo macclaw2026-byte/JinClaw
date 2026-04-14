@@ -100,13 +100,13 @@ def _detect_skill_tags(name: str, body: str) -> List[str]:
     normalized = f"{name}\n{body}".lower()
     tags = []
     rules = {
-        "browser": ["browser", "page", "snapshot", "screenshot"],
+        "browser": ["browser", "page", "snapshot", "screenshot", "ziniao", "zclaw", "seller console", "后台"],
         "research": ["research", "source", "web", "documentation", "search"],
         "security": ["security", "audit", "sensitive", "risk", "safe"],
         "recovery": ["recovery", "repair", "retry", "fallback"],
         "learning": ["learning", "retrofit", "evolution", "monitoring"],
-        "data": ["data", "report", "json", "csv", "analysis"],
-        "marketplace": ["amazon", "walmart", "marketplace", "product"],
+        "data": ["data", "report", "json", "csv", "analysis", "export", "导出", "账务", "财务"],
+        "marketplace": ["amazon", "walmart", "marketplace", "product", "seller", "店铺", "temu", "kuajingmaihuo", "ziniao"],
     }
     for tag, needles in rules.items():
         if any(needle in normalized for needle in needles):

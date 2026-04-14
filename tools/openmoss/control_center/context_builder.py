@@ -140,6 +140,7 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
     plan_reviews = mission.get("plan_reviews", {}) or control_center.get("plan_reviews", {})
     operating_discipline = mission.get("operating_discipline", {}) or control_center.get("operating_discipline", {})
     protocol_pack = mission.get("protocol_pack", {}) or control_center.get("protocol_pack", {})
+    skill_guidance = mission.get("skill_guidance", {}) or control_center.get("skill_guidance", {})
     knowledge_basis = mission.get("knowledge_basis", {}) or control_center.get("knowledge_basis", {})
     readiness_dashboard = mission.get("readiness_dashboard", {}) or control_center.get("readiness_dashboard", {})
     acquisition_hand = mission.get("acquisition_hand", {}) or control_center.get("acquisition_hand", {})
@@ -186,6 +187,7 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
             "plan_reviews": plan_reviews,
             "operating_discipline": operating_discipline,
             "protocol_pack": protocol_pack,
+            "skill_guidance": skill_guidance,
             "knowledge_basis": knowledge_basis,
             "readiness_dashboard": readiness_dashboard,
             "acquisition_hand": acquisition_hand,
@@ -260,6 +262,7 @@ def build_stage_context(task_id: str, stage_name: str, contract: Dict[str, objec
         "plan_reviews": plan_reviews,
         "operating_discipline": operating_discipline,
         "protocol_pack": protocol_pack,
+        "skill_guidance": skill_guidance,
         "knowledge_basis": knowledge_basis,
         "readiness_dashboard": readiness_dashboard,
         "acquisition_hand": acquisition_hand,

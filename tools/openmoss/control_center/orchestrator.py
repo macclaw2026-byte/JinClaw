@@ -183,6 +183,31 @@ def _load_prompt_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _goal_targets_ziniao_bridge(goal: str, intent: Dict[str, object]) -> bool:
+    """
+    中文注解：
+    - 功能：识别 Ziniao / Temu 卖家后台桥接任务。
+    - 设计意图：这类任务依赖本地授权态浏览器与桥接规则，必须显式注入技能方法，不应退化成泛浏览器探索。
+    """
+    normalized_goal = str(goal or "").lower()
+    task_types = {str(item).strip().lower() for item in intent.get("task_types", []) if str(item).strip()}
+    bridge_tokens = (
+        "ziniao",
+        "子鸟",
+        "zclaw",
+        "kuajingmaihuo",
+        "temu",
+        "seller console",
+        "店铺",
+        "后台",
+        "订单",
+        "对账中心",
+        "账务明细",
+        "导出",
+    )
+    return bool(task_types & {"web", "marketplace"}) and any(token in normalized_goal for token in bridge_tokens)
+
+
 def _goal_prefers_planning_only(goal: str) -> bool:
     """
     中文注解：
@@ -685,7 +710,86 @@ def _derive_allowed_tools(blueprint: Dict[str, object]) -> List[str]:
         tools.extend(["playwright", "playwright_stealth"])
     acquisition_hand = blueprint.get("acquisition_hand", {}) or {}
     tools.extend([str(item) for item in acquisition_hand.get("recommended_tools", []) if str(item).strip()])
+    skill_guidance = blueprint.get("skill_guidance", {}) or {}
+    tools.extend([str(item) for item in skill_guidance.get("recommended_tools", []) if str(item).strip()])
     return sorted(dict.fromkeys(tools))
+
+
+def _derive_skill_guidance(
+    goal: str,
+    intent: Dict[str, object],
+    capabilities: Dict[str, object],
+    selected_plan: Dict[str, object],
+) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：把本地 skill 的可执行知识整理成 runtime 可消费的 skill guidance。
+    - 设计意图：Telegram/聊天窗口链路不能只“知道 skill 名字”，还要把桥接规则、参考路径、验证过的工作流一起送到执行 prompt。
+    """
+    skill_map = {
+        str(skill.get("name", "")).strip(): skill
+        for skill in capabilities.get("skills", [])
+        if str(skill.get("name", "")).strip()
+    }
+    matched_skills: List[Dict[str, object]] = []
+    runtime_prompt_lines: List[str] = []
+    recommended_tools: List[str] = []
+    if (
+        _goal_targets_ziniao_bridge(goal, intent)
+        or str(selected_plan.get("plan_id", "")).strip() == "ziniao_bridge_ops"
+    ) and "ziniao-assistant" in skill_map:
+        skill = skill_map["ziniao-assistant"]
+        skill_dir = Path(str(skill.get("path", ""))).parent
+        reference_paths = [
+            str(path)
+            for path in [
+                skill_dir / "references" / "seller_console_patterns.md",
+                skill_dir / "references" / "temu_finance_export.md",
+            ]
+            if path.exists()
+        ]
+        matched_skills.append(
+            {
+                "name": "ziniao-assistant",
+                "path": str(skill.get("path", "")),
+                "tags": list(skill.get("tags", []) or []),
+                "reason": "目标命中了 Ziniao/Temu 卖家后台桥接工作流，需要本地授权态浏览器与稳定 seller-console SOP。",
+                "reference_paths": reference_paths,
+                "validated_workflows": [
+                    "generic_seller_console_navigation",
+                    "temu_finance_export_history_confirmation",
+                ],
+                "bridge_contract": {
+                    "discover_tools_first": True,
+                    "discovery_endpoint": "GET /zclaw/tools",
+                    "invoke_endpoint": "POST /zclaw/tools/invoke",
+                    "prefer_reuse_logged_in_store_session": True,
+                    "verify_export_via_history_row": True,
+                },
+                "execution_hints": [
+                    "先 GET /zclaw/tools，再决定 bridge tool 名称；不要猜工具名。",
+                    "优先复用已经登录的 Ziniao 店铺会话，不要切成通用新浏览器。",
+                    "卖家后台日期/筛选组件优先走可见 UI 交互或组件友好事件，不要只做裸 DOM 赋值。",
+                    "导出类任务必须到导出历史/任务列表确认新记录，不能把“点了导出”当成完成。",
+                ],
+            }
+        )
+        runtime_prompt_lines.extend(
+            [
+                "Matched local skill `ziniao-assistant`: follow the Ziniao bridge workflow before generic browser improvisation.",
+                "Use `GET /zclaw/tools` first, then only `POST /zclaw/tools/invoke` with discovered tool names.",
+                "Reuse the authenticated Ziniao store session and verify the seller-console page or region before deep navigation.",
+                "For export or report tasks, verify completion through export history or task history evidence instead of stopping at the export button.",
+            ]
+        )
+        recommended_tools.extend(["curl", "httpx"])
+    return {
+        "enabled": bool(matched_skills),
+        "matched_skill_names": [str(item.get("name", "")).strip() for item in matched_skills if str(item.get("name", "")).strip()],
+        "matched_skills": matched_skills,
+        "runtime_prompt_lines": runtime_prompt_lines,
+        "recommended_tools": sorted(dict.fromkeys(recommended_tools)),
+    }
 
 
 def _merge_inherited_intent(intent: Dict[str, object], inherited_intent: Dict[str, object] | None) -> Dict[str, object]:
@@ -1879,6 +1983,7 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
         governance=governance,
     )
     protocol_pack = _derive_protocol_pack(governance, operating_discipline, plan_reviews)
+    skill_guidance = _derive_skill_guidance(goal, intent, capabilities, selected_plan)
     acquisition_hand = build_acquisition_hand(
         task_id,
         goal,
@@ -1919,6 +2024,7 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
             "governance": governance,
             "plan_reviews": plan_reviews,
             "protocol_pack": protocol_pack,
+            "skill_guidance": skill_guidance,
             "acquisition_hand": acquisition_hand,
         },
     )
@@ -1962,6 +2068,7 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
         "plan_reviews": plan_reviews,
         "operating_discipline": operating_discipline,
         "protocol_pack": protocol_pack,
+        "skill_guidance": skill_guidance,
         "readiness_dashboard": readiness_dashboard,
     }
     should_clone_capability = selected_plan.get("plan_id") == "in_house_capability_rebuild"
@@ -2015,6 +2122,7 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
             "plan_reviews": plan_reviews,
             "operating_discipline": operating_discipline,
             "protocol_pack": protocol_pack,
+            "skill_guidance": skill_guidance,
             "readiness_dashboard": readiness_dashboard,
         },
         "approval": approval,
@@ -2029,7 +2137,7 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
         "goal": goal,
         "done_definition": intent["done_definition"],
         "hard_constraints": intent["hard_constraints"],
-        "allowed_tools": _derive_allowed_tools({**blueprint, "intent": intent, "selected_plan": selected_plan, "acquisition_hand": acquisition_hand}),
+        "allowed_tools": _derive_allowed_tools({**blueprint, "intent": intent, "selected_plan": selected_plan, "acquisition_hand": acquisition_hand, "skill_guidance": skill_guidance}),
         "stages": stages,
         "metadata": metadata,
         "mission_path": str(MISSIONS_ROOT / f"{task_id}.json"),

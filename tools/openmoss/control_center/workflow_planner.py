@@ -20,6 +20,36 @@ import json
 from typing import Dict, List
 
 
+def _skill_available(capabilities: Dict[str, object], name: str) -> bool:
+    return any(str(skill.get("name", "")).strip() == name for skill in capabilities.get("skills", []))
+
+
+def _goal_targets_ziniao_bridge(goal: str, intent: Dict[str, object]) -> bool:
+    """
+    中文注解：
+    - 功能：识别是否属于 Ziniao/Temu 卖家后台桥接任务。
+    - 设计意图：这类任务依赖本地授权态浏览器和稳定步骤，不应被误送去图片流水线或泛浏览器探索路径。
+    """
+    normalized_goal = str(goal or "").lower()
+    task_types = {str(item).strip().lower() for item in intent.get("task_types", []) if str(item).strip()}
+    bridge_tokens = (
+        "ziniao",
+        "子鸟",
+        "zclaw",
+        "kuajingmaihuo",
+        "temu",
+        "seller console",
+        "店铺",
+        "后台",
+        "对账中心",
+        "账务明细",
+        "账户资金",
+        "订单",
+        "导出",
+    )
+    return bool(task_types & {"web", "marketplace"}) and any(token in normalized_goal for token in bridge_tokens)
+
+
 def _candidate_plans(intent: Dict[str, object], capabilities: Dict[str, object]) -> List[Dict[str, object]]:
     """
     中文注解：
@@ -51,6 +81,29 @@ def _candidate_plans(intent: Dict[str, object], capabilities: Dict[str, object])
         }
     )
 
+    if _goal_targets_ziniao_bridge(goal, intent) and _skill_available(capabilities, "ziniao-assistant"):
+        plans.append(
+            {
+                "plan_id": "ziniao_bridge_ops",
+                "label": "Ziniao bridge seller-console execution",
+                "summary": "Use the local Ziniao bridge skill and the authenticated seller-console session to complete the requested business workflow, then verify the business result with export/task history evidence.",
+                "fit": "strong",
+                "steps": [
+                    "Load the local Ziniao bridge workflow and discover the allowed bridge tools first",
+                    "Reuse the authenticated store session, confirm the intended site or region, and navigate to the requested seller-console page",
+                    "Operate the required page flow with component-friendly interactions instead of generic DOM shortcuts",
+                    "Verify the business result with export history, order status, or page evidence before reporting completion",
+                ],
+                "skills": [
+                    name
+                    for name in ["ziniao-assistant", "guarded-agent-browser-ops"]
+                    if any(skill.get("name") == name for skill in capabilities.get("skills", []))
+                ],
+                "external_actions": [],
+                "confidence": "high",
+            }
+        )
+
     if "web" in task_types:
         plans.append(
             {
@@ -70,7 +123,7 @@ def _candidate_plans(intent: Dict[str, object], capabilities: Dict[str, object])
             }
         )
 
-    if "image" in task_types or "marketplace" in task_types:
+    if "image" in task_types:
         plans.append(
             {
                 "plan_id": "local_image_pipeline",
@@ -166,7 +219,11 @@ def _choose_best_plan(plans: List[Dict[str, object]], intent: Dict[str, object])
         audited = next((plan for plan in plans if plan.get("plan_id") == "audited_external_extension"), None)
         if audited:
             return audited
-    if "image" in intent.get("task_types", []) or "marketplace" in intent.get("task_types", []):
+    if _goal_targets_ziniao_bridge(goal, intent):
+        ziniao = next((plan for plan in plans if plan.get("plan_id") == "ziniao_bridge_ops"), None)
+        if ziniao:
+            return ziniao
+    if "image" in intent.get("task_types", []):
         image_pipeline = next((plan for plan in plans if plan.get("plan_id") == "local_image_pipeline"), None)
         if image_pipeline:
             return image_pipeline

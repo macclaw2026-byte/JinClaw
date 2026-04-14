@@ -21,6 +21,7 @@ class RuntimeDispatchPromptIntegrationTest(unittest.TestCase):
         for task_id in [
             'runtime-dispatch-coding-integration',
             'runtime-dispatch-noncoding-integration',
+            'runtime-dispatch-ziniao-integration',
         ]:
             d = task_dir(task_id)
             if d.exists():
@@ -60,6 +61,16 @@ class RuntimeDispatchPromptIntegrationTest(unittest.TestCase):
         self.assertIn('[Autonomy runtime execution request]', prompt)
         self.assertIn('user_goal:', prompt)
         self.assertNotIn('# JinClaw GStack-Lite Coding Discipline', prompt)
+
+    def test_runtime_dispatch_prompt_carries_skill_guidance_for_ziniao_task(self):
+        self._create_task(
+            'runtime-dispatch-ziniao-integration',
+            '用 ziniao 浏览器打开 Temu 店铺后台，进入对账中心并导出三月份账务明细',
+        )
+        prompt = _dispatch_prompt('runtime-dispatch-ziniao-integration', 'execute')
+        self.assertIn('skill_guidance:', prompt)
+        self.assertIn('GET /zclaw/tools', prompt)
+        self.assertIn('ziniao-assistant', prompt)
 
 
 if __name__ == '__main__':

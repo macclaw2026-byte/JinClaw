@@ -49,12 +49,20 @@ def _intent_affinity(intent: Dict[str, object], plan_id: str) -> float:
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
     """
     goal = str(intent.get("goal", "")).lower()
+    ziniao_bridge_goal = any(
+        token in goal
+        for token in ["ziniao", "子鸟", "zclaw", "kuajingmaihuo", "temu", "对账中心", "账务明细", "店铺", "导出", "订单"]
+    )
     if plan_id == "audited_external_extension":
         if all(token in goal for token in ["install", "approved", "official", "rollback"]):
             return 16.0
         if any(token in goal for token in ["install", "approved dependency", "package", "use the safest and most efficient way"]):
             return 6.0
+    if plan_id == "ziniao_bridge_ops" and ziniao_bridge_goal:
+        return 12.0
     if plan_id == "in_house_capability_rebuild":
+        if ziniao_bridge_goal:
+            return -8.0
         if any(token in goal for token in ["learn its strengths", "build a local replacement", "rebuild", "local equivalent"]):
             return 5.0
     return 0.0

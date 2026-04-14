@@ -81,6 +81,12 @@ def _estimate_plan_efficiency(plan: Dict[str, object], intent: Dict[str, object]
             efficiency += 3.0
         if intent.get("needs_browser"):
             efficiency += 1.0
+    elif plan_id == "ziniao_bridge_ops":
+        efficiency += 4.5
+        if intent.get("needs_browser"):
+            efficiency += 1.5
+        if {"temu", "ziniao", "kuajingmaihuo"} & {str(item).strip().lower() for item in intent.get("likely_platforms", []) if str(item).strip()}:
+            efficiency += 2.0
     elif plan_id == "browser_evidence":
         efficiency += 2.0 if intent.get("needs_browser") else 0.5
     else:
@@ -175,6 +181,8 @@ def _score_plan(
         rationale.append("fits browser-heavy task")
     if image_pipeline_bonus:
         rationale.append("fits image-generation plus marketplace upload closure")
+    if plan.get("plan_id") == "ziniao_bridge_ops":
+        rationale.append("uses the validated Ziniao bridge workflow instead of generic seller-console guessing")
     if local_first_penalty:
         rationale.append("generic local path is too coarse for image-generation closure")
     if plan_efficiency >= 4:
