@@ -71,10 +71,16 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                     'conversation_context_chain': 'ok',
                     'reply_projection_chain': 'ok',
                     'conversation_event_chain': 'ok',
+                    'execution_event_chain': 'ok',
                     'conversation_events': {
                         'ingress_event_contract': True,
                         'route_event_contract': True,
                         'reply_event_contract': True,
+                        'control_plane_visibility_contract': True,
+                    },
+                    'execution_events': {
+                        'execution_event_contract': True,
+                        'execution_handoff_payload_contract': True,
                         'control_plane_visibility_contract': True,
                     },
                     'reply_projection': {
@@ -123,6 +129,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                 'conversation_context_chain': 'ok',
                 'reply_projection_chain': 'ok',
                 'conversation_event_chain': 'ok',
+                'execution_event_chain': 'ok',
                 'acquisition_hand': {
                     'field_synthesis_contract': True,
                     'delivery_requirements_contract': True,
@@ -152,6 +159,11 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                     'ingress_event_contract': True,
                     'route_event_contract': True,
                     'reply_event_contract': True,
+                    'control_plane_visibility_contract': True,
+                },
+                'execution_events': {
+                    'execution_event_contract': True,
+                    'execution_handoff_payload_contract': True,
                     'control_plane_visibility_contract': True,
                 },
                 'ok': True,
@@ -293,6 +305,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
             self.assertEqual(summary['integration_health']['acquisition_chain'], 'ok')
             self.assertEqual(summary['integration_health']['reply_projection_chain'], 'ok')
             self.assertEqual(summary['integration_health']['conversation_event_chain'], 'ok')
+            self.assertEqual(summary['integration_health']['execution_event_chain'], 'ok')
             self.assertTrue(summary['acquisition_health']['field_synthesis_contract'])
             self.assertTrue(summary['acquisition_health']['response_handoff_contract'])
             self.assertTrue(summary['acquisition_health']['execution_truth_contract'])
@@ -306,6 +319,9 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
             self.assertTrue(summary['integration_health']['conversation_events']['route_event_contract'])
             self.assertTrue(summary['integration_health']['conversation_events']['reply_event_contract'])
             self.assertTrue(summary['integration_health']['conversation_events']['control_plane_visibility_contract'])
+            self.assertTrue(summary['integration_health']['execution_events']['execution_event_contract'])
+            self.assertTrue(summary['integration_health']['execution_events']['execution_handoff_payload_contract'])
+            self.assertTrue(summary['integration_health']['execution_events']['control_plane_visibility_contract'])
             self.assertEqual(summary['acquisition_health']['completion_status'], 'complete')
             self.assertTrue(summary['acquisition_health']['goal_reached'])
             self.assertTrue(summary['refresh']['attempted'])

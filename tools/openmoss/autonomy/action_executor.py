@@ -39,6 +39,9 @@ if str(CONTROL_CENTER_DIR) not in sys.path:
 from context_builder import build_stage_context
 from acp_dispatch_builder import build_acp_dispatch_request
 from browser_task_signals import collect_browser_task_signals
+from conversation_context import load_conversation_focus
+from conversation_events import record_execution_handoff_event
+from control_center_schemas import build_execution_handoff_schema
 from crawler_probe_runner import run_crawler_probe, run_crawler_retro
 from task_receipt_engine import emit_route_receipt
 from task_status_snapshot import build_task_status_snapshot
@@ -118,6 +121,98 @@ def _record_execution(task_id: str, payload: Dict) -> str:
     record_path = _execution_records_dir(task_id) / f"{uuid.uuid4().hex}.json"
     _write_json(record_path, payload)
     return str(record_path)
+
+
+def _build_execution_handoff(
+    *,
+    task_id: str,
+    stage_name: str,
+    state,
+    link: Dict,
+    handoff_status: str,
+    execution_session_key: str = "",
+    linked_session_key: str = "",
+    run_id: str = "",
+    wait_status: str = "",
+    wait_error: str = "",
+    contract_source: str = "",
+) -> Dict:
+    """
+    中文注解：
+    - 功能：把 runtime 当前执行交接状态整理成统一 handoff 合同。
+    - 输入角色：消费 task state、会话 link、conversation focus 与 runtime wait 信息。
+    - 输出角色：供 conversation event、snapshot、doctor、ops 共享执行真相。
+    """
+    provider = str((link or {}).get("provider", "")).strip()
+    conversation_id = str((link or {}).get("conversation_id", "")).strip()
+    focus = load_conversation_focus(provider, conversation_id) if provider and conversation_id else {}
+    active_execution = (state.metadata.get("active_execution", {}) or {}) if state else {}
+    waiting_external = (state.metadata.get("waiting_external", {}) or {}) if state else {}
+    linked_key = str(linked_session_key or (link or {}).get("session_key", "")).strip()
+    execution_key = str(execution_session_key or active_execution.get("session_key", "")).strip()
+    return build_execution_handoff_schema(
+        enabled=bool(provider and conversation_id),
+        contract_source=contract_source or "runtime_execution",
+        task_id=task_id,
+        stage_name=stage_name,
+        handoff_status=handoff_status,
+        provider=provider,
+        conversation_id=conversation_id,
+        session_key=str(focus.get("session_key", "") or linked_key).strip(),
+        linked_session_key=linked_key,
+        execution_session_key=execution_key,
+        run_id=str(run_id or active_execution.get("run_id", "")).strip(),
+        runtime_mode=str(focus.get("resolved_mode", "") or focus.get("requested_mode", "")).strip(),
+        runtime_mode_reason=str(focus.get("resolved_mode_reason", "") or focus.get("requested_mode_reason", "")).strip(),
+        next_action=str(getattr(state, "next_action", "") or "").strip(),
+        wait_status=str(wait_status or waiting_external.get("wait_status", "")).strip(),
+        wait_error=str(wait_error or waiting_external.get("wait_error", "")).strip(),
+        dispatched_at=str(active_execution.get("dispatched_at", "") or waiting_external.get("last_polled_at", "")).strip(),
+        updated_at=utc_now_iso(),
+        conversation_focus_ready=bool(focus.get("context_ready")),
+        must_use_authoritative_snapshot=True,
+    )
+
+
+def _record_execution_handoff(
+    *,
+    task_id: str,
+    stage_name: str,
+    state,
+    link: Dict,
+    handoff_status: str,
+    execution_session_key: str = "",
+    linked_session_key: str = "",
+    run_id: str = "",
+    wait_status: str = "",
+    wait_error: str = "",
+    contract_source: str = "",
+) -> Dict:
+    """
+    中文注解：
+    - 功能：把 execution handoff 合同写入会话事件流。
+    - 输出角色：让 transport parity 链路看到 runtime 已经真正接手执行，而不是只看到入口和回执。
+    """
+    handoff = _build_execution_handoff(
+        task_id=task_id,
+        stage_name=stage_name,
+        state=state,
+        link=link,
+        handoff_status=handoff_status,
+        execution_session_key=execution_session_key,
+        linked_session_key=linked_session_key,
+        run_id=run_id,
+        wait_status=wait_status,
+        wait_error=wait_error,
+        contract_source=contract_source,
+    )
+    if handoff.get("enabled"):
+        record_execution_handoff_event(
+            provider=str(handoff.get("provider", "")).strip(),
+            conversation_id=str(handoff.get("conversation_id", "")).strip(),
+            execution_handoff=handoff,
+        )
+    return handoff
 
 
 def _set_waiting_external_metadata(state, *, run_id: str, stage_name: str, reason: str, wait_status: str = "", wait_error: str = "") -> None:
@@ -793,6 +888,16 @@ def dispatch_stage(task_id: str) -> Dict:
         }
         record_path = _record_execution(task_id, result)
         result["record_path"] = record_path
+        _record_execution_handoff(
+            task_id=task_id,
+            stage_name=stage_name,
+            state=state,
+            link=link,
+            handoff_status="preflight_blocked",
+            execution_session_key=session_key,
+            linked_session_key=linked_session_key,
+            contract_source="runtime_preflight",
+        )
         log_event(task_id, "stage_dispatch_blocked_by_preflight", stage=stage_name, result=result, link_path=link.get("_path"))
         return result
 
@@ -854,6 +959,17 @@ def dispatch_stage(task_id: str) -> Dict:
         stage.last_execution_status = "dispatched"
         stage.updated_at = utc_now_iso()
     save_state(state)
+    _record_execution_handoff(
+        task_id=task_id,
+        stage_name=stage_name,
+        state=state,
+        link=link,
+        handoff_status="dispatched",
+        execution_session_key=session_key,
+        linked_session_key=linked_session_key,
+        run_id=run_id,
+        contract_source="runtime_dispatch",
+    )
 
     wait_result = _gateway_call("agent.wait", {"runId": run_id, "timeoutMs": 1000}, timeout_seconds=8) if run_id else {"ok": False}
     if wait_result.get("ok"):
@@ -869,6 +985,19 @@ def dispatch_stage(task_id: str) -> Dict:
 
     record_path = _record_execution(task_id, result)
     result["record_path"] = record_path
+    _record_execution_handoff(
+        task_id=task_id,
+        stage_name=stage_name,
+        state=load_state(task_id),
+        link=link,
+        handoff_status=str(result.get("status", "")).strip() or "waiting_external",
+        execution_session_key=session_key,
+        linked_session_key=linked_session_key,
+        run_id=run_id,
+        wait_status=str((result.get("wait", {}) or {}).get("status", "")).strip(),
+        wait_error=str(result.get("wait_error", "")).strip(),
+        contract_source="runtime_dispatch_wait",
+    )
     log_event(task_id, "stage_dispatch_attempted", stage=stage_name, result=result, link_path=link.get("_path"))
     if result.get("status") == "completed":
         return _finalize_stage_wait_result(task_id, stage_name, result, record_path)
@@ -982,11 +1111,38 @@ def poll_active_execution(task_id: str) -> Dict:
         save_state(state)
         record_path = _record_execution(task_id, result)
         result["record_path"] = record_path
+        link = find_link_by_task_id(task_id)
+        _record_execution_handoff(
+            task_id=task_id,
+            stage_name=stage_name,
+            state=state,
+            link=link,
+            handoff_status="waiting_external",
+            execution_session_key=str(active.get("session_key", "")).strip(),
+            linked_session_key=str(active.get("linked_session_key", "")).strip(),
+            run_id=run_id,
+            wait_status=str((result.get("wait", {}) or {}).get("status", "")).strip(),
+            wait_error=str(result.get("wait_error", "")).strip(),
+            contract_source="runtime_poll",
+        )
         log_event(task_id, "stage_execution_polled", stage=stage_name, result=result)
         return result
 
     record_path = _record_execution(task_id, result)
     result["record_path"] = record_path
+    link = find_link_by_task_id(task_id)
+    _record_execution_handoff(
+        task_id=task_id,
+        stage_name=stage_name,
+        state=state,
+        link=link,
+        handoff_status="completed",
+        execution_session_key=str(active.get("session_key", "")).strip(),
+        linked_session_key=str(active.get("linked_session_key", "")).strip(),
+        run_id=run_id,
+        wait_status=str((result.get("wait", {}) or {}).get("status", "")).strip(),
+        contract_source="runtime_poll",
+    )
     log_event(task_id, "stage_execution_polled", stage=stage_name, result=result)
     state.metadata.pop("waiting_external", None)
     save_state(state)

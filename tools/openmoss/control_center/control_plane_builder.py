@@ -1525,6 +1525,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
             "conversation_event_with_ingress_total": int((conversation_event_registry.get("summary", {}) or {}).get("with_ingress_total", 0) or 0),
             "conversation_event_with_route_total": int((conversation_event_registry.get("summary", {}) or {}).get("with_route_total", 0) or 0),
             "conversation_event_with_reply_total": int((conversation_event_registry.get("summary", {}) or {}).get("with_reply_total", 0) or 0),
+            "conversation_event_with_execution_total": int((conversation_event_registry.get("summary", {}) or {}).get("with_execution_total", 0) or 0),
             "blocked_total": blocked_total,
             "blocked_project_crawler_remediation_total": blocked_category_counts.get("project_crawler_remediation", 0),
             "blocked_approval_or_contract_total": blocked_category_counts.get("approval_or_contract", 0),
