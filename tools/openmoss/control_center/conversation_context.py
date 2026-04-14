@@ -77,6 +77,39 @@ CONTEXTUAL_TOKENS = {
     "明天",
 }
 
+INTERACTIVE_MODE_HINTS = (
+    "优化",
+    "调试",
+    "修复",
+    "review",
+    "代码",
+    "架构",
+    "为什么",
+    "怎么回事",
+    "排查",
+    "系统",
+    "框架",
+)
+
+MISSION_MODE_HINTS = (
+    "浏览器",
+    "店铺",
+    "后台",
+    "对账",
+    "订单",
+    "导出",
+    "下载",
+    "抓取",
+    "google maps",
+    "googlemaps",
+    "地图",
+    "定时",
+    "周期",
+    "监控",
+    "持续运行",
+    "报表",
+)
+
 
 def _utc_now_iso() -> str:
     """
@@ -184,6 +217,27 @@ def _looks_contextual_followup(normalized_text: str, focus_goal: str) -> bool:
     return len(normalized_text) <= 18 and any(token in normalized_text for token in CONTEXTUAL_TOKENS)
 
 
+def _derive_requested_mode(raw_text: str, normalized_text: str, explicit_intent_type: str, prior_focus: Dict[str, Any]) -> Dict[str, str]:
+    """
+    中文注解：
+    - 功能：为当前消息推导 transport-neutral 的运行模式倾向。
+    - 输出角色：供 brain router / runtime 后续区分 interactive_session 与 mission_runtime。
+    """
+    prior_requested_mode = str(prior_focus.get("resolved_mode", "")).strip() or str(prior_focus.get("requested_mode", "")).strip()
+    explicit_type = str(explicit_intent_type or "").strip()
+    if explicit_type in {"status_followup", "continue_current_task", "contextual_followup"} and prior_requested_mode:
+        return {"requested_mode": prior_requested_mode, "requested_mode_reason": "inherit_prior_focus_mode"}
+    lowered = str(raw_text or "").strip().lower()
+    normalized = str(normalized_text or "").strip()
+    if any(token in lowered or token in normalized for token in MISSION_MODE_HINTS):
+        return {"requested_mode": "mission_runtime", "requested_mode_reason": "mission_keywords"}
+    if any(token in lowered or token in normalized for token in INTERACTIVE_MODE_HINTS):
+        return {"requested_mode": "interactive_session", "requested_mode_reason": "interactive_keywords"}
+    if explicit_type == "status_followup":
+        return {"requested_mode": "interactive_session", "requested_mode_reason": "status_followup_default"}
+    return {"requested_mode": "interactive_session", "requested_mode_reason": "default_interactive"}
+
+
 def build_instruction_envelope(
     *,
     provider: str,
@@ -255,6 +309,7 @@ def build_instruction_envelope(
                 f" 当前下一步：{focus_next_action or 'unknown'}。"
                 f" 用户补充：{goal or cleaned or raw_text}。"
             )
+    requested_mode_bundle = _derive_requested_mode(goal or cleaned or raw_text, normalized, explicit_intent_type, prior_focus)
     return {
         "generated_at": _utc_now_iso(),
         "provider": provider,
@@ -278,6 +333,8 @@ def build_instruction_envelope(
         "focus_stage": focus_stage,
         "focus_next_action": focus_next_action,
         "contextual_goal": contextual_goal,
+        "requested_mode": str(requested_mode_bundle.get("requested_mode", "")).strip() or "interactive_session",
+        "requested_mode_reason": str(requested_mode_bundle.get("requested_mode_reason", "")).strip() or "default_interactive",
     }
 
 
@@ -347,6 +404,10 @@ def record_conversation_context(
         "next_action": next_action,
         "route_mode": str(route.get("mode", "")).strip() or "unknown",
         "explicit_intent_type": explicit_intent_type,
+        "requested_mode": str(envelope.get("requested_mode", "")).strip() or str(prior_focus.get("requested_mode", "")).strip() or "interactive_session",
+        "requested_mode_reason": str(envelope.get("requested_mode_reason", "")).strip() or str(prior_focus.get("requested_mode_reason", "")).strip(),
+        "resolved_mode": str(route.get("conversation_runtime_mode", "")).strip() or str(prior_focus.get("resolved_mode", "")).strip() or str(envelope.get("requested_mode", "")).strip() or "interactive_session",
+        "resolved_mode_reason": str(route.get("conversation_runtime_mode_reason", "")).strip() or str(prior_focus.get("resolved_mode_reason", "")).strip() or "requested_mode_fallback",
         "focus_available_at_ingress": bool(envelope.get("focus_available")),
         "resolved_with_focus": bool(envelope.get("resolved_with_focus")),
         "recovered_link_from_focus": bool(route.get("focus_restored_link")),
@@ -387,6 +448,8 @@ def build_conversation_focus_registry() -> Dict[str, Any]:
                     "current_stage": str(payload.get("current_stage", "")).strip(),
                     "next_action": str(payload.get("next_action", "")).strip(),
                     "explicit_intent_type": str(payload.get("explicit_intent_type", "")).strip() or "unknown",
+                    "requested_mode": str(payload.get("requested_mode", "")).strip() or "interactive_session",
+                    "resolved_mode": str(payload.get("resolved_mode", "")).strip() or str(payload.get("requested_mode", "")).strip() or "interactive_session",
                     "resolved_with_focus": bool(payload.get("resolved_with_focus")),
                     "context_ready": bool(payload.get("context_ready")),
                     "updated_at": str(payload.get("updated_at", "")).strip(),
@@ -404,5 +467,7 @@ def build_conversation_focus_registry() -> Dict[str, Any]:
             "resolved_with_focus_total": sum(1 for item in rows if item.get("resolved_with_focus")),
             "status_followup_total": sum(1 for item in rows if item.get("explicit_intent_type") == "status_followup"),
             "contextual_followup_total": sum(1 for item in rows if item.get("explicit_intent_type") == "contextual_followup"),
+            "interactive_mode_total": sum(1 for item in rows if item.get("resolved_mode") == "interactive_session"),
+            "mission_mode_total": sum(1 for item in rows if item.get("resolved_mode") == "mission_runtime"),
         },
     }

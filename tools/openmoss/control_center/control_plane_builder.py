@@ -1514,6 +1514,8 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
             "conversation_focus_context_ready_total": int((conversation_focus_registry.get("summary", {}) or {}).get("context_ready_total", 0) or 0),
             "conversation_focus_task_bound_total": int((conversation_focus_registry.get("summary", {}) or {}).get("task_bound_total", 0) or 0),
             "conversation_focus_resolved_total": int((conversation_focus_registry.get("summary", {}) or {}).get("resolved_with_focus_total", 0) or 0),
+            "conversation_focus_interactive_total": int((conversation_focus_registry.get("summary", {}) or {}).get("interactive_mode_total", 0) or 0),
+            "conversation_focus_mission_total": int((conversation_focus_registry.get("summary", {}) or {}).get("mission_mode_total", 0) or 0),
             "blocked_total": blocked_total,
             "blocked_project_crawler_remediation_total": blocked_category_counts.get("project_crawler_remediation", 0),
             "blocked_approval_or_contract_total": blocked_category_counts.get("approval_or_contract", 0),

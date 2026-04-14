@@ -719,10 +719,33 @@ def route_instruction(
         "instruction_envelope_path": envelope_path,
         "conversation_focus_used": bool(prior_focus),
         "focus_restored_link": recovered_from_focus,
+        "conversation_runtime_mode_requested": str(instruction_envelope.get("requested_mode", "")).strip() or "interactive_session",
+        "conversation_runtime_mode_requested_reason": str(instruction_envelope.get("requested_mode_reason", "")).strip() or "default_interactive",
     }
+
+    def _resolve_conversation_runtime_mode(updated_route: Dict[str, object]) -> Dict[str, str]:
+        envelope = dict(updated_route.get("instruction_envelope", {}) or {})
+        requested_mode = str(envelope.get("requested_mode", "")).strip()
+        requested_reason = str(envelope.get("requested_mode_reason", "")).strip()
+        task_types = {str(item).strip() for item in (intent.get("task_types", []) or []) if str(item).strip()}
+        if requested_mode in {"interactive_session", "mission_runtime"}:
+            return {
+                "conversation_runtime_mode": requested_mode,
+                "conversation_runtime_mode_reason": requested_reason or "envelope_requested_mode",
+            }
+        if bool(intent.get("needs_browser")) or bool(intent.get("requires_external_information")) or "marketplace" in task_types:
+            return {
+                "conversation_runtime_mode": "mission_runtime",
+                "conversation_runtime_mode_reason": "intent_requires_runtime_continuity",
+            }
+        return {
+            "conversation_runtime_mode": "interactive_session",
+            "conversation_runtime_mode_reason": "default_interactive_route",
+        }
 
     def _finalize_route(updated_route: Dict[str, object]) -> Dict[str, object]:
         finalized = dict(updated_route)
+        finalized.update(_resolve_conversation_runtime_mode(finalized))
         finalized["route_path"] = _write_json(BRAIN_ROUTES_ROOT / provider / f"{conversation_id}.json", finalized)
         focus = record_conversation_context(
             finalized,

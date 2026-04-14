@@ -72,8 +72,10 @@ class ConversationContextKernelTest(unittest.TestCase):
             'm-1',
         )
         self.assertTrue(str(seed.get('task_id', '')).strip())
+        self.assertEqual(seed.get('conversation_runtime_mode'), 'mission_runtime')
         focus = load_conversation_focus(self.provider, self.conversation_id)
         self.assertTrue(focus.get('context_ready'))
+        self.assertEqual(focus.get('resolved_mode'), 'mission_runtime')
         link = link_path(self.provider, self.conversation_id)
         if link.exists():
             link.unlink()
@@ -84,6 +86,7 @@ class ConversationContextKernelTest(unittest.TestCase):
         self.assertEqual(envelope.get('explicit_intent_type'), 'status_followup')
         self.assertTrue(envelope.get('resolved_with_focus'))
         self.assertEqual(followup.get('mode'), 'authoritative_task_status')
+        self.assertEqual(followup.get('conversation_runtime_mode'), 'mission_runtime')
         self.assertTrue(instruction_envelope_path(self.provider, self.conversation_id).exists())
         self.assertTrue(conversation_focus_path(self.provider, self.conversation_id).exists())
 
@@ -96,9 +99,11 @@ class ConversationContextKernelTest(unittest.TestCase):
         envelope = followup.get('instruction_envelope', {}) or {}
         self.assertEqual(envelope.get('explicit_intent_type'), 'contextual_followup')
         self.assertIn('当前任务目标', str(envelope.get('contextual_goal', '')))
+        self.assertEqual(envelope.get('requested_mode'), 'mission_runtime')
         focus = load_conversation_focus(self.provider, self.conversation_id)
         self.assertEqual((focus.get('recent_user_goals', []) or [])[-1], '还是三月')
         self.assertTrue(focus.get('context_ready'))
+        self.assertEqual(focus.get('resolved_mode'), 'mission_runtime')
 
     def test_contextual_followup_survives_after_status_followup(self):
         self._route(
@@ -112,6 +117,18 @@ class ConversationContextKernelTest(unittest.TestCase):
         self.assertIn('当前任务目标', str(envelope.get('contextual_goal', '')))
         focus = load_conversation_focus(self.provider, self.conversation_id)
         self.assertIn('筛选 3 月并导出', str(focus.get('current_goal', '')))
+        self.assertEqual(followup.get('conversation_runtime_mode'), 'mission_runtime')
+
+    def test_system_optimization_prefers_interactive_session_mode(self):
+        route = self._route(
+            '继续优化 Telegram 与直连的上下文内核，排查为什么 reply chain 还会漂移',
+            'm-4',
+        )
+        envelope = route.get('instruction_envelope', {}) or {}
+        self.assertEqual(envelope.get('requested_mode'), 'interactive_session')
+        self.assertEqual(route.get('conversation_runtime_mode'), 'interactive_session')
+        focus = load_conversation_focus(self.provider, self.conversation_id)
+        self.assertEqual(focus.get('resolved_mode'), 'interactive_session')
 
 
 if __name__ == '__main__':

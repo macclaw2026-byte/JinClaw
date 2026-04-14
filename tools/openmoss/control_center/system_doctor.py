@@ -2402,6 +2402,12 @@ def _run_conversation_context_integration_checks() -> Dict[str, object]:
             errors.append('conversation_context_missing_task_binding')
         if not bool(focus.get('context_ready')):
             errors.append('conversation_context_context_not_ready')
+        if str((route.get('instruction_envelope', {}) or {}).get('requested_mode', '')).strip() != 'mission_runtime':
+            errors.append('conversation_context_missing_requested_mode_derivation')
+        if str(route.get('conversation_runtime_mode', '')).strip() != 'mission_runtime':
+            errors.append('conversation_context_missing_runtime_mode_resolution')
+        if str(focus.get('resolved_mode', '')).strip() != 'mission_runtime':
+            errors.append('conversation_context_missing_focus_runtime_mode')
         if str(focus.get('explicit_intent_type', '')).strip() not in {'action_request', 'contextual_followup', 'continue_current_task'}:
             errors.append('conversation_context_invalid_seed_intent_type')
         task_id = str(route.get('task_id', '')).strip()
@@ -2461,6 +2467,8 @@ def _run_conversation_context_integration_checks() -> Dict[str, object]:
             errors.append('conversation_context_missing_contextual_followup_resolution')
         if '当前任务目标' not in str((contextual.get('instruction_envelope', {}) or {}).get('contextual_goal', '')):
             errors.append('conversation_context_missing_contextual_goal_binding')
+        if str(contextual.get('conversation_runtime_mode', '')).strip() != 'mission_runtime':
+            errors.append('conversation_context_followup_mode_drift')
 
         registry = build_conversation_focus_registry()
         if int((registry.get('summary', {}) or {}).get('focus_total', 0) or 0) <= 0:
@@ -2475,6 +2483,8 @@ def _run_conversation_context_integration_checks() -> Dict[str, object]:
         summary = (plane.get('system_snapshot', {}) or {}).get('summary', {}) or {}
         if 'conversation_focus_total' not in summary:
             errors.append('conversation_context_control_plane_missing_summary')
+        if 'conversation_focus_mission_total' not in summary or 'conversation_focus_interactive_total' not in summary:
+            errors.append('conversation_context_control_plane_missing_mode_summary')
     finally:
         for path in [focus_path, envelope_path, link_file]:
             if path.exists():
@@ -2498,6 +2508,9 @@ def _run_conversation_context_integration_checks() -> Dict[str, object]:
                 'conversation_context_missing_focus_file',
                 'conversation_context_missing_task_binding',
                 'conversation_context_context_not_ready',
+                'conversation_context_missing_requested_mode_derivation',
+                'conversation_context_missing_runtime_mode_resolution',
+                'conversation_context_missing_focus_runtime_mode',
             }
             for item in errors
         ),
@@ -2508,6 +2521,7 @@ def _run_conversation_context_integration_checks() -> Dict[str, object]:
                 'conversation_context_followup_not_routed_to_authoritative_status',
                 'conversation_context_missing_contextual_followup_resolution',
                 'conversation_context_missing_contextual_goal_binding',
+                'conversation_context_followup_mode_drift',
             }
             for item in errors
         ),
@@ -2516,6 +2530,7 @@ def _run_conversation_context_integration_checks() -> Dict[str, object]:
                 'conversation_context_missing_focus_registry',
                 'conversation_context_registry_missing_row',
                 'conversation_context_control_plane_missing_summary',
+                'conversation_context_control_plane_missing_mode_summary',
             }
             for item in errors
         ),
