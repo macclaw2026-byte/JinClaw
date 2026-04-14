@@ -12,13 +12,24 @@ from typing import Any
 from urllib.parse import quote_plus, urlparse
 from urllib.request import Request, urlopen
 
+from google_maps_capture_core import (
+    build_discovery_row,
+    build_keyword_queries,
+    derive_query_family,
+    discovery_quality_summary,
+    merge_discovery_rows,
+    read_json,
+    root_domain,
+    safe_query_id,
+    write_json,
+)
+
 
 JINA_PREFIX = "https://r.jina.ai/http://www.google.com/maps/search/"
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0 Safari/537.36"
 WEBSITE_RE = re.compile(r"^\[.*Website.*\]\((https?://[^)]+)\)$", re.I)
 PLACE_LINK_RE = re.compile(r"^\[\]\((https://www\.google\.com/maps/place/[^)]+)\)$", re.I)
 RATING_RE = re.compile(r"^\d+(?:\.\d+)?$")
-QUERY_ID_SANITIZE_RE = re.compile(r"[^a-z0-9]+")
 PHONE_RE = re.compile(r"\(\d{3}\)\s*\d{3}-\d{4}")
 STATE_GROUPS = {
     "ME": "new_england",
@@ -138,22 +149,22 @@ NEW_ENGLAND_PRIORITY_CITIES = {
 }
 
 
+DEFAULT_QUERY_TEMPLATES = [
+    "{keyword} in {priority_city}",
+    "{keyword} in {county} {state_code}",
+]
+
+
 def _read_json(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+    return read_json(path, {})
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json(path, payload)
 
 
 def _root_domain(url: str) -> str:
-    if not url:
-        return ""
-    parsed = urlparse(url if "://" in url else f"https://{url}")
-    return parsed.netloc.lower().removeprefix("www.")
+    return root_domain(url)
 
 
 def _fetch_markdown(query: str) -> str:
@@ -171,7 +182,7 @@ def _workspace_root() -> Path:
     return current.parents[4]
 
 
-def _fetch_maps_cards_via_playwright(query: str) -> list[dict[str, Any]]:
+def _fetch_maps_cards_via_playwright(query: str, *, scroll_passes: int = 3) -> list[dict[str, Any]]:
     workspace_root = _workspace_root()
     venv_python = workspace_root / "tools" / "matrix-venv" / "bin" / "python"
     if not venv_python.exists():
@@ -194,7 +205,7 @@ def _fetch_maps_cards_via_playwright(query: str) -> list[dict[str, Any]]:
             except Exception:
                 pass
 
-            for _ in range(3):
+            for _ in range(max(1, int(sys.argv[2]))):
                 try:
                     page.eval_on_selector('[role="feed"]', "(el) => { el.scrollTop = el.scrollHeight; }")
                     page.wait_for_timeout(1200)
@@ -225,7 +236,7 @@ def _fetch_maps_cards_via_playwright(query: str) -> list[dict[str, Any]]:
         """
     )
     completed = subprocess.run(
-        [str(venv_python), "-c", script, query],
+        [str(venv_python), "-c", script, query, str(scroll_passes)],
         capture_output=True,
         text=True,
         timeout=90,
@@ -238,8 +249,7 @@ def _fetch_maps_cards_via_playwright(query: str) -> list[dict[str, Any]]:
 
 
 def _safe_query_id(state: str, query: str) -> str:
-    slug = QUERY_ID_SANITIZE_RE.sub("-", query.lower()).strip("-")
-    return f"google-maps-{state.lower()}-{slug[:80]}"
+    return safe_query_id(state, query)
 
 
 def _flatten_queries(region_plan: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -258,7 +268,12 @@ def _flatten_queries(region_plan: list[dict[str, Any]]) -> list[dict[str, str]]:
     return flattened
 
 
-def _expand_to_contiguous_48(region_plan: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _expand_to_contiguous_48(
+    region_plan: list[dict[str, Any]],
+    *,
+    keyword: str,
+    query_templates: list[str],
+) -> list[dict[str, Any]]:
     existing_states = {str(item.get("state", "")).strip() for item in region_plan}
     expanded = list(region_plan)
     for state_code, state_name in CONTIGUOUS_STATE_NAMES.items():
@@ -268,15 +283,23 @@ def _expand_to_contiguous_48(region_plan: list[dict[str, Any]]) -> list[dict[str
             {
                 "group": STATE_GROUPS.get(state_code, "nationwide"),
                 "state": state_code,
-                "queries": [
-                    f"interior designer in {state_name}",
-                ],
+                "queries": build_keyword_queries(
+                    keyword=keyword,
+                    state_code=state_code,
+                    state_name=state_name,
+                    templates=query_templates,
+                ),
             }
         )
     return expanded
 
 
-def _expand_new_england_exhaustive(region_plan: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _expand_new_england_exhaustive(
+    region_plan: list[dict[str, Any]],
+    *,
+    keyword: str,
+    query_templates: list[str],
+) -> list[dict[str, Any]]:
     expanded: list[dict[str, Any]] = []
     for item in region_plan:
         state = str(item.get("state", "")).strip()
@@ -284,28 +307,18 @@ def _expand_new_england_exhaustive(region_plan: list[dict[str, Any]]) -> list[di
             expanded.append(item)
             continue
         state_name = CONTIGUOUS_STATE_NAMES.get(state, state)
-        query_set: list[str] = []
-        seen_queries: set[str] = set()
-
-        def add_query(query: str) -> None:
-            normalized = query.strip()
-            if not normalized or normalized in seen_queries:
-                return
-            seen_queries.add(normalized)
-            query_set.append(normalized)
-
-        add_query(f"interior designer in {state_name}")
-        for query in list(item.get("queries", []) or []):
-            add_query(str(query))
-        for county in NEW_ENGLAND_COUNTIES[state]:
-            add_query(f"interior designer in {county} {state}")
-        for city in NEW_ENGLAND_PRIORITY_CITIES.get(state, []):
-            add_query(f"interior designer in {city}")
-
         expanded.append(
             {
                 **item,
-                "queries": query_set,
+                "queries": build_keyword_queries(
+                    keyword=keyword,
+                    state_code=state,
+                    state_name=state_name,
+                    priority_cities=NEW_ENGLAND_PRIORITY_CITIES.get(state, []),
+                    counties=NEW_ENGLAND_COUNTIES[state],
+                    base_queries=list(item.get("queries", []) or []),
+                    templates=query_templates,
+                ),
             }
         )
     return expanded
@@ -431,21 +444,19 @@ def _update_phase_progress(
 
 
 def _dedupe_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    deduped: list[dict[str, Any]] = []
-    seen_keys: set[tuple[str, str, str]] = set()
-    for row in rows:
-        place_url = str(row.get("place_url") or row.get("source_url") or "").strip().lower()
-        company_name = str(row.get("company_name") or "").strip().lower()
-        website_root_domain = str(row.get("website_root_domain") or "").strip().lower()
-        dedupe_key = (place_url, company_name, website_root_domain)
-        if dedupe_key in seen_keys:
-            continue
-        seen_keys.add(dedupe_key)
-        deduped.append(row)
-    return sorted(deduped, key=lambda item: (item.get("geo", ""), item.get("company_name", "")))
+    return merge_discovery_rows(rows)
 
 
-def _parse_markdown_results(markdown: str, state: str, group: str, query: str) -> list[dict[str, Any]]:
+def _parse_markdown_results(
+    markdown: str,
+    state: str,
+    group: str,
+    query: str,
+    *,
+    query_family: str,
+    account_type: str,
+    persona_type: str,
+) -> list[dict[str, Any]]:
     lines = [line.strip() for line in markdown.splitlines()]
     rows: list[dict[str, Any]] = []
     seen_place_urls: set[str] = set()
@@ -503,33 +514,23 @@ def _parse_markdown_results(markdown: str, state: str, group: str, query: str) -
         phone = hours_phone_line.rsplit("·", 1)[-1].strip() if "·" in hours_phone_line else ""
 
         rows.append(
-            {
-                "company_name": company_name,
-                "website_root_domain": _root_domain(website),
-                "website": website,
-                "email": "",
-                "source_url": place_url,
-                "account_type": "designer",
-                "persona_type": "founder",
-                "geo": f"{state} / {group}".strip(" /"),
-                "signals": [
-                    "google_maps_interior_designer_search",
-                    f"region_{state.lower()}",
-                    f"query:{query}",
-                ],
-                "reachability_status": "form_available" if website else "unknown",
-                "source_confidence": 0.94 if website else 0.78,
-                "source_family": "google_maps_places",
-                "query_id": _safe_query_id(state, query),
-                "discovery_query": query,
-                "query_family": "google_maps_interior_designer",
-                "generated_from_provider": "google_maps_browser_crawler",
-                "place_url": place_url,
-                "rating": rating,
-                "category": category,
-                "formatted_address": address,
-                "phone": phone,
-            }
+            build_discovery_row(
+                company_name=company_name,
+                website=website,
+                source_url=place_url,
+                state=state,
+                group=group,
+                query=query,
+                query_family=query_family,
+                account_type=account_type,
+                persona_type=persona_type,
+                generated_from_provider="google_maps_markdown_proxy",
+                category=category,
+                address=address,
+                phone=phone,
+                rating=rating,
+                source_confidence=0.94 if website else 0.78,
+            )
         )
         index = cursor
 
@@ -557,7 +558,16 @@ def _parse_card_text(card_text: str, aria_label: str) -> tuple[str, str, str, st
     return company_name, category, address, phone
 
 
-def _parse_playwright_results(cards: list[dict[str, Any]], state: str, group: str, query: str) -> list[dict[str, Any]]:
+def _parse_playwright_results(
+    cards: list[dict[str, Any]],
+    state: str,
+    group: str,
+    query: str,
+    *,
+    query_family: str,
+    account_type: str,
+    persona_type: str,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     seen_place_urls: set[str] = set()
     for card in cards:
@@ -584,46 +594,47 @@ def _parse_playwright_results(cards: list[dict[str, Any]], state: str, group: st
         if not company_name:
             continue
         rows.append(
-            {
-                "company_name": company_name,
-                "website_root_domain": _root_domain(website),
-                "website": website,
-                "email": "",
-                "source_url": place_url,
-                "account_type": "designer",
-                "persona_type": "founder",
-                "geo": f"{state} / {group}".strip(" /"),
-                "signals": [
-                    "google_maps_interior_designer_search",
-                    "google_maps_browser_rendered",
-                    f"region_{state.lower()}",
-                    f"query:{query}",
-                ],
-                "reachability_status": "form_available" if website else "unknown",
-                "source_confidence": 0.96 if website else 0.8,
-                "source_family": "google_maps_places",
-                "query_id": _safe_query_id(state, query),
-                "discovery_query": query,
-                "query_family": "google_maps_interior_designer",
-                "generated_from_provider": "google_maps_playwright_browser",
-                "place_url": place_url,
-                "rating": "",
-                "category": category,
-                "formatted_address": address,
-                "phone": phone,
-            }
+            build_discovery_row(
+                company_name=company_name,
+                website=website,
+                source_url=place_url,
+                state=state,
+                group=group,
+                query=query,
+                query_family=query_family,
+                account_type=account_type,
+                persona_type=persona_type,
+                generated_from_provider="google_maps_playwright_browser",
+                category=category,
+                address=address,
+                phone=phone,
+                rating="",
+                source_confidence=0.96 if website else 0.8,
+            )
         )
     return rows
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Discover Google Maps leads for NEOSGO via browser-style crawling, without API keys.")
+    parser = argparse.ArgumentParser(description="Discover Google Maps entities via browser-style crawling, with fallback routes and quality reporting.")
     parser.add_argument("--project-root", required=True)
+    parser.add_argument("--keyword")
+    parser.add_argument("--query-family")
+    parser.add_argument("--account-type")
+    parser.add_argument("--persona-type")
     args = parser.parse_args()
 
     project_root = Path(args.project_root).expanduser().resolve()
     config = _read_json(project_root / "config" / "project-config.json")
     capture = ((config.get("prospect_data_engine", {}) or {}).get("google_maps_capture", {}) or {})
+    keyword = str(args.keyword or capture.get("keyword", "business")).strip()
+    query_family = derive_query_family(keyword, str(args.query_family or capture.get("query_family", "")))
+    account_type = str(args.account_type or capture.get("account_type", "business")).strip() or "business"
+    persona_type = str(args.persona_type or capture.get("persona_type", "operator")).strip() or "operator"
+    query_templates = list(capture.get("query_templates", []) or DEFAULT_QUERY_TEMPLATES)
+    fallback_capture_routes = [str(item).strip() for item in list(capture.get("fallback_capture_routes", []) or ["markdown_proxy"]) if str(item).strip()]
+    minimum_rows_before_fallback = int(capture.get("minimum_rows_before_fallback", 2) or 2)
+    scroll_passes = int(capture.get("max_scroll_passes", 4) or 4)
     report_path = project_root / "output" / "prospect-data-engine" / "google-maps-discovery-report.json"
     output_path = project_root / "data" / "raw-imports" / "discovered-google-maps-places.json"
     runtime_state_path = project_root / "runtime" / "prospect-data-engine" / "google-maps-crawl-state.json"
@@ -639,15 +650,15 @@ def main() -> int:
 
     region_plan = list(capture.get("region_plan", []) or [])
     coverage_scope = str(capture.get("coverage_scope", "phased_contiguous_us_48")).strip().lower()
-    runtime_state = _read_json(runtime_state_path)
+    runtime_state = read_json(runtime_state_path, {})
     if capture.get("new_england_exhaustive", True):
-        region_plan = _expand_new_england_exhaustive(region_plan)
+        region_plan = _expand_new_england_exhaustive(region_plan, keyword=keyword, query_templates=query_templates)
     if coverage_scope == "contiguous_us_48":
-        region_plan = _expand_to_contiguous_48(region_plan)
+        region_plan = _expand_to_contiguous_48(region_plan, keyword=keyword, query_templates=query_templates)
     elif coverage_scope == "phased_contiguous_us_48":
         phase_progress = dict(runtime_state.get("phase_progress", {}) or {})
         if phase_progress.get("new_england_complete"):
-            region_plan = _expand_to_contiguous_48(region_plan)
+            region_plan = _expand_to_contiguous_48(region_plan, keyword=keyword, query_templates=query_templates)
     flattened_queries = _flatten_queries(region_plan)
     max_queries_per_run = int(capture.get("max_queries_per_run", 8) or 8)
     cursor = int(runtime_state.get("cursor", 0) or 0)
@@ -661,9 +672,33 @@ def main() -> int:
         state = item["state"]
         group = item["group"]
         query = item["query"]
+        route = "playwright_browser"
+        fallback_used = False
         try:
-            cards = _fetch_maps_cards_via_playwright(query)
-            parsed_rows = _parse_playwright_results(cards, state, group, query)
+            cards = _fetch_maps_cards_via_playwright(query, scroll_passes=scroll_passes)
+            parsed_rows = _parse_playwright_results(
+                cards,
+                state,
+                group,
+                query,
+                query_family=query_family,
+                account_type=account_type,
+                persona_type=persona_type,
+            )
+            if len(parsed_rows) < minimum_rows_before_fallback and "markdown_proxy" in fallback_capture_routes:
+                markdown_rows = _parse_markdown_results(
+                    _fetch_markdown(query),
+                    state,
+                    group,
+                    query,
+                    query_family=query_family,
+                    account_type=account_type,
+                    persona_type=persona_type,
+                )
+                parsed_rows = _dedupe_rows([*parsed_rows, *markdown_rows])
+                if markdown_rows:
+                    route = "playwright_plus_markdown"
+                    fallback_used = True
             deduped_rows = []
             for row in parsed_rows:
                 dedupe_key = (row.get("company_name", "").strip().lower(), row.get("website_root_domain", "").strip().lower())
@@ -679,9 +714,60 @@ def main() -> int:
                     "group": group,
                     "ok": True,
                     "result_count": len(deduped_rows),
+                    "route": route,
+                    "fallback_used": fallback_used,
                 }
             )
         except Exception as exc:  # noqa: BLE001
+            if "markdown_proxy" in fallback_capture_routes:
+                try:
+                    parsed_rows = _parse_markdown_results(
+                        _fetch_markdown(query),
+                        state,
+                        group,
+                        query,
+                        query_family=query_family,
+                        account_type=account_type,
+                        persona_type=persona_type,
+                    )
+                    deduped_rows = []
+                    for row in parsed_rows:
+                        dedupe_key = (row.get("company_name", "").strip().lower(), row.get("website_root_domain", "").strip().lower())
+                        if dedupe_key in seen_keys:
+                            continue
+                        seen_keys.add(dedupe_key)
+                        deduped_rows.append(row)
+                        all_rows.append(row)
+                    query_runs.append(
+                        {
+                            "query": query,
+                            "state": state,
+                            "group": group,
+                            "ok": bool(deduped_rows),
+                            "error": str(exc),
+                            "result_count": len(deduped_rows),
+                            "route": "markdown_proxy",
+                            "fallback_used": True,
+                        }
+                    )
+                    if not deduped_rows:
+                        failure_count += 1
+                    continue
+                except Exception as fallback_exc:  # noqa: BLE001
+                    failure_count += 1
+                    query_runs.append(
+                        {
+                            "query": query,
+                            "state": state,
+                            "group": group,
+                            "ok": False,
+                            "error": f"{exc} | fallback:{fallback_exc}",
+                            "result_count": 0,
+                            "route": "playwright_browser",
+                            "fallback_used": True,
+                        }
+                    )
+                    continue
             failure_count += 1
             query_runs.append(
                 {
@@ -691,6 +777,8 @@ def main() -> int:
                     "ok": False,
                     "error": str(exc),
                     "result_count": 0,
+                    "route": "playwright_browser",
+                    "fallback_used": False,
                 }
             )
 
@@ -744,12 +832,19 @@ def main() -> int:
         "cursor_start": cursor,
         "cursor_next": next_cursor,
         "discovered_count": len(rows),
+        "new_rows_this_run": len(all_rows),
         "failure_count": failure_count,
         "raw_import_path": str(output_path),
         "queries": query_runs,
-        "capture_mode": "browser_crawler_via_google_maps_html",
+        "capture_mode": "google_maps_multi_route_capture",
+        "entity_keyword": keyword,
+        "query_family": query_family,
+        "account_type": account_type,
+        "persona_type": persona_type,
         "used_cached_results": used_cached_results,
         "phase_progress": phase_progress,
+        "quality_summary": discovery_quality_summary(rows, query_runs),
+        "current_cycle_quality_summary": discovery_quality_summary(all_rows, query_runs),
     }
     _write_json(report_path, report)
     print(json.dumps(report, ensure_ascii=False, indent=2))

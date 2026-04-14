@@ -47,6 +47,10 @@ Optional feedback drop folder:
 
 - `/Users/mac_claw/.openclaw/workspace/projects/neosgo-seo-geo-engine/runtime/feedback`
 
+Hardcore automation upgrade reference:
+
+- `references/seo-geo-hardcore-automation-plan-2026-04.md`
+
 Interior designer daily article program:
 
 - configured under `designer_daily_program` in `config/strategy.json`

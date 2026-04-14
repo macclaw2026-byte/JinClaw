@@ -28,6 +28,8 @@ Key folders:
 Useful operational commands:
 - Run one full cycle:
   `python3 /Users/mac_claw/.openclaw/workspace/skills/marketing-automation-suite/scripts/run_marketing_suite_cycle.py --project-root /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite`
+- Run only the reusable Google Maps discovery + enrichment cycle:
+  `python3 /Users/mac_claw/.openclaw/workspace/skills/prospect-data-engine/scripts/run_google_maps_capture_cycle.py --project-root /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite --keyword "interior designer" --account-type designer --persona-type founder`
 - Run one full feedback loop:
   `python3 /Users/mac_claw/.openclaw/workspace/skills/marketing-automation-suite/scripts/run_feedback_loop.py --project-root /Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite`
 - Refresh lead-engine views and write the latest project-local daily report:
@@ -48,6 +50,7 @@ Google Maps lead capture:
 - Region strategy starts from New England and is configured in:
   [project-config.json](/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/config/project-config.json)
 - Discovery now uses browser-style crawling of public Google Maps result pages, then visits official websites to extract and validate emails.
+- Discovery now supports a primary browser route plus fallback route recording, so quality and route drift are inspectable.
 - Google Maps raw import output:
   - `data/raw-imports/discovered-google-maps-places.json`
 - Website/email enrichment output:
@@ -55,6 +58,7 @@ Google Maps lead capture:
 - Reports:
   - `output/prospect-data-engine/google-maps-discovery-report.json`
   - `output/prospect-data-engine/google-maps-email-enrichment-report.json`
+  - `output/prospect-data-engine/google-maps-capture-cycle-report.json`
 - Lead-engine daily refresh reference:
   [references/lead-engine-operations.md](/Users/mac_claw/.openclaw/workspace/projects/neosgo-marketing-suite/references/lead-engine-operations.md)
 - Lead-engine project-local artifacts:

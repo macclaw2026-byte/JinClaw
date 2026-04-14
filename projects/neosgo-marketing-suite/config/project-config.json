@@ -71,13 +71,34 @@
     "google_maps_capture": {
       "enabled": true,
       "keyword": "interior designer",
+      "query_family": "google_maps_interior_designer",
+      "account_type": "designer",
+      "persona_type": "founder",
       "starting_region_group": "new_england",
       "coverage_scope": "phased_contiguous_us_48",
       "new_england_exhaustive": true,
       "max_queries_per_run": 4,
       "max_pages_per_query": 3,
+      "max_scroll_passes": 4,
       "page_size": 20,
       "email_enrichment_max_sites_per_run": 40,
+      "max_pages_per_site": 4,
+      "contact_link_limit": 4,
+      "contact_link_hints": [
+        "contact",
+        "about",
+        "team",
+        "trade",
+        "studio"
+      ],
+      "fallback_capture_routes": [
+        "markdown_proxy"
+      ],
+      "minimum_rows_before_fallback": 2,
+      "query_templates": [
+        "{keyword} in {priority_city}",
+        "{keyword} in {county} {state_code}"
+      ],
       "field_mask": [
         "places.id",
         "places.displayName",
