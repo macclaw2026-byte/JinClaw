@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
+from control_center_schemas import build_acquisition_objective_completion_schema
 from memory_writeback_runtime import summarize_project_memory_writebacks
 from paths import CRAWLER_CAPABILITY_HISTORY_PATH, CRAWLER_CAPABILITY_PROFILE_PATH
 
@@ -383,6 +384,121 @@ def _build_feedback_summary(overview: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _build_completion_contract(summary: Dict[str, Any], feedback: Dict[str, Any], sites: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：给 acquisition-hand 生成项目级 completion contract。
+    - 输入角色：summary 代表项目聚合指标，feedback 代表项目反馈闭环，sites 用来定位具体 blocker。
+    - 输出角色：供 doctor/status/runtime 明确判断“这只抓取的手是否已经达到当前项目目标”。
+    """
+    required_checks = [
+        {
+            "key": "all_sites_governed_ready",
+            "ok": int(summary.get("sites_governed_ready", 0) or 0) >= int(summary.get("sites_total", 0) or 0) > 0,
+            "why": "所有目标站点都必须至少进入 governed-ready，可走匿名或授权治理路径。",
+        },
+        {
+            "key": "no_attention_required_sites",
+            "ok": int(summary.get("sites_attention_required", 0) or 0) == 0,
+            "why": "还存在 attention-required 站点时，取数之手仍有明显缺口。",
+        },
+        {
+            "key": "execution_truth_aligned",
+            "ok": int(summary.get("sites_with_evidence_drift", 0) or 0) == 0 and float(summary.get("evidence_alignment_score", 0.0) or 0.0) >= 100.0,
+            "why": "site profile、latest run 与 contract 必须收敛成单一执行真值。",
+        },
+        {
+            "key": "effective_width_full",
+            "ok": float(summary.get("governed_width_score", 0.0) or 0.0) >= 100.0,
+            "why": "项目目标看的是 effective governed width，不是匿名 production width。",
+        },
+        {
+            "key": "feedback_loop_strong",
+            "ok": str(feedback.get("coverage_status", "")).strip().lower() == "strong",
+            "why": "没有强反馈闭环时，系统无法稳定学习和持续择优。",
+        },
+        {
+            "key": "stability_floor_met",
+            "ok": float(summary.get("stability_score", 0.0) or 0.0) >= 60.0,
+            "why": "完成态至少要达到治理认可的稳定性下限。",
+        },
+    ]
+    satisfied_checks = [item["key"] for item in required_checks if item.get("ok")]
+    blockers: List[Dict[str, Any]] = []
+    if int(summary.get("sites_governed_ready", 0) or 0) < int(summary.get("sites_total", 0) or 0):
+        blockers.append(
+            {
+                "key": "missing_governed_ready_sites",
+                "value": [site.get("site", "") for site in sites if not site.get("governed_ready")][:8],
+                "reason": "仍有站点没有完成匿名或授权治理接入。",
+            }
+        )
+    if int(summary.get("sites_attention_required", 0) or 0) > 0:
+        blockers.append(
+            {
+                "key": "attention_required_sites",
+                "value": [site.get("site", "") for site in sites if site.get("readiness") == "attention_required"][:8],
+                "reason": "仍有 attention-required 站点需要继续修复。",
+            }
+        )
+    if int(summary.get("sites_with_evidence_drift", 0) or 0) > 0:
+        blockers.append(
+            {
+                "key": "execution_truth_drift",
+                "value": [site.get("site", "") for site in sites if bool((site.get("evidence_alignment", {}) or {}).get("has_drift"))][:8],
+                "reason": "仍有站点的 profile / latest-run / contract 没有对齐。",
+            }
+        )
+    if float(summary.get("governed_width_score", 0.0) or 0.0) < 100.0:
+        blockers.append(
+            {
+                "key": "effective_width_incomplete",
+                "value": float(summary.get("governed_width_score", 0.0) or 0.0),
+                "reason": "effective governed width 还没有覆盖全部目标站点。",
+            }
+        )
+    if str(feedback.get("coverage_status", "")).strip().lower() != "strong":
+        blockers.append(
+            {
+                "key": "feedback_loop_not_strong",
+                "value": str(feedback.get("coverage_status", "")).strip().lower() or "unknown",
+                "reason": "项目反馈闭环仍然不够强，后续自动择优与学习会偏弱。",
+            }
+        )
+    if float(summary.get("stability_score", 0.0) or 0.0) < 60.0:
+        blockers.append(
+            {
+                "key": "stability_floor_not_met",
+                "value": float(summary.get("stability_score", 0.0) or 0.0),
+                "reason": "稳定性还没有达到治理认可的收口阈值。",
+            }
+        )
+    completion_score = 100.0 if not blockers else round((len(satisfied_checks) / max(1, len(required_checks))) * 100.0, 2)
+    effective_width_score = max(
+        float(summary.get("width_score", 0.0) or 0.0),
+        float(summary.get("governed_width_score", 0.0) or 0.0),
+    )
+    return build_acquisition_objective_completion_schema(
+        objective="build a fully governed, explainable, multi-route acquisition hand for JinClaw/OpenClaw",
+        status="complete" if not blockers else "incomplete",
+        goal_reached=not blockers,
+        completion_score=completion_score,
+        effective_width_score=effective_width_score,
+        required_checks=required_checks,
+        satisfied_checks=satisfied_checks,
+        blockers=blockers,
+        rationale=[
+            "effective completion 以 governed-ready 覆盖为准，因此授权态可治理站点不会被匿名 production width 误伤。",
+            "项目收口同时要求 execution truth 对齐、强反馈闭环和稳定性达标，避免只是‘看起来可用’。",
+        ],
+        terminal_boundaries=[
+            "safety_boundary",
+            "permission_boundary",
+            "governance_boundary",
+        ],
+    )
+
+
 def build_crawler_capability_profile() -> Dict[str, Any]:
     sites: List[Dict[str, Any]] = []
     for profile_path in sorted(SITE_PROFILES_ROOT.glob("*.json")):
@@ -436,6 +552,12 @@ def build_crawler_capability_profile() -> Dict[str, Any]:
     }
     memory_writeback_overview = summarize_project_memory_writebacks()
     feedback = _build_feedback_summary(memory_writeback_overview)
+    completion_contract = _build_completion_contract(summary, feedback, sites)
+    summary["completion_status"] = str(completion_contract.get("status", "")).strip() or "incomplete"
+    summary["completion_score"] = float(completion_contract.get("completion_score", 0.0) or 0.0)
+    summary["effective_width_score"] = float(completion_contract.get("effective_width_score", 0.0) or 0.0)
+    summary["goal_reached"] = bool(completion_contract.get("goal_reached"))
+    summary["completion_blocker_total"] = len(completion_contract.get("blockers", []) or [])
     history = _append_history(summary)
     trend = _build_trend_summary(history.get("entries", []) or [], summary)
     priority_actions = _build_priority_actions(sites, summary, trend)
@@ -477,6 +599,7 @@ def build_crawler_capability_profile() -> Dict[str, Any]:
         "summary": summary,
         "trend": trend,
         "feedback": feedback,
+        "completion_contract": completion_contract,
         "memory_writeback_overview": {
             "tasks_total": memory_writeback_overview.get("tasks_total", 0),
             "target_counts": memory_writeback_overview.get("target_counts", {}) or {},

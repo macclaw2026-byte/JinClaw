@@ -54,6 +54,9 @@ class OrchestratorGovernanceUpgradeTest(unittest.TestCase):
         self.assertEqual(cc['plan_reviews']['active_reviewers'], ['engineering_review', 'security_review'])
         self.assertIn('continue_until_goal_fully_satisfied', cc['operating_discipline']['enabled_rule_keys'])
         self.assertIn('continue_until_goal_fully_satisfied', cc['operating_discipline']['promoted_operator_rule_keys'])
+        self.assertEqual(cc['operating_discipline']['completion_guard']['default_stop_condition'], 'goal_complete_or_boundary')
+        self.assertTrue(cc['operating_discipline']['completion_guard']['requires_goal_completion_proof'])
+        self.assertIn('pr_opened', cc['operating_discipline']['completion_guard']['non_terminal_milestones'])
         self.assertEqual([stage['name'] for stage in package['stages']], ['understand', 'plan', 'execute', 'verify', 'learn'])
 
     def test_reviewed_task_generates_full_role_review_bundle(self):

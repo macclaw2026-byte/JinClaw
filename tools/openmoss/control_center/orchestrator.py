@@ -1161,6 +1161,9 @@ def _derive_operating_discipline(
         )
     all_rules = principles + execution_rules + escalation_rules + completion_rules
     rule_lookup = {str(item.get("key", "")).strip(): item for item in all_rules}
+    continue_until_goal_fully_satisfied = bool(
+        (rule_lookup.get("continue_until_goal_fully_satisfied", {}) or {}).get("enabled")
+    )
     return {
         "discipline_id": "jinclaw-operating-discipline-v2",
         "governance_tier": tier,
@@ -1178,6 +1181,24 @@ def _derive_operating_discipline(
         "completion_rules": completion_rules,
         "rule_lookup": rule_lookup,
         "enabled_rule_keys": [key for key, item in rule_lookup.items() if item.get("enabled")],
+        "completion_guard": {
+            "default_stop_condition": "goal_complete_or_boundary" if continue_until_goal_fully_satisfied else "stage_complete",
+            "requires_goal_completion_proof": continue_until_goal_fully_satisfied,
+            "treat_pr_as_milestone_only": continue_until_goal_fully_satisfied,
+            "treat_round_as_milestone_only": continue_until_goal_fully_satisfied,
+            "non_terminal_milestones": [
+                "round_completed",
+                "tests_green",
+                "commit_pushed",
+                "pr_opened",
+                "partial_fix_validated",
+            ],
+            "terminal_boundaries": [
+                "governance_boundary",
+                "permission_boundary",
+                "safety_boundary",
+            ],
+        },
     }
 
 

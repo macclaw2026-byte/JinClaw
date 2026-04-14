@@ -57,6 +57,7 @@ DOCTOR_REQUIRED_ACQUISITION_CONTRACTS = (
     "answer_response_contract",
     "response_handoff_contract",
     "execution_truth_contract",
+    "objective_completion_contract",
 )
 
 
@@ -423,8 +424,14 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
             "validation_family_contract": bool(acquisition_integration.get("validation_family_contract")),
             "attention_sites_total": len(acquisition_health.get("attention_sites", []) or []),
             "governed_width_score": float(adapter_coverage.get("governed_width_score", 0.0) or 0.0),
+            "effective_width_score": float(adapter_coverage.get("effective_width_score", 0.0) or 0.0),
             "evidence_alignment_score": float(adapter_coverage.get("evidence_alignment_score", 0.0) or 0.0),
             "stability_score": float(adapter_coverage.get("stability_score", 0.0) or 0.0),
+            "completion_status": str(adapter_coverage.get("completion_status", "")).strip() or "unknown",
+            "completion_score": float(adapter_coverage.get("completion_score", 0.0) or 0.0),
+            "goal_reached": bool(adapter_coverage.get("goal_reached")),
+            "completion_blocker_total": int(adapter_coverage.get("completion_blocker_total", 0) or 0),
+            "objective_completion_contract": bool(acquisition_integration.get("objective_completion_contract")),
         },
         "integration_health": {
             "ok": bool(integration_health.get("ok")),

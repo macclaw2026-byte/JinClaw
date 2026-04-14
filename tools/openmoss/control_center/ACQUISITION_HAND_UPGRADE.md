@@ -34,6 +34,10 @@ The current phase also extends that control surface into execution evidence:
 - crawler execution truth is now explicitly reconciled across `site-profile`, `latest-run`, and `contract`, so router/doctor no longer treat those three layers as independent truths
 - crawler capability health now exposes `sites_with_evidence_drift` and `evidence_alignment_score`, and the canonical doctor treats this execution-truth alignment as a first-class monitored contract
 - remediation now supports inline `execution_truth_reconcile`, so low-risk drift can be repaired immediately while unresolved sites are escalated to revalidation instead of being silently overwritten
+- crawler capability health now also exposes an explicit `completion_contract`, so the system can tell the difference between:
+  - anonymous production width that is intentionally below 100 because some sites require governed authenticated access
+  - true project incompleteness where sites are still not governed-ready or feedback/alignment is still weak
+- operating discipline now carries a structured `completion_guard`, which makes “goal complete or boundary” the default stop condition instead of treating a PR or one green round as terminal
 
 ## New Core Structures
 
@@ -79,6 +83,15 @@ The current phase also extends that control surface into execution evidence:
   - Rebuilds fresh contracts from current evidence.
   - Applies reconciliation only when the new contract is safe and explainable.
   - Leaves weaker or ambiguous cases in `needs_revalidation` instead of forcing a false alignment.
+- `completion_contract`
+  - Project-level acquisition completion contract with:
+    - objective
+    - required completion checks
+    - blockers
+    - effective width score
+    - completion score
+    - goal reached flag
+  - This contract uses `governed_width_score` instead of only anonymous `width_score`, so governed authenticated routes count as complete coverage when they are intentionally required by the site posture.
 - structured `challenge` signals
   - Challenge classification now emits severity, signals, safe next routes, and anti-bot posture hints.
 
@@ -114,3 +127,4 @@ It also means the system can now explain:
 6. what exact caveat text should accompany a guarded release
 7. what response mode the downstream layer should use right now: auto answer, guarded answer, confirmation-first answer, or pause-and-recapture
 8. whether a site's route preference is backed by aligned execution evidence or only guarded because profile/latest-run/contract still disagree
+9. whether the acquisition-hand project itself is actually complete, with an explicit contract instead of a guessed stop point

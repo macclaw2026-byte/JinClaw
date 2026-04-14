@@ -55,6 +55,9 @@ This document makes that workflow explicit.
 8. Goal-complete, not round-complete.
    A PR, a local fix, or one optimization round is only a milestone. The default stop condition is final objective satisfied or a real governance/safety boundary, not "this round is done".
 
+9. Continuous authorization means continuous execution.
+   If the user explicitly authorizes continuous optimization for a project, the system should keep moving across rounds, validations, and PR updates until the objective completion contract says the goal is truly satisfied, or a real governance/safety/permission boundary requires a pause.
+
 ## The Framework Layers
 
 ### 1. Constitution Layer
@@ -221,6 +224,18 @@ When a repair or optimization resolves a real issue:
 3. Distill the reusable rule.
 4. Generate a runtime evolution proposal if the system itself should improve.
 5. Feed the learning back into the doctor/runtime guidance path.
+
+## Continuous Optimization Authorization
+
+When the user explicitly grants durable authorization such as "keep optimizing until the goal is fully complete":
+
+1. treat PR creation, one optimization round, or one local green test run as milestone evidence, not a terminal stop signal
+2. keep the task in continuation mode until an explicit completion contract reports the objective as complete
+3. only pause for:
+   - safety or security boundaries
+   - permissions or approvals that cannot be safely assumed
+   - true strategy forks with non-obvious consequences
+4. write the resulting discipline back into durable operator rules and expose it to doctor/runtime metadata where possible
 
 ## Enforcement Intent
 

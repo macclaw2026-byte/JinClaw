@@ -50,6 +50,7 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertTrue((integration.get('acquisition_hand', {}) or {}).get('execution_truth_contract'))
         self.assertTrue((integration.get('acquisition_hand', {}) or {}).get('browser_execution_contract'))
         self.assertTrue((integration.get('acquisition_hand', {}) or {}).get('validation_family_contract'))
+        self.assertTrue((integration.get('acquisition_hand', {}) or {}).get('objective_completion_contract'))
 
 
 if __name__ == '__main__':
