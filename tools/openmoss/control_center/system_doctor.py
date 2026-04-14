@@ -124,6 +124,11 @@ COMPLETION_REFLECTION_REQUIRED_FILES = [
     WORKSPACE_ROOT / 'tools/openmoss/control_center/task_status_snapshot.py',
     WORKSPACE_ROOT / 'tools/openmoss/control_center/system_doctor.py',
 ]
+GOAL_CONTINUATION_REQUIRED_FILES = [
+    WORKSPACE_ROOT / 'tools/openmoss/autonomy/runtime_service.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/task_status_snapshot.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/system_doctor.py',
+]
 GSTACK_LIFECYCLE = ['think', 'plan', 'build', 'review', 'test', 'ship', 'reflect']
 DOCTOR_RESOLUTION_REQUIRED_FIELDS = [
     "scope",
@@ -3195,6 +3200,123 @@ def _run_completion_reflection_integration_checks() -> Dict[str, object]:
     }
 
 
+def _run_goal_continuation_integration_checks() -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：验证 strict continuation 任务在缺少目标完成证明时不会被 terminal status 静默放行。
+    - 输入角色：消费 runtime continuation gate 与 authoritative snapshot。
+    - 输出角色：供 canonical doctor 判断“PR/轮次/局部 terminal 是否仍被当作 milestone”。
+    """
+    errors = []
+    for path in GOAL_CONTINUATION_REQUIRED_FILES:
+        if not path.exists():
+            errors.append(f'missing_required_file:{path}')
+
+    if str(CONTROL_CENTER_ROOT) not in sys.path:
+        sys.path.insert(0, str(CONTROL_CENTER_ROOT))
+    if str(AUTONOMY_DIR) not in sys.path:
+        sys.path.insert(0, str(AUTONOMY_DIR))
+
+    from runtime_service import _enforce_goal_continuation_gate
+
+    task_id = 'doctor-goal-continuation-contract'
+    task_path = task_dir(task_id)
+    try:
+        if task_path.exists():
+            shutil.rmtree(task_path, ignore_errors=True)
+        contract = TaskContract(
+            task_id=task_id,
+            user_goal='Deliver a complete multi-step mission and do not stop at partial milestones.',
+            done_definition='Goal is only complete when business proof exists',
+            stages=[
+                StageContract(name='understand', goal='understand'),
+                StageContract(name='plan', goal='plan'),
+                StageContract(name='execute', goal='execute'),
+                StageContract(name='verify', goal='verify'),
+                StageContract(name='learn', goal='learn'),
+            ],
+            metadata={
+                'control_center': {
+                    'strict_continuation_required': True,
+                    'operating_discipline': {
+                        'completion_guard': {
+                            'default_stop_condition': 'goal_complete_or_boundary',
+                            'requires_goal_completion_proof': True,
+                            'treat_pr_as_milestone_only': True,
+                            'treat_round_as_milestone_only': True,
+                            'non_terminal_milestones': ['tests_green', 'pr_opened', 'partial_fix_validated'],
+                            'terminal_boundaries': ['governance_boundary', 'permission_boundary', 'safety_boundary'],
+                        }
+                    },
+                }
+            },
+        )
+        create_task_from_contract(contract)
+        state = load_state(task_id)
+        state.status = 'completed'
+        state.current_stage = 'learn'
+        state.next_action = 'noop'
+        for name in state.stage_order:
+            stage = state.stages.get(name)
+            if not stage:
+                continue
+            stage.status = 'completed'
+            stage.summary = f'{name} completed before final goal proof'
+            stage.updated_at = _utc_now_iso()
+            stage.completed_at = _utc_now_iso()
+        state.metadata['business_outcome'] = {
+            'goal_satisfied': False,
+            'user_visible_result_confirmed': False,
+            'proof_summary': '',
+        }
+        save_state(state)
+        reopened = _enforce_goal_continuation_gate(task_id)
+        if not reopened:
+            errors.append('goal_continuation_gate_did_not_reopen')
+        state = load_state(task_id)
+        snapshot = build_task_status_snapshot(task_id)
+        contract_payload = snapshot.get('goal_continuation', {}) or {}
+        if str(state.status).strip() != 'planning':
+            errors.append('goal_continuation_runtime_not_reopened')
+        if str(state.current_stage).strip() != 'verify':
+            errors.append('goal_continuation_wrong_reopen_stage')
+        if not bool(contract_payload.get('continuation_required')):
+            errors.append('goal_continuation_snapshot_missing_required_flag')
+        if 'pr_opened' not in (contract_payload.get('non_terminal_milestones', []) or []):
+            errors.append('goal_continuation_missing_non_terminal_milestone')
+        if 'Continuation is still required' not in str(snapshot.get('authoritative_summary', '')).strip():
+            errors.append('goal_continuation_missing_summary_signal')
+    finally:
+        if task_path.exists():
+            shutil.rmtree(task_path, ignore_errors=True)
+
+    return {
+        'single_doctor_rule': True,
+        'authoritative_doctor': 'tools/openmoss/control_center/system_doctor.py',
+        'required_files_checked': len(GOAL_CONTINUATION_REQUIRED_FILES),
+        'required_files': [str(path.relative_to(WORKSPACE_ROOT)) for path in GOAL_CONTINUATION_REQUIRED_FILES],
+        'goal_continuation_contract': not any(
+            item in {
+                'goal_continuation_snapshot_missing_required_flag',
+                'goal_continuation_missing_non_terminal_milestone',
+            }
+            for item in errors
+        ),
+        'terminal_reopen_gate_contract': not any(
+            item in {
+                'goal_continuation_gate_did_not_reopen',
+                'goal_continuation_runtime_not_reopened',
+                'goal_continuation_wrong_reopen_stage',
+            }
+            for item in errors
+        ),
+        'authoritative_summary_visibility_contract': 'goal_continuation_missing_summary_signal' not in errors,
+        'goal_continuation_chain': 'ok' if not errors else 'error',
+        'errors': errors,
+        'ok': not errors,
+    }
+
+
 def _run_integration_health_checks() -> Dict[str, object]:
     """
     中文注解：
@@ -3209,6 +3331,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
     conversation_events = _run_conversation_event_integration_checks()
     execution_events = _run_execution_event_integration_checks()
     completion_reflection = _run_completion_reflection_integration_checks()
+    goal_continuation = _run_goal_continuation_integration_checks()
     errors = (
         list(gstack.get('errors', []) or [])
         + list(acquisition_hand.get('errors', []) or [])
@@ -3217,6 +3340,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         + list(conversation_events.get('errors', []) or [])
         + list(execution_events.get('errors', []) or [])
         + list(completion_reflection.get('errors', []) or [])
+        + list(goal_continuation.get('errors', []) or [])
     )
     return {
         'single_doctor_rule': True,
@@ -3228,7 +3352,8 @@ def _run_integration_health_checks() -> Dict[str, object]:
         + int(reply_projection.get('required_files_checked', 0) or 0)
         + int(conversation_events.get('required_files_checked', 0) or 0)
         + int(execution_events.get('required_files_checked', 0) or 0)
-        + int(completion_reflection.get('required_files_checked', 0) or 0),
+        + int(completion_reflection.get('required_files_checked', 0) or 0)
+        + int(goal_continuation.get('required_files_checked', 0) or 0),
         'lifecycle': GSTACK_LIFECYCLE,
         'gstack': gstack,
         'acquisition_hand': acquisition_hand,
@@ -3237,6 +3362,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         'conversation_events': conversation_events,
         'execution_events': execution_events,
         'completion_reflection': completion_reflection,
+        'goal_continuation': goal_continuation,
         'coding_chain': gstack.get('coding_chain', 'unknown'),
         'noncoding_chain': gstack.get('noncoding_chain', 'unknown'),
         'acquisition_chain': acquisition_hand.get('acquisition_chain', 'unknown'),
@@ -3245,6 +3371,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         'conversation_event_chain': conversation_events.get('conversation_event_chain', 'unknown'),
         'execution_event_chain': execution_events.get('execution_event_chain', 'unknown'),
         'completion_reflection_chain': completion_reflection.get('completion_reflection_chain', 'unknown'),
+        'goal_continuation_chain': goal_continuation.get('goal_continuation_chain', 'unknown'),
         'errors': errors,
         'ok': (
             bool(gstack.get('ok'))
@@ -3254,6 +3381,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
             and bool(conversation_events.get('ok'))
             and bool(execution_events.get('ok'))
             and bool(completion_reflection.get('ok'))
+            and bool(goal_continuation.get('ok'))
         ),
     }
 

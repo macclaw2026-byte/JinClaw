@@ -498,6 +498,22 @@ def _build_doctor_coverage_bundle() -> Dict[str, Any]:
                 "primary_monitor": "system_doctor.integration_health.completion_reflection",
                 "backstop_monitor": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.completion_reflection",
                 "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.completion_reflection",
+            },
+            {
+                "name": "goal-continuation-kernel",
+                "required_files": [
+                    "tools/openmoss/autonomy/runtime_service.py",
+                    "tools/openmoss/control_center/task_status_snapshot.py",
+                    "tools/openmoss/control_center/system_doctor.py",
+                ],
+                "doctor_checks": [
+                    "goal_continuation_contract",
+                    "terminal_reopen_gate",
+                    "authoritative_summary_visibility",
+                ],
+                "primary_monitor": "system_doctor.integration_health.goal_continuation",
+                "backstop_monitor": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.goal_continuation",
+                "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.goal_continuation",
             }
         ],
     }

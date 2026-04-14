@@ -26,6 +26,7 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertIn('conversation-event-kernel', names)
         self.assertIn('execution-event-kernel', names)
         self.assertIn('completion-reflection-kernel', names)
+        self.assertIn('goal-continuation-kernel', names)
 
     def test_control_plane_exposes_doctor_coverage(self):
         plane = build_control_plane(stale_after_seconds=300, escalation_after_seconds=900)
@@ -86,6 +87,11 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertTrue((integration.get('completion_reflection', {}) or {}).get('outcome_evaluation_contract'))
         self.assertTrue((integration.get('completion_reflection', {}) or {}).get('reflection_report_contract'))
         self.assertTrue((integration.get('completion_reflection', {}) or {}).get('authoritative_summary_visibility_contract'))
+        self.assertEqual(integration.get('goal_continuation_chain'), 'ok')
+        self.assertTrue((integration.get('goal_continuation', {}) or {}).get('ok'))
+        self.assertTrue((integration.get('goal_continuation', {}) or {}).get('goal_continuation_contract'))
+        self.assertTrue((integration.get('goal_continuation', {}) or {}).get('terminal_reopen_gate_contract'))
+        self.assertTrue((integration.get('goal_continuation', {}) or {}).get('authoritative_summary_visibility_contract'))
 
 
 if __name__ == '__main__':

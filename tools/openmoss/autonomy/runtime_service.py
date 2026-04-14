@@ -1443,6 +1443,19 @@ def _goal_guardian_config(task_id: str) -> dict:
     return ((contract.metadata.get("control_center", {}) or {}).get("goal_guardian", {}) or {})
 
 
+def _goal_completion_proof_ready(task_id: str) -> bool:
+    state = load_state(task_id)
+    business = state.metadata.get("business_outcome", {}) or {}
+    outcome = state.metadata.get("outcome_evaluation", {}) or {}
+    if (
+        business.get("goal_satisfied") is True
+        and business.get("user_visible_result_confirmed") is True
+        and str(business.get("proof_summary", "")).strip()
+    ):
+        return True
+    return str(outcome.get("outcome_status", "")).strip() == "goal_reached"
+
+
 def _task_postmortem_ready(task_id: str) -> bool:
     state = load_state(task_id)
     postmortem = state.metadata.get("postmortem", {}) or {}
@@ -1746,6 +1759,46 @@ def _enforce_goal_guardian_completion_gate(task_id: str) -> dict | None:
     }
 
 
+def _enforce_goal_continuation_gate(task_id: str) -> dict | None:
+    """
+    中文注解：
+    - 功能：当任务被标成 completed，但严格 continuation 目标还没有业务级证明时，重新打开验证/继续推进。
+    - 设计意图：从 runtime 底层阻止“PR 已开 / 某轮已绿 / terminal status 已写”被误当成真正完成。
+    """
+    contract = load_contract(task_id)
+    control_center = (contract.metadata.get("control_center", {}) or {})
+    if not bool(control_center.get("strict_continuation_required")):
+        return None
+    state = load_state(task_id)
+    if state.status != "completed" or _goal_completion_proof_ready(task_id):
+        return None
+    verify_stage = state.stages.get("verify")
+    if verify_stage:
+        verify_stage.status = "pending"
+        verify_stage.summary = ""
+        verify_stage.verification_status = "not-run"
+        verify_stage.blocker = ""
+        verify_stage.completed_at = ""
+        verify_stage.updated_at = utc_now_iso()
+    state.status = "planning"
+    state.current_stage = "verify" if verify_stage else state.current_stage
+    state.next_action = f"start_stage:{state.current_stage}" if state.current_stage else "initialize"
+    state.blockers = list(
+        dict.fromkeys([*state.blockers, "strict continuation requires goal-completion proof before terminal completion"])
+    )
+    state.metadata.pop("completion_notice_sent", None)
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    log_event(task_id, "goal_continuation_reopened_for_missing_goal_proof")
+    return {
+        "task_id": task_id,
+        "status": state.status,
+        "current_stage": state.current_stage,
+        "next_action": state.next_action,
+        "action": "goal_continuation_reopened_for_missing_goal_proof",
+    }
+
+
 def process_task(task_id: str, stale_after_seconds: int) -> dict:
     """
     中文注解：
@@ -1812,6 +1865,10 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
     if guardian_gate:
         guardian_gate["mission_cycle"] = mission_cycle
         return guardian_gate
+    continuation_gate = _enforce_goal_continuation_gate(task_id)
+    if continuation_gate:
+        continuation_gate["mission_cycle"] = mission_cycle
+        return continuation_gate
     if control_center_result and control_center_result.get("action") == "advanced_execute_subtask":
         return control_center_result
     if (
