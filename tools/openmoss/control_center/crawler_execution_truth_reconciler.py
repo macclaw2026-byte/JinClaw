@@ -90,7 +90,7 @@ def _safe_to_apply(fresh_contract: Dict[str, Any], latest_run: Dict[str, Any]) -
     fresh_best_status = str(comparison.get("best_status", "")).strip().lower()
     required_fields_met = bool(comparison.get("required_fields_met"))
     latest_best_status = str(latest_run.get("bestStatus", "")).strip().lower()
-    if fresh_best_tool and fresh_best_status == "usable" and required_fields_met:
+    if fresh_best_tool and fresh_best_status in {"usable", "partial"} and required_fields_met:
         return True, "fresh_contract_has_required_fields"
     if not fresh_best_tool and fresh_best_status == "blocked" and latest_best_status in {"", "blocked", "failed"}:
         return True, "fresh_contract_and_latest_run_both_blocked"
@@ -104,6 +104,8 @@ def _merge_profile(site: str, current_profile: Dict[str, Any], fresh_contract: D
     preferred_tool_order = [str(item).strip() for item in (fresh_contract.get("preferred_tool_order", []) or []) if str(item).strip()]
     task_fields = dict(fresh_contract.get("task_ready_fields", {}) or {})
     best_tool = str(comparison.get("best_tool") or "").strip()
+    if best_tool:
+        preferred_tool_order = [best_tool] + [item for item in preferred_tool_order if item != best_tool]
     confidence = "high" if best_tool and comparison.get("required_fields_met") else "medium" if best_tool else "low"
     notes = list(current_profile.get("notes", []) or [])
     reconcile_note = (
@@ -126,6 +128,7 @@ def _merge_profile(site: str, current_profile: Dict[str, Any], fresh_contract: D
             "fallback_policy": str(current_profile.get("fallback_policy", "")).strip()
             or str(current_profile.get("fallbackPolicy", "")).strip()
             or str(fresh_contract.get("repeat_run_rule", "")).strip(),
+            "first_choice_extraction_mode": "best_single_tool_output" if best_tool else "blocked_or_insufficient_evidence",
             "task_output_fields": task_fields,
             "last_evaluated": str(fresh_contract.get("generated_at", "")).split("T")[0] or _utc_now_iso().split("T")[0],
             "last_reconciled_at": _utc_now_iso(),

@@ -2517,7 +2517,7 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
             "evidence_alignment": (site.get("evidence_alignment", {}) or {}).get("status", ""),
         }
         for site in (crawler_profile.get("sites", []) or [])
-        if site.get("readiness") != "production_ready"
+        if site.get("readiness") == "attention_required"
     ][:5]
     result = {
         "checked_at": _utc_now_iso(),

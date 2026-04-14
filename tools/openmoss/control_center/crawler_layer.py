@@ -81,7 +81,7 @@ def _project_site_constraints(requested_sites: List[str]) -> Dict[str, object]:
         if str(site.get("site", "")).strip()
     }
     relevant = [site_map[site] for site in requested_sites if site in site_map]
-    attention_sites = [site for site in relevant if site.get("readiness") != "production_ready"]
+    attention_sites = [site for site in relevant if site.get("readiness") == "attention_required"]
     return {
         "summary": profile.get("summary", {}) or {},
         "feedback": profile.get("feedback", {}) or {},

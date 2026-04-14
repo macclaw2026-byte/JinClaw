@@ -1,40 +1,65 @@
 {
   "site": "walmart",
-  "last_evaluated": "2026-04-12",
+  "last_evaluated": "2026-04-13",
   "mode": "anonymous_public_crawl",
-  "confidence": "low",
+  "confidence": "high",
   "tested_tools": [
     "crawl4ai-cli",
+    "direct-http-html",
     "curl-cffi",
-    "scrapy-cffi"
+    "playwright",
+    "playwright-stealth",
+    "scrapy-cffi",
+    "local-agent-browser-cli"
   ],
   "preferred_tool_order": [
+    "direct-http-html",
     "curl-cffi",
-    "crawl4ai-cli",
-    "scrapy-cffi"
+    "playwright",
+    "scrapy-cffi",
+    "local-agent-browser-cli"
   ],
   "blocked_tools": [
-    "crawl4ai-cli",
     "curl-cffi",
-    "scrapy-cffi"
+    "playwright",
+    "scrapy-cffi",
+    "local-agent-browser-cli",
+    "crawl4ai-cli",
+    "playwright-scroll",
+    "playwright-stealth",
+    "playwright-stealth-scroll"
   ],
-  "usable_tools": [],
-  "first_choice_extraction_mode": "blocked_or_insufficient_evidence",
-  "selected_tool": "",
-  "task_output_fields": {},
+  "usable_tools": [
+    "direct-http-html"
+  ],
+  "first_choice_extraction_mode": "best_single_tool_output",
+  "selected_tool": "direct-http-html",
+  "task_output_fields": {
+    "title": "wireless mouse - Walmart.com",
+    "price": "$47.67",
+    "rating": "",
+    "reviews": "",
+    "link": "https://www.walmart.com/ip/Logitech-Advanced-Combo-Wireless-Keyboard-and-Mouse-Black/1998877576?adsRedirect=true",
+    "promo": "off%7Csearch_default&classType=REGULAR\">  Advanced Wireless Mouse 2, White, Walmart Exclusive $24.88     <di",
+    "evidence_excerpt": [
+      "<!DOCTYPE html><html lang=\"en-US\"><head><meta charSet=\"utf-8\"/><script id=\"ttp-marker\" blocking=\"render\" nonce=\"lsG-3YVh27ldR5d0\">(()=>{window.performance.mark(\"ttp\")})();</script><meta property=\"fb:app_id\" content=\"105223049547814\"/><meta ",
+      "const link1 = document.createElement(\"link\");",
+      "link1.rel = \"preconnect\";",
+      "link1.href = `https://beacon.walmart.com`;",
+      "link1.setAttribute(\"data-dca-id\", \"L:E3A57B14A5\");"
+    ]
+  },
   "fallback_policy": "Start with the first preferred tool; if blocked/weak, step through the remaining preferred tools in order. Trigger full all-tools re-evaluation when the top path degrades materially.",
   "known_failure_modes": [
     {
-      "tool": "crawl4ai-cli",
+      "tool": "curl-cffi",
       "status": "blocked",
       "reasons": [
-        "robot or human",
-        "confirm that you.?re human",
-        "activate and hold the button"
+        "robot or human"
       ]
     },
     {
-      "tool": "curl-cffi",
+      "tool": "playwright",
       "status": "blocked",
       "reasons": [
         "robot or human"
@@ -48,9 +73,22 @@
         "confirm that you.?re human",
         "activate and hold the button"
       ]
+    },
+    {
+      "tool": "local-agent-browser-cli",
+      "status": "failed",
+      "reasons": [
+        "tiny_output"
+      ]
     }
   ],
   "authenticated_mode": {
     "supported": false
-  }
+  },
+  "last_reconciled_at": "2026-04-14T03:11:42.429446+00:00",
+  "reconciliation_status": "aligned",
+  "reconciliation_reason": "fresh_contract_has_required_fields",
+  "notes": [
+    "execution_truth_reconciled:fresh_contract_has_required_fields:selected_tool=direct-http-html:required_fields_met=True"
+  ]
 }

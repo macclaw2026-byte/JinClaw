@@ -127,6 +127,77 @@ class CrawlerExecutionTruthAlignmentTest(unittest.TestCase):
             self.assertEqual(contract.task_ready_fields['title'], 'Amazon.com : wireless mouse')
             self.assertEqual(contract.task_ready_fields['link'], 'https://www.amazon.com/s?k=wireless+mouse')
 
+    def test_build_contract_prefers_tool_row_task_ready_fields_over_truncated_head(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            reports_root = tmp / 'reports'
+            sites_root = tmp / 'site-profiles'
+            self._write_json(
+                reports_root / 'walmart-latest-run.json',
+                {
+                    'site': 'walmart',
+                    'query': 'wireless mouse',
+                    'preferredOrder': ['direct-http-html'],
+                    'taskReadySummary': {'recommendedAction': 'use-best-tool'},
+                    'toolResults': [
+                        {
+                            'tool': 'direct-http-html',
+                            'status': 'partial',
+                            'score': 75,
+                            'product_signal_count': 40,
+                            'block_signal_count': 0,
+                            'stdout_chars': 300001,
+                            'stdout_head': '<!DOCTYPE html><html><head><title>wireless mouse - Walmart.com</title></head></html>',
+                            'stderr_head': '',
+                            'notes': 'full html had richer evidence',
+                            'url': 'https://www.walmart.com/search?q=wireless+mouse',
+                            'task_ready_fields': {
+                                'title': 'wireless mouse - Walmart.com',
+                                'price': '$47.67',
+                                'rating': '',
+                                'reviews': '',
+                                'link': '/ip/Logitech-Advanced-Combo-Wireless-Keyboard-and-Mouse-Black/1998877576',
+                                'promo': '',
+                                'evidence_excerpt': ['wireless mouse - Walmart.com'],
+                            },
+                        }
+                    ],
+                },
+            )
+            sites_root.mkdir(parents=True, exist_ok=True)
+            (sites_root / 'walmart.md').write_text('# walmart\n', encoding='utf-8')
+
+            with patch.object(crawler_contract, 'REPORT_DIR', reports_root), patch.object(
+                crawler_contract, 'SITE_PROFILE_DIR', sites_root
+            ):
+                contract = crawler_contract.build_contract('walmart')
+
+            self.assertEqual(contract.comparison_summary['best_tool'], 'direct-http-html')
+            self.assertTrue(contract.comparison_summary['required_fields_met'])
+            self.assertEqual(contract.task_ready_fields['price'], '$47.67')
+            self.assertIn('/ip/', contract.task_ready_fields['link'])
+
+    def test_extract_task_ready_fields_decodes_tracking_link_and_skips_zero_price(self):
+        text = """
+        <title>wireless mouse - Walmart.com</title>
+        $0.00
+        wasPrice="$47.67"
+        https://www.walmart.com/sp/track?bt=1&amp;rd=https%3A%2F%2Fwww.walmart.com%2Fip%2FLogitech-Advanced-Combo-Wireless-Keyboard-and-Mouse-Black%2F1998877576%3FadsRedirect%3Dtrue
+        Add to cart
+        out of 5 Stars
+        """
+        fields = crawler_contract._extract_task_ready_fields(
+            'walmart',
+            text,
+            'https://www.walmart.com/search?q=wireless+mouse',
+        )
+
+        self.assertEqual(fields['price'], '$47.67')
+        self.assertEqual(
+            fields['link'],
+            'https://www.walmart.com/ip/Logitech-Advanced-Combo-Wireless-Keyboard-and-Mouse-Black/1998877576?adsRedirect=true',
+        )
+
     def test_choose_best_prefers_candidate_that_meets_required_fields(self):
         rows = [
             {

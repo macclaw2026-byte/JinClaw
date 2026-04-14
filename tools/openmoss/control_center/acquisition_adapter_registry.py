@@ -499,7 +499,7 @@ def build_acquisition_adapter_registry(capabilities: Dict[str, Any]) -> Dict[str
         preferred_sites = [
             str(site.get("site", "")).strip()
             for site in crawler_profile.get("sites", []) or []
-            if site.get("readiness") == "production_ready" and _adapter_matches_site(spec, site)
+            if site.get("readiness") in {"production_ready", "governed_ready"} and _adapter_matches_site(spec, site)
         ]
         notes = [str(item) for item in spec.get("notes", []) if str(item).strip()]
         if detected and not runtime_ready:

@@ -14,6 +14,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 ROOT = Path('/Users/mac_claw/.openclaw/workspace')
 REPORT_DIR = ROOT / 'crawler' / 'reports'
@@ -72,6 +73,7 @@ TITLE_PATTERNS = (
 )
 PROMO_MARKERS = ('off', 'coupon', 'free shipping', '折扣', '优惠')
 PRICE_CONTEXT_MARKERS = ('price', 'sale', 'current', 'now', 'from', 'subtotal')
+PRICE_BAD_CONTEXT_MARKERS = ('font-face', 'src:', '.woff', '.woff2', '.ttf', 'svg+xml', 'background-image')
 
 
 @dataclass
@@ -126,6 +128,23 @@ def _normalize_excerpt(lines: list[str]) -> list[str]:
     return [line[:240] for line in lines[:5]]
 
 
+def _normalize_url_candidate(candidate: str, source_url: str) -> str:
+    cleaned = str(candidate or '').strip().replace('&amp;', '&')
+    if not cleaned:
+        return ''
+    if cleaned.startswith('/'):
+        cleaned = urljoin(source_url or '', cleaned)
+    parsed = urlparse(cleaned)
+    if '/sp/track' in parsed.path:
+        redirected = (parse_qs(parsed.query).get('rd') or [''])[0]
+        if redirected:
+            cleaned = unquote(redirected)
+            parsed = urlparse(cleaned)
+    if cleaned.startswith('/'):
+        cleaned = urljoin(source_url or '', cleaned)
+    return cleaned[:240]
+
+
 def _extract_title(site: str, text: str, lines: list[str]) -> str:
     site_block_markers = [str(marker).lower() for marker in BLOCK_MARKERS.get(site, [])]
     for pattern in TITLE_PATTERNS:
@@ -150,34 +169,62 @@ def _extract_title(site: str, text: str, lines: list[str]) -> str:
 
 def _extract_link(text: str, source_url: str) -> str:
     match = OPENED_URL_PATTERN.search(text)
-    if match:
-        return match.group(1)[:240]
+    opened_url = _normalize_url_candidate(match.group(1), source_url) if match else ""
+    fallback_candidate = ''
     for match in URL_PATTERN.finditer(text):
-        candidate = match.group(1)
-        if any(token in candidate for token in ('/dp/', '/ip/', '/offer/', 'search?', 'search_key=')):
-            return candidate[:240]
-    return str(source_url or '').strip()[:240]
+        candidate = _normalize_url_candidate(match.group(1), source_url)
+        if not candidate:
+            continue
+        if any(token in candidate for token in ('/dp/', '/ip/', '/offer/')):
+            return candidate
+        if not fallback_candidate and any(token in candidate for token in ('/brand/', '/search', '/s?')):
+            fallback_candidate = candidate
+    if opened_url:
+        return opened_url
+    if fallback_candidate:
+        return fallback_candidate
+    return _normalize_url_candidate(str(source_url or '').strip(), source_url)
 
 
 def _extract_price_and_promo(text: str, lines: list[str]) -> tuple[str, str]:
     price = ''
     promo = ''
-    for line in lines[:160]:
-        lowered = line.lower()
-        match = PRICE_PATTERN.search(line)
-        if not match:
-            continue
+    price_candidates: list[tuple[int, int, str]] = []
+    for index, match in enumerate(PRICE_PATTERN.finditer(text[:300000])):
         candidate = match.group(1)[:120]
+        numeric_candidate = candidate.lower().replace('ca$', '').replace('$', '').replace(',', '').strip()
+        if numeric_candidate in {'0', '0.0', '0.00'}:
+            continue
+        start = max(0, match.start() - 120)
+        end = min(len(text), match.end() + 120)
+        context = text[start:end]
+        lowered = context.lower()
+        if any(marker in lowered for marker in PRICE_BAD_CONTEXT_MARKERS):
+            continue
         if any(marker in lowered for marker in PROMO_MARKERS):
             if not promo:
-                promo = line[:120]
+                promo = _strip_tags(context)[:120]
             continue
+        score = 0
         if any(marker in lowered for marker in PRICE_CONTEXT_MARKERS):
-            price = candidate
-            break
-        if line.startswith('StaticText "') and 'orders over' not in lowered and 'special for you' not in lowered:
-            price = candidate
-            break
+            score += 3
+        if any(marker in lowered for marker in ('<h3', '<span', 'price', 'currentprice', 'product-price')):
+            score += 2
+        if 'statictext "' in lowered and 'orders over' not in lowered and 'special for you' not in lowered:
+            score += 2
+        if '<' not in context and '>' not in context:
+            score += 1
+        if 'orders over' in lowered or 'shipping' in lowered:
+            score -= 2
+        price_candidates.append((score, index, candidate))
+    if price_candidates:
+        price = sorted(price_candidates, key=lambda item: (-item[0], item[1]))[0][2]
+    if not promo:
+        for line in lines[:160]:
+            lowered = line.lower()
+            if any(marker in lowered for marker in PROMO_MARKERS):
+                promo = line[:120]
+                break
     return price, promo
 
 
@@ -235,15 +282,36 @@ def _sanitize_task_ready_fields(site: str, fields: dict[str, Any]) -> dict[str, 
         if len(value) > 180 and ('<' in value and '>' in value):
             cleaned[key] = ''
             continue
+        if '<script' in lowered or '</script>' in lowered or 'data-nscript' in lowered:
+            cleaned[key] = ''
+            continue
         if key == 'title' and any(marker in lowered for marker in site_block_markers):
             cleaned[key] = ''
         elif key == 'price' and any(marker in lowered for marker in PROMO_MARKERS):
+            cleaned[key] = ''
+        elif key == 'price' and lowered.replace('ca$', '').replace('$', '').replace(',', '').strip() in {'0', '0.0', '0.00'}:
             cleaned[key] = ''
         elif key == 'link' and value and not (
             value.startswith('http') or value.startswith('/') or '/dp/' in value or '/ip/' in value or '/offer/' in value
         ):
             cleaned[key] = ''
+        elif key == 'link' and value:
+            cleaned[key] = _normalize_url_candidate(value, '')
     return cleaned
+
+
+def _row_task_ready_fields(site: str, row: dict[str, Any]) -> dict[str, Any]:
+    """
+    中文注解：
+    - 功能：优先使用 tool row 自带的结构化 task_ready_fields；若缺失再回退到 stdout_head 抽取。
+    - 设计意图：matrix 采集阶段看到的是更完整的原始输出，后续 contract 不应退化成只从截断 head 重新猜字段。
+    """
+    row_fields = row.get('task_ready_fields', {}) or {}
+    if isinstance(row_fields, dict) and any(str(row_fields.get(key, '')).strip() for key in ('title', 'price', 'link', 'promo', 'rating', 'reviews')):
+        normalized = dict(row_fields)
+        normalized.setdefault('evidence_excerpt', [])
+        return _sanitize_task_ready_fields(site, normalized)
+    return _extract_task_ready_fields(site, row.get('stdout_head', ''), row.get('url', ''))
 
 
 def _meets_required_fields(site: str, fields: dict[str, Any]) -> bool:
@@ -281,7 +349,7 @@ def summarize_site_from_matrix(site: str, matrix: dict[str, Any]) -> dict[str, A
     for row in site_row['tool_results']:
         text = f"{row.get('stdout_head', '')}\n{row.get('stderr_head', '')}"
         reasons = [m for alias in _site_aliases(site) for m in BLOCK_MARKERS.get(alias, []) if m.lower() in text.lower()]
-        task_ready_fields = _extract_task_ready_fields(site, text, row.get('url', ''))
+        task_ready_fields = _row_task_ready_fields(site, row)
         field_score = _field_score(text)
         notes = row.get('notes')
         status = row['status']
@@ -328,8 +396,8 @@ def summarize_site_from_matrix(site: str, matrix: dict[str, Any]) -> dict[str, A
         mode = 'anonymous-public-route-specific'
         fallback_policy = 'blocked-under-current-anonymous-paths-require-full-reevaluation-on-change'
         notes = [
-            'current anonymous paths are blocked by human verification pages',
-            'direct-http-html must not be treated as usable when it only returns the robot-or-human shell page',
+            'most anonymous Walmart paths still encounter human verification pages',
+            'direct-http-html is only promotable when required fields are present with a clean non-zero price and a decoded destination link',
         ]
     elif site == 'temu':
         mode = 'browser-first-anonymous'
@@ -349,7 +417,7 @@ def summarize_site_from_matrix(site: str, matrix: dict[str, Any]) -> dict[str, A
     task_ready_fields = {'title': '', 'price': '', 'rating': '', 'reviews': '', 'link': '', 'promo': '', 'evidence_excerpt': []}
     if best:
         best_row = next(r for r in site_row['tool_results'] if r['tool'] == best.tool)
-        task_ready_fields = _extract_task_ready_fields(site, best_row.get('stdout_head', ''), best_row.get('url', ''))
+        task_ready_fields = _row_task_ready_fields(site, best_row)
     if best and not _meets_required_fields(site, task_ready_fields):
         blocked_tools.append(best.tool)
         usable = [d for d in usable if d.tool != best.tool]
@@ -358,7 +426,7 @@ def summarize_site_from_matrix(site: str, matrix: dict[str, Any]) -> dict[str, A
         task_ready_fields = {'title': '', 'price': '', 'rating': '', 'reviews': '', 'link': '', 'promo': '', 'evidence_excerpt': []}
         if best:
             best_row = next(r for r in site_row['tool_results'] if r['tool'] == best.tool)
-            task_ready_fields = _extract_task_ready_fields(site, best_row.get('stdout_head', ''), best_row.get('url', ''))
+            task_ready_fields = _row_task_ready_fields(site, best_row)
 
     markdown_lines = [
         f'# {site.capitalize()} Site Profile',
@@ -432,7 +500,7 @@ def build_contract(site: str) -> SiteContract:
     for row in report['toolResults']:
         text = f"{row.get('stdout_head', '')}\n{row.get('stderr_head', '')}"
         reasons = [m for m in BLOCK_MARKERS.get(site, []) if m.lower() in text.lower()]
-        task_fields = _extract_task_ready_fields(site, text, row.get('url', ''))
+        task_fields = _row_task_ready_fields(site, row)
         field_score = _field_score(text)
         notes = row.get('notes')
         status = row['status']
@@ -465,7 +533,7 @@ def build_contract(site: str) -> SiteContract:
                 1
                 if _meets_required_fields(
                     site,
-                    _extract_task_ready_fields(site, (row_map.get(d.tool, {}) or {}).get('stdout_head', ''), (row_map.get(d.tool, {}) or {}).get('url', '')),
+                    _row_task_ready_fields(site, row_map.get(d.tool, {}) or {}),
                 )
                 else 0
             ),
@@ -476,10 +544,9 @@ def build_contract(site: str) -> SiteContract:
         )
     )
     best = usable[0] if usable else None
-    task_fields = _extract_task_ready_fields(
+    task_fields = _row_task_ready_fields(
         site,
-        next((r.get('stdout_head', '') for r in report['toolResults'] if best and r['tool'] == best.tool), ''),
-        next((r.get('url', '') for r in report['toolResults'] if best and r['tool'] == best.tool), ''),
+        next((r for r in report['toolResults'] if best and r['tool'] == best.tool), {}),
     )
     disqualified_tools: list[dict[str, Any]] = []
     while best and not _meets_required_fields(site, task_fields):
@@ -494,10 +561,9 @@ def build_contract(site: str) -> SiteContract:
         )
         usable = [d for d in usable if d.tool != best.tool]
         best = usable[0] if usable else None
-        task_fields = _extract_task_ready_fields(
+        task_fields = _row_task_ready_fields(
             site,
-            next((r.get('stdout_head', '') for r in report['toolResults'] if best and r['tool'] == best.tool), ''),
-            next((r.get('url', '') for r in report['toolResults'] if best and r['tool'] == best.tool), ''),
+            next((r for r in report['toolResults'] if best and r['tool'] == best.tool), {}),
         )
     if not best:
         task_fields = {'title': '', 'price': '', 'rating': '', 'reviews': '', 'link': '', 'promo': '', 'evidence_excerpt': []}

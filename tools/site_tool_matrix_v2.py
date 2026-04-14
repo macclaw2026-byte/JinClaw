@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -19,9 +20,13 @@ from urllib.parse import quote_plus
 ROOT = Path('/Users/mac_claw/.openclaw/workspace')
 OUT_DIR = ROOT / 'reports' / 'site-tool-matrix'
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 CRAWL4AI = ROOT / 'tools' / 'bin' / 'crawl4ai'
 AGENT_BROWSER = ROOT / 'tools' / 'agent-browser-local' / 'node_modules' / 'agent-browser' / 'bin' / 'agent-browser-darwin-arm64'
 VENV_PY = ROOT / 'tools' / 'matrix-venv' / 'bin' / 'python'
+
+from crawler.logic.crawler_contract import _extract_task_ready_fields, _field_completeness_from_fields, _meets_required_fields, _missing_required_fields
 
 QUERY = 'wireless mouse'
 SITES = {
@@ -50,6 +55,45 @@ RULES = {
     },
 }
 
+SITE_SHELL_INDICATORS = {
+    'amazon': [
+        'robot or human?',
+        'captcha interception',
+        'sorry, we have detected unusual traffic from your network',
+    ],
+    'walmart': [
+        'robot or human?',
+        'activate and hold the button',
+        'press & hold human challenge',
+    ],
+    'temu': [
+        'window.__initiallanguage__',
+        'window.__initiali18nstore__',
+        'window.__pxappid',
+        'window.__px',
+        'window.___browsercheck___',
+        'window.___grecaptcha_cfg',
+        'no results for',
+        'organizing categories',
+    ],
+    '1688': [
+        'window.__npm_package_config__',
+        'window.__cdn_img__',
+        'sessionstorage.x5referer',
+        'window.location.replace(',
+        'cf.aliyun.com/nocaptcha',
+        'please slide to verify',
+        'password login',
+        '短信登录',
+        '密码登录',
+        'window.location.href = decodeuricomponent',
+        'window.location.href=decodeuricomponent',
+        'login.1688.com/member/signin',
+        'login.taobao.com',
+        'x5secdata',
+    ],
+}
+
 @dataclass
 class ToolResult:
     site: str
@@ -63,6 +107,10 @@ class ToolResult:
     status: str
     score: int
     notes: str
+    field_completeness: float
+    required_fields_met: bool
+    missing_required_fields: list[str]
+    task_ready_fields: dict[str, object]
     stdout_head: str
     stderr_head: str
 
@@ -88,20 +136,12 @@ def analyze(site: str, tool: str, url: str, stdout: str, stderr: str, returncode
         notes = f"{notes}; cross-site-redirect={current_url}"
     chars = len(stdout.strip())
 
-    shell_indicators = [
-        'window.__npm_package_config__', 'window.__cdn_img__', 'sessionstorage.x5referer',
-        'window.location.replace(', 'cf.aliyun.com/nocaptcha', 'robot or human?',
-        'activate and hold the button', 'captcha interception',
-        'window.__initiallanguage__', 'window.__initiali18nstore__',
-        'window.__pxappid', 'press & hold human challenge',
-        'please slide to verify', 'sorry, we have detected unusual traffic from your network',
-        'password login', '短信登录', '密码登录',
-        'window.__px', 'window.___browsercheck___', 'window.___grecaptcha_cfg',
-        'window.location.href = decodeuricomponent', 'window.location.href=decodeuricomponent',
-        'login.1688.com/member/signin', 'login.taobao.com', 'x5secdata',
-        'no results for', 'search_result', 'organizing categories'
-    ]
+    shell_indicators = SITE_SHELL_INDICATORS.get(site, [])
     shell_signal_count = sum(1 for sig in shell_indicators if sig in stdout.lower())
+    task_ready_fields = _extract_task_ready_fields(site, stdout[:300000], current_url or url)
+    field_completeness = _field_completeness_from_fields(task_ready_fields)
+    required_fields_met = _meets_required_fields(site, task_ready_fields)
+    missing_required_fields = _missing_required_fields(site, task_ready_fields)
 
     score = 0
     if returncode == 0:
@@ -112,6 +152,10 @@ def analyze(site: str, tool: str, url: str, stdout: str, stderr: str, returncode
         score += 5
     if product_signal_count > 0:
         score += min(40, 8 + product_signal_count * 4)
+    if required_fields_met:
+        score += 10
+    elif field_completeness > 0:
+        score += min(8, int(field_completeness * 10))
     if shell_signal_count > 0:
         score -= min(35, shell_signal_count * 10)
     if block_signal_count > 0:
@@ -132,8 +176,28 @@ def analyze(site: str, tool: str, url: str, stdout: str, stderr: str, returncode
         status = 'partial'
     else:
         status = 'failed'
+    if status == 'partial' and required_fields_met and field_completeness >= 0.5 and block_signal_count == 0 and shell_signal_count <= 1:
+        status = 'usable'
 
-    return ToolResult(site, tool, url, returncode, len(stdout), len(stderr), product_signal_count, block_signal_count, status, score, notes, stdout[:2200], stderr[:1200])
+    return ToolResult(
+        site,
+        tool,
+        url,
+        returncode,
+        len(stdout),
+        len(stderr),
+        product_signal_count,
+        block_signal_count,
+        status,
+        score,
+        notes,
+        field_completeness,
+        required_fields_met,
+        missing_required_fields,
+        task_ready_fields,
+        stdout[:2200],
+        stderr[:1200],
+    )
 
 
 def crawl4ai_tool(site, url):

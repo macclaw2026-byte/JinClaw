@@ -168,6 +168,27 @@ def _score_site(profile: Dict[str, Any], latest_run: Dict[str, Any], contract: D
     mode = str(profile.get("mode", "") or "").strip()
     blocked_ratio = min(1.0, len(blocked_tools) / max(1, len(tested_tools)))
 
+    readiness = "unknown"
+    if best_status == "usable" and usable_tools:
+        readiness = "production_ready"
+    elif authenticated_supported and mode in {"anonymous_truth_check_only", "browser_first_anonymous"}:
+        readiness = "governed_ready"
+    elif tested_tools:
+        readiness = "attention_required"
+    access_posture = "unknown"
+    access_route = "human_checkpoint"
+    governed_ready = False
+    if readiness == "production_ready":
+        access_posture = "anonymous_ready"
+        access_route = "anonymous_public"
+        governed_ready = True
+    elif readiness == "governed_ready":
+        access_posture = "governed_authenticated_ready"
+        access_route = "authorized_session"
+        governed_ready = True
+    elif tested_tools:
+        access_posture = "blocked_or_partial"
+
     breadth_score = min(100.0, round(35 + len(tested_tools) * 4 + len(usable_tools) * 6 - len(blocked_tools) * 2, 2))
     depth_score = min(
         100.0,
@@ -191,26 +212,10 @@ def _score_site(profile: Dict[str, Any], latest_run: Dict[str, Any], contract: D
             2,
         ),
     )
-    readiness = (
-        "production_ready"
-        if best_status == "usable" and usable_tools
-        else "attention_required"
-        if tested_tools
-        else "unknown"
-    )
-    access_posture = "unknown"
-    access_route = "human_checkpoint"
-    governed_ready = False
-    if readiness == "production_ready":
-        access_posture = "anonymous_ready"
-        access_route = "anonymous_public"
-        governed_ready = True
-    elif authenticated_supported and mode in {"anonymous_truth_check_only", "browser_first_anonymous"}:
-        access_posture = "governed_authenticated_ready"
-        access_route = "authorized_session"
-        governed_ready = True
-    elif tested_tools:
-        access_posture = "blocked_or_partial"
+    if readiness == "governed_ready":
+        breadth_score = max(breadth_score, 55.0)
+        depth_score = max(depth_score, 60.0)
+        stability_score = max(stability_score, 60.0)
 
     primary_limitations = []
     if blocked_tools:
@@ -305,7 +310,7 @@ def _build_trend_summary(history_entries: List[Dict[str, Any]], summary: Dict[st
 def _build_priority_actions(sites: List[Dict[str, Any]], summary: Dict[str, Any], trend: Dict[str, Any]) -> List[Dict[str, Any]]:
     actions: List[Dict[str, Any]] = []
     ranked_sites = sorted(
-        [site for site in sites if site.get("readiness") != "production_ready"],
+        [site for site in sites if site.get("readiness") not in {"production_ready", "governed_ready"}],
         key=lambda item: (
             len(item.get("primary_limitations", []) or []),
             -(item.get("depth_score", 0.0) or 0.0),

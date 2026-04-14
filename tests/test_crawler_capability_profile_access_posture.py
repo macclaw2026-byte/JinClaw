@@ -63,11 +63,14 @@ class CrawlerCapabilityProfileAccessPostureTest(unittest.TestCase):
 
             site = profile['sites'][0]
             summary = profile['summary']
-            self.assertEqual(site['readiness'], 'attention_required')
+            self.assertEqual(site['readiness'], 'governed_ready')
             self.assertTrue(site['governed_ready'])
             self.assertEqual(site['access_posture'], 'governed_authenticated_ready')
             self.assertEqual(site['preferred_access_route'], 'authorized_session')
+            self.assertGreaterEqual(site['depth_score'], 60.0)
+            self.assertGreaterEqual(site['stability_score'], 60.0)
             self.assertEqual(summary['sites_production_ready'], 0)
+            self.assertEqual(summary['sites_attention_required'], 0)
             self.assertEqual(summary['sites_governed_ready'], 1)
             self.assertEqual(summary['sites_authorized_session_ready'], 1)
             self.assertEqual(summary['governed_width_score'], 100.0)

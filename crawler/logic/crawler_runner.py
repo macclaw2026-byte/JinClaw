@@ -20,6 +20,7 @@ from crawler.logic.crawler_contract import (
     _field_completeness_from_fields,
     _field_score,
     _meets_required_fields,
+    _row_task_ready_fields,
     save_contract,
     summarize_site_from_matrix,
 )
@@ -138,7 +139,7 @@ def choose_best(tool_results: list[dict], site: str | None = None) -> dict | Non
         ranked = []
         for row in survivors:
             text = f"{row.get('stdout_head', '')}\n{row.get('stderr_head', '')}"
-            task_fields = _extract_task_ready_fields(site or '', row.get('stdout_head', ''), row.get('url', '')) if site else {}
+            task_fields = _row_task_ready_fields(site or '', row) if site else {}
             required_fields_met = _meets_required_fields(site or '', task_fields) if site else True
             field_completeness = max(
                 float(row.get('field_completeness', 0) or 0),

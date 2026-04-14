@@ -1,39 +1,49 @@
 {
   "site": "1688",
-  "last_evaluated": "2026-04-12",
+  "last_evaluated": "2026-04-13",
   "mode": "anonymous_truth_check_only",
   "confidence": "low",
   "tested_tools": [
     "crawl4ai-cli",
+    "direct-http-html",
     "curl-cffi",
-    "scrapy-cffi"
+    "playwright",
+    "playwright-stealth",
+    "scrapy-cffi",
+    "local-agent-browser-cli"
   ],
   "preferred_tool_order": [
-    "crawl4ai-cli",
     "curl-cffi",
-    "scrapy-cffi"
+    "scrapy-cffi",
+    "crawl4ai-cli",
+    "direct-http-html",
+    "local-agent-browser-cli",
+    "playwright",
+    "playwright-stealth"
   ],
   "blocked_tools": [
-    "crawl4ai-cli",
     "curl-cffi",
-    "scrapy-cffi"
+    "scrapy-cffi",
+    "crawl4ai-cli",
+    "direct-http-html",
+    "local-agent-browser-cli",
+    "playwright",
+    "playwright-stealth"
   ],
   "usable_tools": [],
   "first_choice_extraction_mode": "blocked_or_insufficient_evidence",
   "selected_tool": "",
-  "task_output_fields": {},
+  "task_output_fields": {
+    "title": "",
+    "price": "",
+    "rating": "",
+    "reviews": "",
+    "link": "",
+    "promo": "",
+    "evidence_excerpt": []
+  },
   "fallback_policy": "Start with the first preferred tool; if blocked/weak, step through the remaining preferred tools in order. Trigger full all-tools re-evaluation when the top path degrades materially.",
   "known_failure_modes": [
-    {
-      "tool": "crawl4ai-cli",
-      "status": "blocked",
-      "reasons": [
-        "登录",
-        "密码登录",
-        "短信登录",
-        "请按住滑块"
-      ]
-    },
     {
       "tool": "curl-cffi",
       "status": "blocked",
@@ -42,10 +52,26 @@
       ]
     },
     {
+      "tool": "playwright",
+      "status": "blocked",
+      "reasons": [
+        "captcha",
+        "punish",
+        "nocaptcha"
+      ]
+    },
+    {
       "tool": "scrapy-cffi",
       "status": "blocked",
       "reasons": [
         "x5secdata"
+      ]
+    },
+    {
+      "tool": "local-agent-browser-cli",
+      "status": "failed",
+      "reasons": [
+        "tiny_output"
       ]
     }
   ],
@@ -58,5 +84,11 @@
       "登录态 profile 与匿名 profile 必须分开记录。",
       "若遇到 slider/captcha/device-risk，需要人工介入，不做绕过。"
     ]
-  }
+  },
+  "last_reconciled_at": "2026-04-14T02:31:40.492257+00:00",
+  "reconciliation_status": "aligned",
+  "reconciliation_reason": "fresh_contract_and_latest_run_both_blocked",
+  "notes": [
+    "execution_truth_reconciled:fresh_contract_and_latest_run_both_blocked:selected_tool=none:required_fields_met=False"
+  ]
 }

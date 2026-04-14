@@ -142,6 +142,52 @@ class CrawlerExecutionTruthReconcilerTest(unittest.TestCase):
             self.assertEqual(updated_profile['selected_tool'], 'local-agent-browser-cli')
             self.assertFalse(legacy_path.exists())
 
+    def test_reconcile_site_execution_truth_applies_partial_route_when_required_fields_exist(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            reports_root = tmp / 'reports'
+            site_profiles_root = tmp / 'site-profiles'
+            legacy_path = tmp / 'site_profiles.json'
+
+            self._write_json(
+                reports_root / 'walmart-latest-run.json',
+                {'bestTool': 'direct-http-html', 'bestStatus': 'partial'},
+            )
+            self._write_json(
+                reports_root / 'walmart-contract.json',
+                {'comparison_summary': {'best_tool': 'direct-http-html', 'best_status': 'partial'}},
+            )
+            self._write_json(
+                site_profiles_root / 'walmart.json',
+                {
+                    'site': 'walmart',
+                    'mode': 'anonymous_public_crawl',
+                    'confidence': 'low',
+                    'selected_tool': '',
+                    'usable_tools': [],
+                },
+            )
+
+            partial_contract = self._contract('walmart', best_tool='direct-http-html', best_status='partial', required_fields_met=True)
+            partial_contract.task_ready_fields['price'] = '$47.67'
+            partial_contract.task_ready_fields['link'] = '/ip/Logitech-Advanced-Combo-Wireless-Keyboard-and-Mouse-Black/1998877576'
+
+            with patch.object(reconciler, 'REPORTS_ROOT', reports_root), patch.object(
+                reconciler, 'SITE_PROFILES_ROOT', site_profiles_root
+            ), patch.object(
+                reconciler, 'LEGACY_SITE_PROFILES_PATH', legacy_path
+            ), patch.object(
+                reconciler, 'build_contract', return_value=partial_contract
+            ):
+                result = reconciler.reconcile_site_execution_truth('walmart')
+
+            updated_profile = json.loads((site_profiles_root / 'walmart.json').read_text(encoding='utf-8'))
+            self.assertEqual(result['status'], 'applied')
+            self.assertEqual(updated_profile['selected_tool'], 'direct-http-html')
+            self.assertEqual(updated_profile['confidence'], 'high')
+            self.assertEqual(updated_profile['preferred_tool_order'][0], 'direct-http-html')
+            self.assertEqual(updated_profile['first_choice_extraction_mode'], 'best_single_tool_output')
+
     def test_executor_handles_execution_truth_reconcile_inline(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

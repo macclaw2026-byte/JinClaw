@@ -290,7 +290,7 @@ def build_crawler_project_bundle(task_id: str, contract: Dict[str, Any], mission
     relevant_attention = [site for site in attention_sites if site in relevant_sites]
     if not relevant_attention and relevant_sites:
         relevant_attention = [
-            site for site in relevant_sites if site.get("readiness") != "production_ready"
+            site for site in relevant_sites if site.get("readiness") not in {"production_ready", "governed_ready"}
         ]
     if not relevant_attention and not relevant_sites:
         relevant_attention = attention_sites[:3]
