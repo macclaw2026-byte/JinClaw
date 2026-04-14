@@ -16,7 +16,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 
 def _milestone_fragment(snapshot: Dict[str, Any]) -> str:
@@ -172,12 +172,45 @@ def _merge_acquisition_response(summary: str, snapshot: Dict[str, Any]) -> str:
     return text + _acquisition_response_fragment(snapshot)
 
 
-def build_route_receipt_text(route: Dict[str, Any]) -> str:
+def _reply_flags(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     """
     中文注解：
-    - 功能：实现 `build_route_receipt_text` 对应的处理逻辑。
-    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
-    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    - 功能：从权威快照里提炼会影响用户回复策略的显式标志。
+    - 设计意图：让 reply projection 能把“需要确认/需要披露/当前回答模式”结构化暴露出来，后续 transport 只负责投影，不再各自猜测。
+    """
+    reply_contract = snapshot.get("reply_contract", {}) or {}
+    acquisition_response = reply_contract.get("acquisition_response", {}) or {}
+    return {
+        "acquisition_enabled": bool(acquisition_response.get("enabled")),
+        "response_mode": str(acquisition_response.get("response_mode", "")).strip(),
+        "requires_user_confirmation": bool(acquisition_response.get("requires_user_confirmation")),
+        "requires_disclosure": bool(acquisition_response.get("requires_disclosure")),
+    }
+
+
+def render_reply_projection(projection: Dict[str, Any]) -> str:
+    """
+    中文注解：
+    - 功能：把结构化 reply projection 渲染成最终用户可见文本。
+    - 设计意图：从本阶段开始，把“解释 route”与“输出文本”拆开；未来 Telegram / 直连 / 其它 transport 都应优先消费 projection，再做各自渲染。
+    """
+    segments = projection.get("segments", []) or []
+    text = "".join(
+        str(item.get("text", "")).strip() if str(item.get("glue", "")).strip() == "tight" else str(item.get("text", ""))
+        for item in segments
+        if str(item.get("text", "")).strip()
+    )
+    text = str(text).strip()
+    if text:
+        return text
+    return str(projection.get("fallback_text", "")).strip()
+
+
+def build_route_reply_projection(route: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：把 route 与权威快照解释成结构化 reply projection。
+    - 设计意图：让 task receipt、Telegram/chat transport、未来 UI 都消费同一份解释结果，避免一条 route 被多层重复翻译。
     """
     mode = str(route.get("mode", "instant_reply_only"))
     task_id = str(route.get("task_id", "")).strip()
@@ -188,39 +221,83 @@ def build_route_receipt_text(route: Dict[str, Any]) -> str:
     selected_task_alias = str(route.get("selected_task_alias", "")).strip()
     selection_label = selected_task_alias or selected_task_group_alias or task_id
     selection_prefix = f"已切换到任务 {selection_label}。 " if selection_updated and selection_label else ""
+    snapshot = route.get("authoritative_task_status", {}) or {}
+    flags = _reply_flags(snapshot)
+    projection: Dict[str, Any] = {
+        "projection_version": 1,
+        "mode": mode,
+        "task_id": task_id,
+        "message_kind": "route_ack",
+        "source_of_truth": "route",
+        "selection_prefix": selection_prefix,
+        "flags": {
+            "selection_updated": selection_updated,
+            **flags,
+        },
+        "segments": [],
+        "fallback_text": f"已收到任务型指令。当前路由模式: {mode}。任务 ID: {task_id or '未创建'}。",
+    }
+
+    def add_segment(key: str, text: str) -> None:
+        if not str(text or "").strip():
+            return
+        projection["segments"].append({"key": key, "text": text})
+
+    if selection_prefix:
+        add_segment("selection_prefix", selection_prefix)
+
     if mode == "heartbeat_probe":
-        snapshot = route.get("authoritative_task_status", {}) or {}
         status = str(snapshot.get("status", "")).strip()
         if not snapshot or not task_id or status in {"completed", "failed"}:
-            return "HEARTBEAT_OK"
-        summary = str(snapshot.get("authoritative_summary", "")).strip() or f"任务 {task_id} 仍在推进中。"
-        return _merge_acquisition_response(summary, snapshot) + _milestone_fragment(snapshot) + _governance_fragment(snapshot)
-    if mode == "explicit_task_not_found":
-        return f"没有找到任务 {task_id or 'unknown'}。请先在任务面板确认任务 ID，然后再用 `[task:任务ID]` 或 `任务: 任务ID` 指定。"
-    if mode == "task_completed_notice":
-        snapshot = route.get("authoritative_task_status", {}) or {}
+            projection["message_kind"] = "heartbeat_ok"
+            add_segment("summary", "HEARTBEAT_OK")
+        else:
+            projection["message_kind"] = "heartbeat_status"
+            projection["source_of_truth"] = "authoritative_task_status"
+            summary = str(snapshot.get("authoritative_summary", "")).strip() or f"任务 {task_id} 仍在推进中。"
+            add_segment("summary", _merge_acquisition_response(summary, snapshot))
+            add_segment("milestone", _milestone_fragment(snapshot))
+            add_segment("governance", _governance_fragment(snapshot))
+    elif mode == "explicit_task_not_found":
+        projection["message_kind"] = "task_not_found"
+        add_segment("summary", f"没有找到任务 {task_id or 'unknown'}。请先在任务面板确认任务 ID，然后再用 `[task:任务ID]` 或 `任务: 任务ID` 指定。")
+    elif mode == "task_completed_notice":
+        projection["message_kind"] = "task_completed"
+        projection["source_of_truth"] = "authoritative_task_status"
         summary = str(snapshot.get("authoritative_summary", "")).strip()
         body = _merge_acquisition_response(summary or "完成状态已记录。", snapshot)
-        return f"任务 {task_id or snapshot.get('task_id', 'unknown')} 已完成。{body}{_milestone_fragment(snapshot)}{_governance_fragment(snapshot)}"
-    if mode == "milestone_progress_notice":
-        snapshot = route.get("authoritative_task_status", {}) or {}
+        add_segment("summary", f"任务 {task_id or snapshot.get('task_id', 'unknown')} 已完成。{body}")
+        add_segment("milestone", _milestone_fragment(snapshot))
+        add_segment("governance", _governance_fragment(snapshot))
+    elif mode == "milestone_progress_notice":
+        projection["message_kind"] = "milestone_progress"
+        projection["source_of_truth"] = "authoritative_task_status"
         notice = route.get("milestone_notice", {}) or {}
         title = str(notice.get("title", "")).strip() or str(notice.get("milestone_id", "")).strip() or "一个关键步骤"
         summary = str(snapshot.get("authoritative_summary", "")).strip()
         prefix = f"任务 {task_id or snapshot.get('task_id', 'unknown')} 已推进里程碑：{title}。"
         if summary:
             prefix += summary
-        return _merge_acquisition_response(prefix, snapshot) + _milestone_fragment(snapshot) + _governance_fragment(snapshot)
-    if mode == "failed_task_doctor_takeover":
-        snapshot = route.get("authoritative_task_status", {}) or {}
+        add_segment("summary", _merge_acquisition_response(prefix, snapshot))
+        add_segment("milestone", _milestone_fragment(snapshot))
+        add_segment("governance", _governance_fragment(snapshot))
+    elif mode == "failed_task_doctor_takeover":
+        projection["message_kind"] = "doctor_takeover"
+        projection["source_of_truth"] = "authoritative_task_status"
         summary = str(snapshot.get("authoritative_summary", "")).strip()
         body = _merge_acquisition_response(summary or '我会先分析并尝试修复，再决定是否升级报告。', snapshot)
-        return f"任务 {task_id or snapshot.get('task_id', 'unknown')} 刚进入失败态，系统医生已接管。{body}{_milestone_fragment(snapshot)}{_governance_fragment(snapshot)}"
-    if mode == "authoritative_task_status":
-        snapshot = route.get("authoritative_task_status", {}) or {}
+        add_segment("summary", f"任务 {task_id or snapshot.get('task_id', 'unknown')} 刚进入失败态，系统医生已接管。{body}")
+        add_segment("milestone", _milestone_fragment(snapshot))
+        add_segment("governance", _governance_fragment(snapshot))
+    elif mode == "authoritative_task_status":
+        projection["message_kind"] = "task_status"
+        projection["source_of_truth"] = "authoritative_task_status"
         canonical = snapshot.get("canonical_task", {}) or {}
         requested_task_id = str(snapshot.get("requested_task_id", "")).strip()
         canonical_task_id = str(snapshot.get("task_id", "")).strip()
+        projection["requested_task_id"] = requested_task_id
+        projection["canonical_task_id"] = canonical_task_id
+        projection["canonical_task_label"] = str(canonical.get("task_id", "")).strip() or canonical_task_id
         summary = str(snapshot.get("authoritative_summary", "")).strip() or f"当前任务状态已刷新，任务 ID: {task_id or 'unknown'}。"
         summary = _merge_acquisition_response(summary, snapshot)
         summary += _milestone_fragment(snapshot)
@@ -228,42 +305,63 @@ def build_route_receipt_text(route: Dict[str, Any]) -> str:
         if requested_task_id and canonical_task_id and requested_task_id != canonical_task_id:
             summary = f"你询问的原任务 {requested_task_id} 已经切换到当前活跃任务 {canonical_task_id}。{summary}"
         if prompt_error_message:
-            return f"{selection_prefix}主回复链刚刚发生异常（{prompt_error_message}），我已自动降级到权威状态回复。{summary}"
-        return selection_prefix + summary
-    if mode in {"create_new_root_task", "create_or_attach"}:
-        return f"已识别为新任务，任务 ID: {task_id}。我会先进入 understand 阶段，梳理目标、约束、交付物和执行条件，然后持续推进。"
-    if mode in {"create_successor_task", "branch_from_active_task", "append_to_active_successor_task"}:
-        snapshot = route.get("authoritative_task_status", {}) or {}
+            summary = f"主回复链刚刚发生异常（{prompt_error_message}），我已自动降级到权威状态回复。{summary}"
+        add_segment("summary", summary)
+    elif mode in {"create_new_root_task", "create_or_attach"}:
+        projection["message_kind"] = "task_created"
+        add_segment("summary", f"已识别为新任务，任务 ID: {task_id}。我会先进入 understand 阶段，梳理目标、约束、交付物和执行条件，然后持续推进。")
+    elif mode in {"create_successor_task", "branch_from_active_task", "append_to_active_successor_task"}:
+        projection["message_kind"] = "task_chain_append"
+        projection["source_of_truth"] = "authoritative_task_status" if snapshot else "route"
         suffix = ""
         if route.get("state_attention_required"):
             status = str(snapshot.get("status", "")).strip()
             stage = str(snapshot.get("current_stage", "")).strip() or "none"
             next_action = str(snapshot.get("next_action", "")).strip() or "none"
             suffix = f" 当前主任务状态是 {status or 'unknown'} / {stage}，下一步是 {next_action}；我会在这个基础上继续推进，而不是只回内部状态。"
-        return f"已识别为后续任务，任务 ID: {task_id}。我会沿当前任务链继续执行；如果遇到真实阻塞，会直接告诉你卡点而不是静默等待。{suffix}"
-    if mode == "append_to_root_mission_task":
-        snapshot = route.get("authoritative_task_status", {}) or {}
+        add_segment("summary", f"已识别为后续任务，任务 ID: {task_id}。我会沿当前任务链继续执行；如果遇到真实阻塞，会直接告诉你卡点而不是静默等待。{suffix}")
+    elif mode == "append_to_root_mission_task":
+        projection["message_kind"] = "root_mission_append"
+        projection["source_of_truth"] = "authoritative_task_status" if snapshot else "route"
         suffix = ""
         if route.get("state_attention_required"):
             status = str(snapshot.get("status", "")).strip()
             stage = str(snapshot.get("current_stage", "")).strip() or "none"
             next_action = str(snapshot.get("next_action", "")).strip() or "none"
             suffix = f" 当前 root mission 状态是 {status or 'unknown'} / {stage}，下一步是 {next_action}；我会直接接着往下做。"
-        return selection_prefix + f"已把这条新指令并入当前 root mission {task_id}，接下来会按既定目标继续推进。{suffix}"
-    if mode == "append_to_existing_task":
-        snapshot = route.get("authoritative_task_status", {}) or {}
+        add_segment("summary", f"已把这条新指令并入当前 root mission {task_id}，接下来会按既定目标继续推进。{suffix}")
+    elif mode == "append_to_existing_task":
+        projection["message_kind"] = "task_chain_append"
+        projection["source_of_truth"] = "authoritative_task_status" if snapshot else "route"
         suffix = ""
         if route.get("state_attention_required"):
             status = str(snapshot.get("status", "")).strip()
             stage = str(snapshot.get("current_stage", "")).strip() or "none"
             next_action = str(snapshot.get("next_action", "")).strip() or "none"
             suffix = f" 当前主任务状态是 {status or 'unknown'} / {stage}，下一步是 {next_action}；我会先恢复连续执行，再推进你刚才这条要求。"
-        return selection_prefix + f"已把这条新指令挂到当前任务 {task_id}，接下来会继续按现有任务链推进。{suffix}"
-    if mode == "doctor_diagnostic":
-        snapshot = route.get("authoritative_task_status", {}) or {}
+        add_segment("summary", f"已把这条新指令挂到当前任务 {task_id}，接下来会继续按现有任务链推进。{suffix}")
+    elif mode == "doctor_diagnostic":
+        projection["message_kind"] = "doctor_diagnostic"
+        projection["source_of_truth"] = "authoritative_task_status"
         summary = str(snapshot.get("authoritative_summary", "")).strip() or f"系统医生已接管任务 {task_id} 并开始诊断。"
-        return _merge_acquisition_response(summary, snapshot) + _milestone_fragment(snapshot) + _governance_fragment(snapshot)
-    return f"已收到任务型指令。当前路由模式: {mode}。任务 ID: {task_id or '未创建'}。"
+        add_segment("summary", _merge_acquisition_response(summary, snapshot))
+        add_segment("milestone", _milestone_fragment(snapshot))
+        add_segment("governance", _governance_fragment(snapshot))
+    else:
+        add_segment("summary", projection["fallback_text"])
+
+    projection["rendered_text"] = render_reply_projection(projection)
+    return projection
+
+
+def build_route_receipt_text(route: Dict[str, Any]) -> str:
+    """
+    中文注解：
+    - 功能：实现 `build_route_receipt_text` 对应的处理逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
+    return render_reply_projection(build_route_reply_projection(route))
 
 
 def build_supervisor_status_text(task_id: str, evidence: Dict[str, Any], repair: Dict[str, Any], snapshot: Dict[str, Any] | None = None) -> str:

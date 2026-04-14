@@ -426,6 +426,24 @@ def _build_doctor_coverage_bundle() -> Dict[str, Any]:
                 "primary_monitor": "system_doctor.integration_health.conversation_context",
                 "backstop_monitor": "tools/openmoss/runtime/control_center/control_plane/conversation_focus_registry.json",
                 "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.conversation_context",
+            },
+            {
+                "name": "reply-projection-kernel",
+                "required_files": [
+                    "tools/openmoss/control_center/response_policy_engine.py",
+                    "tools/openmoss/control_center/task_receipt_engine.py",
+                    "tools/openmoss/control_center/task_status_snapshot.py",
+                    "tools/openmoss/autonomy/telegram_binding.py",
+                    "tools/openmoss/autonomy/action_executor.py",
+                ],
+                "doctor_checks": [
+                    "projection_contract_presence",
+                    "projection_render_parity",
+                    "receipt_projection_persistence",
+                ],
+                "primary_monitor": "system_doctor.integration_health.reply_projection",
+                "backstop_monitor": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.reply_projection",
+                "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.reply_projection",
             }
         ],
     }

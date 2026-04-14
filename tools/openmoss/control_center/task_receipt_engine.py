@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from paths import BRAIN_RECEIPTS_ROOT, OPENCLAW_SESSIONS_ROOT
-from response_policy_engine import build_route_receipt_text
+from response_policy_engine import build_route_receipt_text, build_route_reply_projection
 from response_drift_detector import reconcile_route_with_authoritative_state
 
 
@@ -376,6 +376,15 @@ def build_receipt_text(route: Dict[str, object]) -> str:
     return build_route_receipt_text(route)
 
 
+def build_receipt_projection(route: Dict[str, object]) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：把路由结果解释成 transport-neutral 的 reply projection。
+    - 设计意图：让 receipt engine 不再只携带一段已经渲染好的文本，而是把结构化回复合同一起持久化，供 Telegram / 直连 / 后续 UI 复用。
+    """
+    return build_route_reply_projection(route)
+
+
 def emit_route_receipt(route: Dict[str, object], *, provider: str, conversation_id: str, session_key: str = "") -> Dict[str, object]:
     """
     中文注解：
@@ -386,7 +395,8 @@ def emit_route_receipt(route: Dict[str, object], *, provider: str, conversation_
       附件直发成功后，不再额外往 session transcript 追加一条重复文字回执，避免用户在聊天框里看到“双回执”。
     """
     route = reconcile_route_with_authoritative_state(route)
-    text = build_receipt_text(route)
+    reply_projection = build_receipt_projection(route)
+    text = str(reply_projection.get("rendered_text", "")).strip() or build_receipt_text(route)
     receipt = {
         "receipt_id": uuid.uuid4().hex,
         "created_at": _utc_now_iso(),
@@ -395,6 +405,7 @@ def emit_route_receipt(route: Dict[str, object], *, provider: str, conversation_
         "task_id": route.get("task_id", ""),
         "mode": route.get("mode", ""),
         "text": text,
+        "reply_projection": reply_projection,
         "session_key": session_key,
         "governance": (route.get("authoritative_task_status", {}) or {}).get("governance", {}),
     }
