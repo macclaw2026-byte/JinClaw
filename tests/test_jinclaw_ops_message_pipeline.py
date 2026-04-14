@@ -93,6 +93,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                     'goal_continuation': {
                         'goal_continuation_contract': True,
                         'terminal_reopen_gate_contract': True,
+                        'scheduled_delivery_continuation_contract': True,
                         'authoritative_summary_visibility_contract': True,
                     },
                     'capability_gap': {
@@ -216,6 +217,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                 'goal_continuation': {
                     'goal_continuation_contract': True,
                     'terminal_reopen_gate_contract': True,
+                    'scheduled_delivery_continuation_contract': True,
                     'authoritative_summary_visibility_contract': True,
                 },
                 'capability_gap': {

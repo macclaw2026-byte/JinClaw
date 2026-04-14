@@ -3262,10 +3262,14 @@ def _run_goal_continuation_integration_checks() -> Dict[str, object]:
     from runtime_service import _enforce_goal_continuation_gate
 
     task_id = 'doctor-goal-continuation-contract'
+    periodic_task_id = 'doctor-goal-continuation-periodic'
     task_path = task_dir(task_id)
+    periodic_task_path = task_dir(periodic_task_id)
     try:
         if task_path.exists():
             shutil.rmtree(task_path, ignore_errors=True)
+        if periodic_task_path.exists():
+            shutil.rmtree(periodic_task_path, ignore_errors=True)
         contract = TaskContract(
             task_id=task_id,
             user_goal='Deliver a complete multi-step mission and do not stop at partial milestones.',
@@ -3328,9 +3332,60 @@ def _run_goal_continuation_integration_checks() -> Dict[str, object]:
             errors.append('goal_continuation_missing_non_terminal_milestone')
         if 'Continuation is still required' not in str(snapshot.get('authoritative_summary', '')).strip():
             errors.append('goal_continuation_missing_summary_signal')
+
+        periodic_contract = TaskContract(
+            task_id=periodic_task_id,
+            user_goal='Keep delivering a daily verified summary without silently terminating after the first successful run.',
+            done_definition='Each completed delivery remains scheduled for the next delivery window.',
+            stages=[
+                StageContract(name='understand', goal='understand'),
+                StageContract(name='plan', goal='plan'),
+                StageContract(name='execute', goal='execute'),
+                StageContract(name='verify', goal='verify'),
+                StageContract(name='learn', goal='learn'),
+            ],
+        )
+        create_task_from_contract(periodic_contract)
+        periodic_state = load_state(periodic_task_id)
+        periodic_state.status = 'completed'
+        periodic_state.current_stage = 'learn'
+        periodic_state.next_action = 'noop'
+        for name in periodic_state.stage_order:
+            stage = periodic_state.stages.get(name)
+            if not stage:
+                continue
+            stage.status = 'completed'
+            stage.summary = f'{name} completed for scheduled followthrough'
+            stage.updated_at = _utc_now_iso()
+            stage.completed_at = _utc_now_iso()
+        periodic_state.metadata['business_outcome'] = {
+            'goal_satisfied': True,
+            'user_visible_result_confirmed': True,
+            'proof_summary': 'daily delivery proof exists',
+        }
+        periodic_state.metadata['delivery_schedule'] = {
+            'cadence': 'daily',
+        }
+        save_state(periodic_state)
+        periodic_reopened = _enforce_goal_continuation_gate(periodic_task_id)
+        if not periodic_reopened or str(periodic_reopened.get('action', '')).strip() != 'goal_continuation_reopened_for_scheduled_delivery':
+            errors.append('goal_continuation_periodic_gate_did_not_reopen')
+        periodic_state = load_state(periodic_task_id)
+        periodic_snapshot = build_task_status_snapshot(periodic_task_id)
+        periodic_payload = periodic_snapshot.get('goal_continuation', {}) or {}
+        if str(getattr(periodic_state, 'status', '')).strip() != 'blocked':
+            errors.append('goal_continuation_periodic_runtime_not_reopened')
+        if str(getattr(periodic_state, 'next_action', '')).strip() != 'await_scheduled_delivery_window':
+            errors.append('goal_continuation_periodic_wrong_next_action')
+        if not bool(periodic_payload.get('scheduled_followthrough_required')):
+            errors.append('goal_continuation_periodic_missing_followthrough_flag')
+        if str(periodic_payload.get('delivery_cadence', '')).strip() != 'daily':
+            errors.append('goal_continuation_periodic_missing_cadence')
     finally:
         if task_path.exists():
             shutil.rmtree(task_path, ignore_errors=True)
+        if periodic_task_path.exists():
+            shutil.rmtree(periodic_task_path, ignore_errors=True)
 
     return {
         'single_doctor_rule': True,
@@ -3349,6 +3404,16 @@ def _run_goal_continuation_integration_checks() -> Dict[str, object]:
                 'goal_continuation_gate_did_not_reopen',
                 'goal_continuation_runtime_not_reopened',
                 'goal_continuation_wrong_reopen_stage',
+            }
+            for item in errors
+        ),
+        'scheduled_delivery_continuation_contract': not any(
+            item in {
+                'goal_continuation_periodic_gate_did_not_reopen',
+                'goal_continuation_periodic_runtime_not_reopened',
+                'goal_continuation_periodic_wrong_next_action',
+                'goal_continuation_periodic_missing_followthrough_flag',
+                'goal_continuation_periodic_missing_cadence',
             }
             for item in errors
         ),

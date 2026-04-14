@@ -507,6 +507,9 @@ def _build_goal_continuation(contract: Dict[str, Any], snapshot: Dict[str, Any],
     operating_discipline = control_center.get("operating_discipline", {}) or {}
     completion_guard = operating_discipline.get("completion_guard", {}) or {}
     strict = bool(control_center.get("strict_continuation_required"))
+    delivery_schedule = ((state.get("metadata", {}) or {}).get("delivery_schedule", {}) or {})
+    delivery_cadence = str(delivery_schedule.get("cadence", "")).strip()
+    periodic_delivery = delivery_cadence not in {"", "once", "event_driven"}
     business = snapshot.get("business_outcome", {}) or {}
     outcome_evaluation = snapshot.get("outcome_evaluation", {}) or {}
     proof_ready = bool(
@@ -515,26 +518,36 @@ def _build_goal_continuation(contract: Dict[str, Any], snapshot: Dict[str, Any],
         and str(business.get("proof_summary", "")).strip()
     )
     goal_reached = proof_ready or str(outcome_evaluation.get("outcome_status", "")).strip() == "goal_reached"
-    continuation_required = bool(strict and not goal_reached)
+    scheduled_followthrough_required = bool(periodic_delivery)
+    continuation_required = bool((strict and not goal_reached) or scheduled_followthrough_required)
     non_terminal_reasons: List[str] = []
     if strict:
         non_terminal_reasons.append("strict_continuation_required")
     if strict and not proof_ready:
         non_terminal_reasons.append("goal_completion_proof_missing")
+    if scheduled_followthrough_required:
+        non_terminal_reasons.append("scheduled_delivery_followthrough_required")
     if str(state.get("status", "")).strip() == "completed" and continuation_required:
         non_terminal_reasons.append("terminal_status_without_goal_proof")
     milestones = (completion_guard.get("non_terminal_milestones", []) or [])
     next_required_stage = str(state.get("current_stage", "")).strip()
     next_required_action = str(state.get("next_action", "")).strip()
     if continuation_required and str(state.get("status", "")).strip() == "completed":
-        next_required_stage = "verify"
-        next_required_action = "start_stage:verify"
+        if strict and not proof_ready:
+            next_required_stage = "verify"
+            next_required_action = "start_stage:verify"
+        elif scheduled_followthrough_required:
+            next_required_stage = "execute"
+            next_required_action = "await_scheduled_delivery_window"
     return build_goal_continuation_schema(
-        enabled=bool(strict or completion_guard),
+        enabled=bool(strict or completion_guard or periodic_delivery),
         strict_continuation_required=strict,
         continuation_required=continuation_required,
         goal_reached=goal_reached,
         proof_ready=proof_ready,
+        periodic_delivery=periodic_delivery,
+        scheduled_followthrough_required=scheduled_followthrough_required,
+        delivery_cadence=delivery_cadence,
         stop_condition=str(completion_guard.get("default_stop_condition", "")).strip(),
         requires_goal_completion_proof=bool(completion_guard.get("requires_goal_completion_proof")),
         treat_pr_as_milestone_only=bool(completion_guard.get("treat_pr_as_milestone_only")),

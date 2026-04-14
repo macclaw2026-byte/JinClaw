@@ -312,6 +312,10 @@ def classify_blocked_runtime_state(
             "category": "capability_gap_build",
             "response_action": "preparing_in_house_capability_build",
         },
+        "await_scheduled_delivery_window": {
+            "category": "scheduled_delivery",
+            "response_action": "awaiting_scheduled_delivery_window",
+        },
     }
     details = dict(mapping.get(next_action, {}))
     if not details:
