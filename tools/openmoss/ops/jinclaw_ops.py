@@ -79,6 +79,7 @@ DOCTOR_REQUIRED_CONVERSATION_EVENT_CONTRACTS = (
 DOCTOR_REQUIRED_EXECUTION_EVENT_CONTRACTS = (
     "execution_event_contract",
     "execution_handoff_payload_contract",
+    "runtime_mode_session_strategy_contract",
     "control_plane_visibility_contract",
 )
 
@@ -488,6 +489,7 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
             "execution_events": {
                 "execution_event_contract": bool(execution_events.get("execution_event_contract")),
                 "execution_handoff_payload_contract": bool(execution_events.get("execution_handoff_payload_contract")),
+                "runtime_mode_session_strategy_contract": bool(execution_events.get("runtime_mode_session_strategy_contract")),
                 "control_plane_visibility_contract": bool(execution_events.get("control_plane_visibility_contract")),
             },
         },

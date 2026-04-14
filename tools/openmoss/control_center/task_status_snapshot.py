@@ -445,6 +445,21 @@ def _build_execution_handoff(snapshot: Dict[str, Any], state: Dict[str, Any]) ->
     conversation_id = str((link or {}).get("conversation_id", "")).strip()
     focus = load_conversation_focus(provider, conversation_id) if provider and conversation_id else {}
     stage_name = str(active_execution.get("stage_name", "")).strip() or str(state.get("current_stage", "")).strip()
+    linked_session_key = str((active_execution or {}).get("linked_session_key", "") or (link or {}).get("session_key", "")).strip()
+    execution_session_key = str((active_execution or {}).get("session_key", "")).strip()
+    runtime_mode = str((active_execution or {}).get("runtime_mode", "") or focus.get("resolved_mode", "") or focus.get("requested_mode", "")).strip()
+    runtime_mode_reason = str(
+        (active_execution or {}).get("runtime_mode_reason", "") or focus.get("resolved_mode_reason", "") or focus.get("requested_mode_reason", "")
+    ).strip()
+    execution_strategy = str((active_execution or {}).get("execution_session_strategy", "")).strip()
+    execution_strategy_reason = str((active_execution or {}).get("execution_session_strategy_reason", "")).strip()
+    if not execution_strategy and linked_session_key and execution_session_key:
+        if execution_session_key == linked_session_key:
+            execution_strategy = "linked_session"
+            execution_strategy_reason = execution_strategy_reason or "derived_from_matching_session_key"
+        elif execution_session_key == f"{linked_session_key}:autonomy:{task_id}":
+            execution_strategy = "autonomy_derived_session"
+            execution_strategy_reason = execution_strategy_reason or "derived_from_autonomy_session_suffix"
     handoff_status = (
         "waiting_external"
         if status == "waiting_external"
@@ -459,11 +474,13 @@ def _build_execution_handoff(snapshot: Dict[str, Any], state: Dict[str, Any]) ->
         provider=provider,
         conversation_id=conversation_id,
         session_key=str(focus.get("session_key", "") or (link or {}).get("session_key", "")).strip(),
-        linked_session_key=str((active_execution or {}).get("linked_session_key", "") or (link or {}).get("session_key", "")).strip(),
-        execution_session_key=str((active_execution or {}).get("session_key", "")).strip(),
+        linked_session_key=linked_session_key,
+        execution_session_key=execution_session_key,
+        execution_session_strategy=execution_strategy,
+        execution_session_strategy_reason=execution_strategy_reason,
         run_id=str((active_execution or {}).get("run_id", "") or (waiting_external or {}).get("run_id", "")).strip(),
-        runtime_mode=str(focus.get("resolved_mode", "") or focus.get("requested_mode", "")).strip(),
-        runtime_mode_reason=str(focus.get("resolved_mode_reason", "") or focus.get("requested_mode_reason", "")).strip(),
+        runtime_mode=runtime_mode,
+        runtime_mode_reason=runtime_mode_reason,
         next_action=str(state.get("next_action", "")).strip(),
         wait_status=str((waiting_external or {}).get("wait_status", "")).strip(),
         wait_error=str((waiting_external or {}).get("wait_error", "")).strip(),
@@ -496,6 +513,9 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
         wait_status = str(execution_handoff.get("wait_status", "")).strip()
         if handoff_status in {"dispatched", "waiting_external", "completed", "preflight_blocked"}:
             execution_suffix = f" Execution handoff is {handoff_status} via {runtime_mode} for stage {handoff_stage}."
+            strategy = str(execution_handoff.get("execution_session_strategy", "")).strip()
+            if strategy:
+                execution_suffix += f" Session strategy is {strategy}."
             if wait_status and handoff_status == "waiting_external":
                 execution_suffix += f" External wait status is {wait_status}."
     acquisition_suffix = ""

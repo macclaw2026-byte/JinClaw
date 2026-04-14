@@ -121,6 +121,7 @@ class ExecutionEventKernelTest(unittest.TestCase):
         self.assertTrue(snapshot['execution_handoff']['enabled'])
         self.assertEqual(snapshot['execution_handoff']['handoff_status'], 'waiting_external')
         self.assertEqual(snapshot['execution_handoff']['runtime_mode'], 'mission_runtime')
+        self.assertEqual(snapshot['execution_handoff']['execution_session_strategy'], 'autonomy_derived_session')
         self.assertEqual(snapshot['reply_contract']['execution_handoff']['handoff_status'], 'waiting_external')
         self.assertIn('Execution handoff is waiting_external via mission_runtime', snapshot['authoritative_summary'])
 
@@ -132,6 +133,7 @@ class ExecutionEventKernelTest(unittest.TestCase):
         )
         self.assertTrue(row['has_execution_event'])
         self.assertEqual(row['latest_execution_status'], 'waiting_external')
+        self.assertEqual(row['latest_execution_strategy'], 'autonomy_derived_session')
 
         plane = build_control_plane(stale_after_seconds=300, escalation_after_seconds=900)
         summary = (plane.get('system_snapshot', {}) or {}).get('summary', {}) or {}

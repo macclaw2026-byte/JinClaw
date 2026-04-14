@@ -78,6 +78,7 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertTrue((integration.get('execution_events', {}) or {}).get('ok'))
         self.assertTrue((integration.get('execution_events', {}) or {}).get('execution_event_contract'))
         self.assertTrue((integration.get('execution_events', {}) or {}).get('execution_handoff_payload_contract'))
+        self.assertTrue((integration.get('execution_events', {}) or {}).get('runtime_mode_session_strategy_contract'))
         self.assertTrue((integration.get('execution_events', {}) or {}).get('control_plane_visibility_contract'))
 
 
