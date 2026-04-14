@@ -28,6 +28,7 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertIn('completion-reflection-kernel', names)
         self.assertIn('goal-continuation-kernel', names)
         self.assertIn('capability-gap-kernel', names)
+        self.assertIn('skill-action-plane-kernel', names)
 
     def test_control_plane_exposes_doctor_coverage(self):
         plane = build_control_plane(stale_after_seconds=300, escalation_after_seconds=900)
@@ -98,6 +99,11 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertTrue((integration.get('capability_gap', {}) or {}).get('capability_gap_contract'))
         self.assertTrue((integration.get('capability_gap', {}) or {}).get('self_heal_ladder_contract'))
         self.assertTrue((integration.get('capability_gap', {}) or {}).get('authoritative_summary_visibility_contract'))
+        self.assertEqual(integration.get('skill_action_plane_chain'), 'ok')
+        self.assertTrue((integration.get('skill_action_plane', {}) or {}).get('ok'))
+        self.assertTrue((integration.get('skill_action_plane', {}) or {}).get('skill_action_plane_contract'))
+        self.assertTrue((integration.get('skill_action_plane', {}) or {}).get('runtime_prompt_attachment_contract'))
+        self.assertTrue((integration.get('skill_action_plane', {}) or {}).get('authoritative_summary_visibility_contract'))
 
 
 if __name__ == '__main__':

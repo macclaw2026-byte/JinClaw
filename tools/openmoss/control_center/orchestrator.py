@@ -30,6 +30,8 @@ from control_center_schemas import (
     build_governance_policy_schema,
     build_protocol_pack_schema,
     build_readiness_dashboard_schema,
+    build_skill_action_contract_schema,
+    build_skill_action_plane_schema,
     build_stage_contract_schema,
     build_verifier_schema,
 )
@@ -790,6 +792,156 @@ def _derive_skill_guidance(
         "runtime_prompt_lines": runtime_prompt_lines,
         "recommended_tools": sorted(dict.fromkeys(recommended_tools)),
     }
+
+
+def _derive_skill_action_plane(
+    goal: str,
+    intent: Dict[str, object],
+    selected_plan: Dict[str, object],
+    skill_guidance: Dict[str, object],
+) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：把 skill guidance 升级成显式 skill action plane。
+    - 设计意图：下游 runtime 不再只拿到“提示”，而是拿到可执行动作、前置条件、验证 recipe 和 fallback 梯子。
+    """
+    matched_skill_names = [str(item).strip() for item in (skill_guidance.get("matched_skill_names", []) or []) if str(item).strip()]
+    matched_skills = skill_guidance.get("matched_skills", []) or []
+    if not matched_skill_names:
+        return build_skill_action_plane_schema(contract_source="orchestrator")
+
+    action_contracts: List[Dict[str, object]] = []
+    runtime_rules: List[str] = []
+    preferred_skill_name = matched_skill_names[0]
+    preferred_action_id = ""
+
+    if (
+        preferred_skill_name == "ziniao-assistant"
+        and (_goal_targets_ziniao_bridge(goal, intent) or str(selected_plan.get("plan_id", "")).strip() == "ziniao_bridge_ops")
+    ):
+        navigation_contract = build_skill_action_contract_schema(
+            action_id="generic_seller_console_navigation",
+            skill_name="ziniao-assistant",
+            scenario="Authenticated Ziniao seller-console navigation and page operation",
+            when_to_use="当任务涉及店铺后台、订单、报表、财务、筛选、导出或其它登录后卖家操作。",
+            required_tools=["list_stores", "open_store", "visit_page", "query_elements", "click_element", "input_text", "wait_for_element"],
+            prerequisites=[
+                "先 GET /zclaw/tools，后续 invoke 只能使用返回的真实工具名。",
+                "优先复用已登录的 Ziniao 店铺会话，不要切到通用新浏览器。",
+                "确认目标站点/区域正确，再深入后台页面。",
+            ],
+            execution_steps=[
+                "一次性获取 store 列表并定位目标店铺。",
+                "只打开一次目标店铺，必要时用 launchUrl 或 visit_page 进入目标后台页面。",
+                "对组件化筛选器、日期范围和标签页使用可见 UI 路径，不做裸 DOM 赋值。",
+                "对每个业务动作后都验证页面 heading、URL、筛选状态或结果表格是否刷新到目标状态。",
+            ],
+            verification_recipe=[
+                "记录当前 URL、页面标题和关键筛选状态。",
+                "对结果表格或业务模块采集至少一份页面证据。",
+                "如果是多步流程，确认最终页面状态而不是停在中间点击。",
+            ],
+            fallback_ladder=[
+                "先重新 GET /zclaw/tools 刷新 allowlist。",
+                "如果元素可见但点击失败，改走 bridge 支持的事件序列或 automation 步骤。",
+                "如果 seller-console 会话失效，停到授权/人工边界，而不是切到泛浏览器瞎试。",
+            ],
+            stop_conditions=[
+                "bridge 不可达",
+                "required tool 不存在于 /zclaw/tools",
+                "店铺会话未认证且无法复用",
+            ],
+            evidence_requirements=[
+                "页面 URL + heading",
+                "关键筛选状态",
+                "业务结果截图或结构化提取",
+            ],
+        )
+        export_contract = build_skill_action_contract_schema(
+            action_id="temu_finance_export_history_confirmation",
+            skill_name="ziniao-assistant",
+            scenario="Temu 对账中心财务明细筛选、导出与导出历史确认",
+            when_to_use="当任务涉及 Temu/kuajingmaihuo、对账中心、账务明细、三月筛选、财务导出或导出历史确认。",
+            required_tools=["visit_page", "click_element", "input_text", "wait_for_element", "take_screenshot", "execute_script"],
+            prerequisites=[
+                "已在 Ziniao 中绑定并可打开 Temu 店铺。",
+                "必要时切换账号登录模式，并确认站点选择为目标区域。",
+                "进入 seller.kuajingmaihuo.com 的 对账中心 页面。",
+            ],
+            execution_steps=[
+                "进入 对账中心 -> 财务明细。",
+                "设置日期范围到目标月份并点击 查询。",
+                "确认结果表格已经反映目标时间范围。",
+                "点击 导出，并在导出确认框完成确认。",
+                "打开 导出历史，确认新导出行已经生成并与目标时间范围一致。",
+            ],
+            verification_recipe=[
+                "验证查询时间范围与目标月份一致。",
+                "验证导出内容类型与任务目标一致。",
+                "验证导出历史中出现新记录，并在可下载状态或明确生成状态下留痕。",
+            ],
+            fallback_ladder=[
+                "如果日期组件不接受输入，改走组件化选择路径。",
+                "如果导出后没有立即出现文件，优先检查导出历史，而不是直接判失败。",
+                "如果页面停在授权/区域选择，先完成区域确认再继续后续导出链。",
+            ],
+            stop_conditions=[
+                "bridge 不可达",
+                "seller-console 授权态不可恢复",
+                "导出历史无法验证新记录且无进一步可行路径",
+            ],
+            evidence_requirements=[
+                "三月筛选结果页截图",
+                "导出历史截图",
+                "导出行元数据：时间范围、内容类型、状态/下载动作",
+            ],
+        )
+        action_contracts.extend([navigation_contract, export_contract])
+        runtime_rules.extend(
+            [
+                "When skill action plane is enabled, execute the preferred action contract before generic browser improvisation.",
+                "Treat export, order, and seller-console flows as business workflows with explicit verification recipes, not one-click tasks.",
+                "Use stop conditions from the skill action contract as hard fail-closed boundaries.",
+            ]
+        )
+        normalized_goal = str(goal or "").lower()
+        if any(token in normalized_goal for token in ("对账", "账务", "财务", "导出", "kuajingmaihuo", "temu")):
+            preferred_action_id = "temu_finance_export_history_confirmation"
+        else:
+            preferred_action_id = "generic_seller_console_navigation"
+
+    if not action_contracts:
+        generic_contracts = [
+            build_skill_action_contract_schema(
+                action_id=f"{str(item.get('name', '')).strip()}::guided_execution",
+                skill_name=str(item.get("name", "")).strip(),
+                scenario="Generic local skill guided execution",
+                when_to_use="当 selected plan 或 intent 明确命中了本地 skill，但还没有专用 action plane 模板时。",
+                required_tools=list(skill_guidance.get("recommended_tools", []) or []),
+                prerequisites=[str(line).strip() for line in (skill_guidance.get("runtime_prompt_lines", []) or []) if str(line).strip()][:3],
+                execution_steps=[str(line).strip() for line in (item.get("execution_hints", []) or []) if str(line).strip()],
+                verification_recipe=["至少产出一条和 skill 目标匹配的结果证据。"],
+                fallback_ladder=["如果 skill 仍无法落地，转入 capability-gap self-heal ladder。"],
+                stop_conditions=["missing skill runtime binding"],
+                evidence_requirements=["result evidence"],
+            )
+            for item in matched_skills
+        ]
+        action_contracts.extend(generic_contracts)
+        preferred_action_id = action_contracts[0]["action_id"] if action_contracts else ""
+        runtime_rules.append("Use the matched skill action contract before falling back to generic plan execution.")
+
+    verification_priority = "business_result_first" if preferred_action_id == "temu_finance_export_history_confirmation" else "action_contract_first"
+    return build_skill_action_plane_schema(
+        enabled=bool(action_contracts),
+        preferred_skill_name=preferred_skill_name,
+        preferred_action_id=preferred_action_id,
+        matched_skill_names=matched_skill_names,
+        action_contracts=action_contracts,
+        runtime_rules=runtime_rules,
+        verification_priority=verification_priority,
+        contract_source="orchestrator",
+    )
 
 
 def _merge_inherited_intent(intent: Dict[str, object], inherited_intent: Dict[str, object] | None) -> Dict[str, object]:
@@ -1984,6 +2136,7 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
     )
     protocol_pack = _derive_protocol_pack(governance, operating_discipline, plan_reviews)
     skill_guidance = _derive_skill_guidance(goal, intent, capabilities, selected_plan)
+    skill_action_plane = _derive_skill_action_plane(goal, intent, selected_plan, skill_guidance)
     acquisition_hand = build_acquisition_hand(
         task_id,
         goal,
@@ -2025,6 +2178,7 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
             "plan_reviews": plan_reviews,
             "protocol_pack": protocol_pack,
             "skill_guidance": skill_guidance,
+            "skill_action_plane": skill_action_plane,
             "acquisition_hand": acquisition_hand,
         },
     )
@@ -2069,6 +2223,7 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
         "operating_discipline": operating_discipline,
         "protocol_pack": protocol_pack,
         "skill_guidance": skill_guidance,
+        "skill_action_plane": skill_action_plane,
         "readiness_dashboard": readiness_dashboard,
     }
     should_clone_capability = selected_plan.get("plan_id") == "in_house_capability_rebuild"
@@ -2123,6 +2278,7 @@ def build_control_center_package(task_id: str, goal: str, *, source: str = "manu
             "operating_discipline": operating_discipline,
             "protocol_pack": protocol_pack,
             "skill_guidance": skill_guidance,
+            "skill_action_plane": skill_action_plane,
             "readiness_dashboard": readiness_dashboard,
         },
         "approval": approval,

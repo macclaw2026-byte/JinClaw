@@ -531,6 +531,26 @@ def _build_doctor_coverage_bundle() -> Dict[str, Any]:
                 "primary_monitor": "system_doctor.integration_health.capability_gap",
                 "backstop_monitor": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.capability_gap",
                 "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.capability_gap",
+            },
+            {
+                "name": "skill-action-plane-kernel",
+                "required_files": [
+                    "tools/openmoss/control_center/orchestrator.py",
+                    "tools/openmoss/control_center/context_builder.py",
+                    "tools/openmoss/control_center/coding_session_adapter.py",
+                    "tools/openmoss/control_center/acp_dispatch_builder.py",
+                    "tools/openmoss/autonomy/action_executor.py",
+                    "tools/openmoss/control_center/task_status_snapshot.py",
+                    "tools/openmoss/control_center/system_doctor.py",
+                ],
+                "doctor_checks": [
+                    "skill_action_plane_contract",
+                    "runtime_prompt_attachment_contract",
+                    "authoritative_summary_visibility",
+                ],
+                "primary_monitor": "system_doctor.integration_health.skill_action_plane",
+                "backstop_monitor": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.skill_action_plane",
+                "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.skill_action_plane",
             }
         ],
     }
