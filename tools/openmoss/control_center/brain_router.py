@@ -35,6 +35,7 @@ from intent_analyzer import analyze_intent
 from mission_profiles import detect_root_mission_profile
 from orchestrator import build_control_center_package
 from conversation_context import build_instruction_envelope, conversation_focus_path, load_conversation_focus, record_conversation_context, write_instruction_envelope
+from conversation_events import record_conversation_event
 from paths import BRAIN_ROUTES_ROOT
 from task_status_snapshot import build_task_status_snapshot
 from task_alias_registry import resolve_task_selector
@@ -747,6 +748,21 @@ def route_instruction(
         finalized = dict(updated_route)
         finalized.update(_resolve_conversation_runtime_mode(finalized))
         finalized["route_path"] = _write_json(BRAIN_ROUTES_ROOT / provider / f"{conversation_id}.json", finalized)
+        record_conversation_event(
+            provider=provider,
+            conversation_id=conversation_id,
+            event_type="route_resolved",
+            payload={
+                "task_id": str(finalized.get("task_id", "")).strip(),
+                "mode": str(finalized.get("mode", "")).strip(),
+                "message_id": str(finalized.get("message_id", "")).strip(),
+                "source": str(finalized.get("source", "")).strip(),
+                "conversation_runtime_mode": str(finalized.get("conversation_runtime_mode", "")).strip(),
+                "conversation_runtime_mode_reason": str(finalized.get("conversation_runtime_mode_reason", "")).strip(),
+                "focus_restored_link": bool(finalized.get("focus_restored_link")),
+                "explicit_intent_type": str(((finalized.get("instruction_envelope", {}) or {}).get("explicit_intent_type", ""))).strip(),
+            },
+        )
         focus = record_conversation_context(
             finalized,
             provider=provider,

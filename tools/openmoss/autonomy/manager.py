@@ -512,7 +512,14 @@ def load_state(task_id: str) -> TaskState:
     - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
     """
-    return TaskState.from_dict(read_json(state_path(task_id), {}))
+    payload = read_json(state_path(task_id), {})
+    if not isinstance(payload, dict):
+        raise ValueError(f"invalid state payload type for task {task_id}: {type(payload).__name__}")
+    # 兼容早期/损坏 state.json 缺失 task_id 的情况，避免 canonical doctor 因旧状态残留直接崩掉。
+    if not str(payload.get("task_id", "")).strip():
+        payload = dict(payload)
+        payload["task_id"] = task_id
+    return TaskState.from_dict(payload)
 
 
 def save_contract(contract: TaskContract) -> None:

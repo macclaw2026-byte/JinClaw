@@ -23,6 +23,7 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertIn('acquisition-hand', names)
         self.assertIn('conversation-context-kernel', names)
         self.assertIn('reply-projection-kernel', names)
+        self.assertIn('conversation-event-kernel', names)
 
     def test_control_plane_exposes_doctor_coverage(self):
         plane = build_control_plane(stale_after_seconds=300, escalation_after_seconds=900)
@@ -40,6 +41,7 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertEqual(integration.get('noncoding_chain'), 'ok')
         self.assertTrue(str(integration.get('acquisition_chain', '')).strip())
         self.assertEqual(integration.get('conversation_context_chain'), 'ok')
+        self.assertEqual(integration.get('conversation_event_chain'), 'ok')
         acquisition = integration.get('acquisition_hand', {}) or {}
         self.assertIn('ok', acquisition)
         self.assertIn('errors', acquisition)
@@ -66,6 +68,11 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertTrue((integration.get('reply_projection', {}) or {}).get('projection_contract_presence'))
         self.assertTrue((integration.get('reply_projection', {}) or {}).get('projection_render_parity'))
         self.assertTrue((integration.get('reply_projection', {}) or {}).get('receipt_projection_persistence'))
+        self.assertTrue((integration.get('conversation_events', {}) or {}).get('ok'))
+        self.assertTrue((integration.get('conversation_events', {}) or {}).get('ingress_event_contract'))
+        self.assertTrue((integration.get('conversation_events', {}) or {}).get('route_event_contract'))
+        self.assertTrue((integration.get('conversation_events', {}) or {}).get('reply_event_contract'))
+        self.assertTrue((integration.get('conversation_events', {}) or {}).get('control_plane_visibility_contract'))
 
 
 if __name__ == '__main__':

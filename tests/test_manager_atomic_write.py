@@ -51,6 +51,22 @@ class ManagerAtomicWriteTest(unittest.TestCase):
             self.assertIn(persisted['version'], {1, 2})
             self.assertEqual(list(target.parent.glob('state.json*.tmp')), [])
 
+    def test_load_state_backfills_missing_task_id_from_requested_task(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            task_id = 'missing-state-id'
+            task_root = root / task_id
+            task_root.mkdir(parents=True, exist_ok=True)
+            state_file = task_root / 'state.json'
+            state_file.write_text(json.dumps({'status': 'running', 'current_stage': 'execute'}, ensure_ascii=False), encoding='utf-8')
+
+            with patch.object(manager, 'TASKS_ROOT', root):
+                state = manager.load_state(task_id)
+
+            self.assertEqual(state.task_id, task_id)
+            self.assertEqual(state.status, 'running')
+            self.assertEqual(state.current_stage, 'execute')
+
 
 if __name__ == '__main__':
     unittest.main()
