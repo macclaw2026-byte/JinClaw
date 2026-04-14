@@ -32,11 +32,11 @@ from adaptive_fetch_router import build_fetch_route
 from acquisition_adapter_registry import build_acquisition_adapter_registry
 from control_plane_builder import build_control_plane
 from execution_governor import build_project_crawler_gate, classify_blocked_runtime_state, summarize_governance_attention
-from paths import CONTROL_CENTER_RUNTIME_ROOT, FETCH_ROUTES_ROOT
+from paths import BRAIN_RECEIPTS_ROOT, CONTROL_CENTER_RUNTIME_ROOT, FETCH_ROUTES_ROOT
 from mission_supervisor import run_mission_supervisor
 from progress_evidence import build_progress_evidence
 from brain_router import route_instruction
-from response_policy_engine import build_route_receipt_text, build_supervisor_status_text
+from response_policy_engine import build_route_receipt_text, build_route_reply_projection, build_supervisor_status_text, render_reply_projection
 from research_loop import prepare_research_package
 from route_guardrails import persist_route, reroot_route_if_needed
 from problem_solver import solve_problem
@@ -97,6 +97,13 @@ CONVERSATION_CONTEXT_REQUIRED_FILES = [
     WORKSPACE_ROOT / 'tools/openmoss/autonomy/telegram_binding.py',
     WORKSPACE_ROOT / 'tools/openmoss/control_center/brain_enforcer.py',
     WORKSPACE_ROOT / 'tools/openmoss/control_center/control_plane_builder.py',
+]
+REPLY_PROJECTION_REQUIRED_FILES = [
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/response_policy_engine.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/task_receipt_engine.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/task_status_snapshot.py',
+    WORKSPACE_ROOT / 'tools/openmoss/autonomy/telegram_binding.py',
+    WORKSPACE_ROOT / 'tools/openmoss/autonomy/action_executor.py',
 ]
 GSTACK_LIFECYCLE = ['think', 'plan', 'build', 'review', 'test', 'ship', 'reflect']
 DOCTOR_RESOLUTION_REQUIRED_FIELDS = [
@@ -2015,7 +2022,7 @@ def _run_gstack_integration_checks() -> Dict[str, object]:
                     errors.append('noncoding_chain_runtime_prompt_should_remain_native')
         finally:
             if task_path.exists():
-                shutil.rmtree(task_path)
+                shutil.rmtree(task_path, ignore_errors=True)
 
     _run_case('doctor-coding-chain', 'Implement a code fix and add regression tests for integration doctor coverage', True)
     _run_case('doctor-optimization-chain', '优化 JinClaw 的目标守护与测试闭环，确保复杂任务更稳定', True)
@@ -2475,7 +2482,7 @@ def _run_conversation_context_integration_checks() -> Dict[str, object]:
         for task_id in touched_task_ids:
             task_path = task_dir(task_id)
             if task_path.exists():
-                shutil.rmtree(task_path)
+                shutil.rmtree(task_path, ignore_errors=True)
 
     return {
         'single_doctor_rule': True,
@@ -2518,6 +2525,120 @@ def _run_conversation_context_integration_checks() -> Dict[str, object]:
     }
 
 
+def _run_reply_projection_integration_checks() -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：验证 reply projection 是否已经成为 Telegram / 直连回执链的统一真源。
+    - 输入角色：消费 authoritative route、reply contract 与 receipt persistence。
+    - 输出角色：供 canonical doctor 判定回复链有没有从“字符串拼接”升级成结构化投影。
+    """
+    errors = []
+    for path in REPLY_PROJECTION_REQUIRED_FILES:
+        if not path.exists():
+            errors.append(f'missing_required_file:{path}')
+
+    provider = 'doctor-reply-projection'
+    conversation_id = 'projection-contract'
+    receipt_path = BRAIN_RECEIPTS_ROOT / provider / f'{conversation_id}.json'
+    if receipt_path.exists():
+        receipt_path.unlink()
+    route = {
+        'mode': 'authoritative_task_status',
+        'task_id': 'doctor-reply-projection',
+        'selection_updated': True,
+        'selected_task_alias': 'projection-task',
+        'authoritative_task_status': {
+            'task_id': 'doctor-reply-projection',
+            'requested_task_id': 'doctor-reply-projection',
+            'authoritative_summary': '当前任务状态已刷新。',
+            'reply_contract': {
+                'acquisition_response': {
+                    'enabled': True,
+                    'response_mode': 'confirm_then_guarded_answer',
+                    'preview_lines': ['amazon: title=Mouse'],
+                    'disclosure_lines': ['字段来自公开抓取证据。'],
+                    'blocker_reasons': [],
+                    'recommended_next_actions': ['ask_user_to_confirm_guarded_release'],
+                    'requires_disclosure': True,
+                    'requires_user_confirmation': True,
+                }
+            },
+            'milestone_progress': {},
+            'governance': {},
+            'blocked_runtime_state': {},
+            'memory': {},
+        },
+    }
+    try:
+        projection = build_route_reply_projection(route)
+        rendered = render_reply_projection(projection)
+        legacy_text = build_route_receipt_text(route)
+        if str(projection.get('message_kind', '')).strip() != 'task_status':
+            errors.append('reply_projection_missing_message_kind')
+        if not bool((projection.get('flags', {}) or {}).get('requires_user_confirmation')):
+            errors.append('reply_projection_missing_confirmation_flag')
+        if str((projection.get('flags', {}) or {}).get('response_mode', '')).strip() != 'confirm_then_guarded_answer':
+            errors.append('reply_projection_missing_response_mode')
+        if rendered != legacy_text:
+            errors.append('reply_projection_render_mismatch')
+        segments = projection.get('segments', []) or []
+        if not any(str(item.get('key', '')).strip() == 'selection_prefix' for item in segments):
+            errors.append('reply_projection_missing_selection_prefix_segment')
+        if not any(str(item.get('key', '')).strip() == 'summary' for item in segments):
+            errors.append('reply_projection_missing_summary_segment')
+
+        receipt = emit_route_receipt(route, provider=provider, conversation_id=conversation_id, session_key='')
+        if 'reply_projection' not in receipt:
+            errors.append('reply_projection_missing_from_receipt')
+        elif receipt.get('text') != ((receipt.get('reply_projection', {}) or {}).get('rendered_text')):
+            errors.append('reply_projection_receipt_text_mismatch')
+        if not receipt_path.exists():
+            errors.append('reply_projection_receipt_not_persisted')
+        else:
+            persisted = _read_json(receipt_path, {})
+            if 'reply_projection' not in (persisted or {}):
+                errors.append('reply_projection_persisted_payload_missing_projection')
+    finally:
+        if receipt_path.exists():
+            receipt_path.unlink()
+        parent = receipt_path.parent
+        if parent.exists():
+            try:
+                next(parent.iterdir())
+            except StopIteration:
+                parent.rmdir()
+
+    return {
+        'single_doctor_rule': True,
+        'authoritative_doctor': 'tools/openmoss/control_center/system_doctor.py',
+        'required_files_checked': len(REPLY_PROJECTION_REQUIRED_FILES),
+        'required_files': [str(path.relative_to(WORKSPACE_ROOT)) for path in REPLY_PROJECTION_REQUIRED_FILES],
+        'projection_contract_presence': not any(
+            item in {
+                'reply_projection_missing_message_kind',
+                'reply_projection_missing_confirmation_flag',
+                'reply_projection_missing_response_mode',
+                'reply_projection_missing_selection_prefix_segment',
+                'reply_projection_missing_summary_segment',
+            }
+            for item in errors
+        ),
+        'projection_render_parity': 'reply_projection_render_mismatch' not in errors,
+        'receipt_projection_persistence': not any(
+            item in {
+                'reply_projection_missing_from_receipt',
+                'reply_projection_receipt_text_mismatch',
+                'reply_projection_receipt_not_persisted',
+                'reply_projection_persisted_payload_missing_projection',
+            }
+            for item in errors
+        ),
+        'reply_projection_chain': 'ok' if not errors else 'error',
+        'errors': errors,
+        'ok': not errors,
+    }
+
+
 def _run_integration_health_checks() -> Dict[str, object]:
     """
     中文注解：
@@ -2528,10 +2649,12 @@ def _run_integration_health_checks() -> Dict[str, object]:
     gstack = _run_gstack_integration_checks()
     acquisition_hand = _run_acquisition_integration_checks()
     conversation_context = _run_conversation_context_integration_checks()
+    reply_projection = _run_reply_projection_integration_checks()
     errors = (
         list(gstack.get('errors', []) or [])
         + list(acquisition_hand.get('errors', []) or [])
         + list(conversation_context.get('errors', []) or [])
+        + list(reply_projection.get('errors', []) or [])
     )
     return {
         'single_doctor_rule': True,
@@ -2539,17 +2662,20 @@ def _run_integration_health_checks() -> Dict[str, object]:
         'registered_integrations': _build_doctor_coverage_bundle().get('registered_integrations', []),
         'required_files_checked': int(gstack.get('required_files_checked', 0) or 0)
         + int(acquisition_hand.get('required_files_checked', 0) or 0)
-        + int(conversation_context.get('required_files_checked', 0) or 0),
+        + int(conversation_context.get('required_files_checked', 0) or 0)
+        + int(reply_projection.get('required_files_checked', 0) or 0),
         'lifecycle': GSTACK_LIFECYCLE,
         'gstack': gstack,
         'acquisition_hand': acquisition_hand,
         'conversation_context': conversation_context,
+        'reply_projection': reply_projection,
         'coding_chain': gstack.get('coding_chain', 'unknown'),
         'noncoding_chain': gstack.get('noncoding_chain', 'unknown'),
         'acquisition_chain': acquisition_hand.get('acquisition_chain', 'unknown'),
         'conversation_context_chain': conversation_context.get('conversation_context_chain', 'unknown'),
+        'reply_projection_chain': reply_projection.get('reply_projection_chain', 'unknown'),
         'errors': errors,
-        'ok': bool(gstack.get('ok')) and bool(acquisition_hand.get('ok')) and bool(conversation_context.get('ok')),
+        'ok': bool(gstack.get('ok')) and bool(acquisition_hand.get('ok')) and bool(conversation_context.get('ok')) and bool(reply_projection.get('ok')),
     }
 
 

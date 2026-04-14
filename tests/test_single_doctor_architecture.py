@@ -22,6 +22,7 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         names = [item.get('name') for item in bundle['registered_integrations']]
         self.assertIn('acquisition-hand', names)
         self.assertIn('conversation-context-kernel', names)
+        self.assertIn('reply-projection-kernel', names)
 
     def test_control_plane_exposes_doctor_coverage(self):
         plane = build_control_plane(stale_after_seconds=300, escalation_after_seconds=900)
@@ -60,6 +61,11 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertTrue((integration.get('conversation_context', {}) or {}).get('focus_contract'))
         self.assertTrue((integration.get('conversation_context', {}) or {}).get('followup_resolution_contract'))
         self.assertTrue((integration.get('conversation_context', {}) or {}).get('control_plane_visibility_contract'))
+        self.assertEqual(integration.get('reply_projection_chain'), 'ok')
+        self.assertTrue((integration.get('reply_projection', {}) or {}).get('ok'))
+        self.assertTrue((integration.get('reply_projection', {}) or {}).get('projection_contract_presence'))
+        self.assertTrue((integration.get('reply_projection', {}) or {}).get('projection_render_parity'))
+        self.assertTrue((integration.get('reply_projection', {}) or {}).get('receipt_projection_persistence'))
 
 
 if __name__ == '__main__':

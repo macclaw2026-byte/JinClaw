@@ -69,6 +69,12 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                     'noncoding_chain': 'ok',
                     'acquisition_chain': 'ok',
                     'conversation_context_chain': 'ok',
+                    'reply_projection_chain': 'ok',
+                    'reply_projection': {
+                        'projection_contract_presence': True,
+                        'projection_render_parity': True,
+                        'receipt_projection_persistence': True,
+                    },
                 },
             },
             'project_scheduler_policy': {},
@@ -108,6 +114,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                 'noncoding_chain': 'ok',
                 'acquisition_chain': 'ok',
                 'conversation_context_chain': 'ok',
+                'reply_projection_chain': 'ok',
                 'acquisition_hand': {
                     'field_synthesis_contract': True,
                     'delivery_requirements_contract': True,
@@ -127,6 +134,11 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                     'focus_contract': True,
                     'followup_resolution_contract': True,
                     'control_plane_visibility_contract': True,
+                },
+                'reply_projection': {
+                    'projection_contract_presence': True,
+                    'projection_render_parity': True,
+                    'receipt_projection_persistence': True,
                 },
                 'ok': True,
             },
@@ -265,12 +277,16 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
 
             self.assertEqual(summary['last_run_at'], fresh['checked_at'])
             self.assertEqual(summary['integration_health']['acquisition_chain'], 'ok')
+            self.assertEqual(summary['integration_health']['reply_projection_chain'], 'ok')
             self.assertTrue(summary['acquisition_health']['field_synthesis_contract'])
             self.assertTrue(summary['acquisition_health']['response_handoff_contract'])
             self.assertTrue(summary['acquisition_health']['execution_truth_contract'])
             self.assertTrue(summary['acquisition_health']['browser_execution_contract'])
             self.assertTrue(summary['acquisition_health']['validation_family_contract'])
             self.assertTrue(summary['acquisition_health']['objective_completion_contract'])
+            self.assertTrue(summary['integration_health']['reply_projection']['projection_contract_presence'])
+            self.assertTrue(summary['integration_health']['reply_projection']['projection_render_parity'])
+            self.assertTrue(summary['integration_health']['reply_projection']['receipt_projection_persistence'])
             self.assertEqual(summary['acquisition_health']['completion_status'], 'complete')
             self.assertTrue(summary['acquisition_health']['goal_reached'])
             self.assertTrue(summary['refresh']['attempted'])
