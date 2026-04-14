@@ -46,6 +46,18 @@ LAUNCH_AGENTS = {
     "upstream_watch": "ai.jinclaw.upstream-watch",
 }
 
+DOCTOR_REFRESH_MAX_AGE_MINUTES = 30
+DOCTOR_REQUIRED_ACQUISITION_CONTRACTS = (
+    "field_synthesis_contract",
+    "delivery_requirements_contract",
+    "source_trust_contract",
+    "release_governance_contract",
+    "release_disclosure_contract",
+    "answer_synthesis_contract",
+    "answer_response_contract",
+    "response_handoff_contract",
+)
+
 
 def utc_now() -> datetime:
     """
@@ -361,14 +373,14 @@ def _first_assistant_event_after(
     return ranked[0][1]
 
 
-def _doctor_runtime_summary() -> Dict[str, Any]:
+def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, Any]:
     """
     中文注解：
     - 功能：读取 canonical system doctor 最近一次运行摘要，让 ops doctor 也能看到全局医生对新能力的监控结果。
     - 输入角色：消费 `system_doctor.py` 写出的 `doctor/last_run.json`。
     - 输出角色：供 `status_payload` 与 `doctor_payload` 聚合显示 acquisition/integration 健康度。
     """
-    payload = read_json(DOCTOR_LAST_RUN_PATH, {})
+    payload, refresh = _resolve_doctor_runtime_payload(refresh_policy=refresh_policy)
     if not isinstance(payload, dict):
         payload = {}
     acquisition_health = payload.get("acquisition_health", {}) or {}
@@ -380,7 +392,8 @@ def _doctor_runtime_summary() -> Dict[str, Any]:
         "last_run_exists": DOCTOR_LAST_RUN_PATH.exists(),
         "last_run_path": str(DOCTOR_LAST_RUN_PATH),
         "last_run_at": checked_at,
-        "last_run_recent": is_recent(checked_at, 30) if checked_at else False,
+        "last_run_recent": is_recent(checked_at, DOCTOR_REFRESH_MAX_AGE_MINUTES) if checked_at else False,
+        "refresh": refresh,
         "acquisition_health": {
             "enabled": bool(acquisition_health.get("enabled")),
             "sites_total": int(adapter_coverage.get("sites_total", 0) or 0),
@@ -393,6 +406,7 @@ def _doctor_runtime_summary() -> Dict[str, Any]:
             "source_trust_tiers": list(adapter_coverage.get("source_trust_tiers", []) or []),
             "browser_runtime_ready_total": int(adapter_coverage.get("browser_runtime_ready_total", 0) or 0),
             "browser_execution_profiles": list(adapter_coverage.get("browser_execution_profiles", []) or []),
+            "field_synthesis_contract": bool(acquisition_integration.get("field_synthesis_contract")),
             "delivery_requirements_contract": bool(acquisition_integration.get("delivery_requirements_contract")),
             "source_trust_contract": bool(acquisition_integration.get("source_trust_contract")),
             "release_governance_contract": bool(acquisition_integration.get("release_governance_contract")),
@@ -400,6 +414,8 @@ def _doctor_runtime_summary() -> Dict[str, Any]:
             "answer_synthesis_contract": bool(acquisition_integration.get("answer_synthesis_contract")),
             "answer_response_contract": bool(acquisition_integration.get("answer_response_contract")),
             "response_handoff_contract": bool(acquisition_integration.get("response_handoff_contract")),
+            "browser_execution_contract": bool(acquisition_integration.get("browser_execution_contract")),
+            "validation_family_contract": bool(acquisition_integration.get("validation_family_contract")),
             "attention_sites_total": len(acquisition_health.get("attention_sites", []) or []),
             "stability_score": float(adapter_coverage.get("stability_score", 0.0) or 0.0),
         },
@@ -410,6 +426,137 @@ def _doctor_runtime_summary() -> Dict[str, Any]:
             "acquisition_chain": str(integration_health.get("acquisition_chain", "")).strip(),
         },
     }
+
+
+def _doctor_runtime_payload_complete(payload: Dict[str, Any]) -> bool:
+    """
+    中文注解：
+    - 功能：判断 canonical doctor 最近一次输出是否已经覆盖当前系统要求的核心契约。
+    - 输入角色：消费 `doctor/last_run.json` 或刚刷新得到的 doctor payload。
+    - 输出角色：供 status/doctor 决定是否需要触发 canonical doctor 刷新，而不是继续展示结构残缺的旧结果。
+    """
+    if not isinstance(payload, dict):
+        return False
+    integration = payload.get("integration_health", {}) or {}
+    if not isinstance(integration, dict):
+        return False
+    if not integration.get("single_doctor_rule"):
+        return False
+    if not str(integration.get("coding_chain", "")).strip():
+        return False
+    if not str(integration.get("noncoding_chain", "")).strip():
+        return False
+    if not str(integration.get("acquisition_chain", "")).strip():
+        return False
+    acquisition_hand = integration.get("acquisition_hand", {}) or {}
+    if not isinstance(acquisition_hand, dict) or not acquisition_hand:
+        return False
+    return all(name in acquisition_hand for name in DOCTOR_REQUIRED_ACQUISITION_CONTRACTS)
+
+
+def _import_run_system_doctor():
+    """
+    中文注解：
+    - 功能：延迟导入 canonical doctor，避免普通 status 聚合在模块导入阶段就绑定重依赖。
+    - 输入角色：无显式业务输入，只依赖控制中心模块路径。
+    - 输出角色：返回 canonical `run_system_doctor` 入口，供 ops doctor 在需要时刷新权威结果。
+    """
+    import sys
+
+    if str(CONTROL_CENTER_ROOT) not in sys.path:
+        sys.path.insert(0, str(CONTROL_CENTER_ROOT))
+    from system_doctor import run_system_doctor
+
+    return run_system_doctor
+
+
+def _run_canonical_doctor_refresh() -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：执行一次 canonical doctor 刷新，把 single-doctor 权威结果重新写回 `last_run.json`。
+    - 输入角色：无额外操作参数，沿用 canonical doctor 默认治理阈值。
+    - 输出角色：供 status/doctor/upgrade-check 在需要时使用 fresh doctor 结果，而不是继续读陈旧缓存。
+    """
+    try:
+        run_system_doctor = _import_run_system_doctor()
+    except Exception as exc:
+        return {
+            "ok": False,
+            "payload": {},
+            "error": f"import_system_doctor_failed:{exc}",
+        }
+    try:
+        payload = run_system_doctor()
+    except Exception as exc:
+        return {
+            "ok": False,
+            "payload": {},
+            "error": f"run_system_doctor_failed:{exc}",
+        }
+    if not isinstance(payload, dict):
+        return {
+            "ok": False,
+            "payload": {},
+            "error": "run_system_doctor_returned_non_dict",
+        }
+    return {
+        "ok": True,
+        "payload": payload,
+        "error": "",
+    }
+
+
+def _resolve_doctor_runtime_payload(*, refresh_policy: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """
+    中文注解：
+    - 功能：按策略读取 canonical doctor 结果，并在缓存缺失、过旧或结构残缺时自动对账刷新。
+    - 输入角色：`refresh_policy` 决定是否永远刷新，还是只在 missing/stale/incomplete 时刷新。
+    - 输出角色：返回 doctor payload 与 refresh 元数据，供 status/doctor 解释结果来源与刷新原因。
+    """
+    payload = read_json(DOCTOR_LAST_RUN_PATH, {})
+    if not isinstance(payload, dict):
+        payload = {}
+    checked_at = str(payload.get("checked_at", "")).strip()
+    payload_complete = _doctor_runtime_payload_complete(payload)
+    refresh_reason = ""
+    should_refresh = False
+    if refresh_policy == "always":
+        should_refresh = True
+        refresh_reason = "explicit"
+    elif not DOCTOR_LAST_RUN_PATH.exists():
+        should_refresh = True
+        refresh_reason = "missing"
+    elif not checked_at or not is_recent(checked_at, DOCTOR_REFRESH_MAX_AGE_MINUTES):
+        should_refresh = True
+        refresh_reason = "stale"
+    elif not payload_complete:
+        should_refresh = True
+        refresh_reason = "incomplete"
+
+    refresh = {
+        "attempted": False,
+        "ok": False,
+        "reason": refresh_reason,
+        "source": "cache",
+        "error": "",
+        "payload_complete": payload_complete,
+    }
+    if not should_refresh:
+        refresh["ok"] = True
+        return payload, refresh
+
+    refresh["attempted"] = True
+    refresh_result = _run_canonical_doctor_refresh()
+    refresh["ok"] = bool(refresh_result.get("ok"))
+    refresh["error"] = str(refresh_result.get("error", "")).strip()
+    if refresh["ok"]:
+        refreshed_payload = refresh_result.get("payload", {}) or {}
+        if isinstance(refreshed_payload, dict):
+            payload = refreshed_payload
+        refresh["source"] = "canonical_refresh"
+        refresh["payload_complete"] = _doctor_runtime_payload_complete(payload)
+        return payload, refresh
+    return payload, refresh
 
 
 def _session_tail_summary(session_file: Path) -> Dict[str, Any]:
@@ -602,7 +749,7 @@ def message_pipeline_summary() -> Dict[str, Any]:
     }
 
 
-def status_payload() -> Dict[str, Any]:
+def status_payload(*, refresh_doctor: bool = False) -> Dict[str, Any]:
     """
     中文注解：
     - 功能：实现 `status_payload` 对应的处理逻辑。
@@ -637,13 +784,15 @@ def status_payload() -> Dict[str, Any]:
         "launch_agents": launch_agent_summary(),
         "runtime": runtime_summary(),
         "message_pipeline": message_pipeline_summary(),
-        "doctor_runtime": _doctor_runtime_summary(),
+        "doctor_runtime": _doctor_runtime_summary(
+            refresh_policy="always" if refresh_doctor else "if_needed"
+        ),
         "control_plane_summary": control_plane_summary,
         "project_scheduler_policy": scheduler_policy,
     }
 
 
-def doctor_payload() -> Dict[str, Any]:
+def doctor_payload(*, refresh_doctor: bool = True) -> Dict[str, Any]:
     """
     中文注解：
     - 功能：实现 `doctor_payload` 对应的处理逻辑。
@@ -654,7 +803,7 @@ def doctor_payload() -> Dict[str, Any]:
     - JinClaw only has one canonical doctor payload path.
     - New subsystem monitoring should aggregate into this payload rather than creating a peer doctor authority.
     """
-    payload = status_payload()
+    payload = status_payload(refresh_doctor=refresh_doctor)
     issues: List[str] = []
     warnings: List[str] = []
 
@@ -670,6 +819,7 @@ def doctor_payload() -> Dict[str, Any]:
     runtime = payload["runtime"]
     message_pipeline = payload["message_pipeline"]
     doctor_runtime = payload.get("doctor_runtime", {}) or {}
+    refresh = doctor_runtime.get("refresh", {}) or {}
     if not runtime["selfheal_state_exists"]:
         issues.append("selfheal_state_missing")
     elif not runtime["selfheal_recent"]:
@@ -712,6 +862,8 @@ def doctor_payload() -> Dict[str, Any]:
         warnings.append("system_doctor_last_run_missing")
     elif not doctor_runtime.get("last_run_recent"):
         warnings.append("system_doctor_last_run_not_recent")
+    if refresh_doctor and refresh.get("attempted") and not refresh.get("ok"):
+        issues.append("system_doctor_refresh_failed")
     if doctor_runtime.get("last_run_exists") and not ((doctor_runtime.get("integration_health", {}) or {}).get("ok")):
         warnings.append("system_doctor_integration_health_attention")
 
@@ -722,7 +874,7 @@ def doctor_payload() -> Dict[str, Any]:
     return payload
 
 
-def upgrade_check_payload() -> Dict[str, Any]:
+def upgrade_check_payload(*, refresh_doctor: bool = True) -> Dict[str, Any]:
     """
     中文注解：
     - 功能：实现 `upgrade_check_payload` 对应的处理逻辑。
@@ -731,7 +883,7 @@ def upgrade_check_payload() -> Dict[str, Any]:
     """
     watch_run = run_cmd(["python3", str(UPSTREAM_WATCH_SCRIPT), "--once"], timeout=60)
     watch_run_payload = parse_json_output(watch_run)
-    doctor = doctor_payload()
+    doctor = doctor_payload(refresh_doctor=refresh_doctor)
     upstream_watch_state = read_json(UPSTREAM_WATCH_STATE_PATH, {})
     changed: List[Dict[str, Any]] = []
     for repo_id, snapshot in (upstream_watch_state.get("repos") or {}).items():
@@ -787,10 +939,10 @@ def main() -> int:
         print_payload(status_payload())
         return 0
     if args.command == "doctor":
-        payload = doctor_payload()
+        payload = doctor_payload(refresh_doctor=True)
         print_payload(payload)
         return 0 if payload["ok"] else 1
-    payload = upgrade_check_payload()
+    payload = upgrade_check_payload(refresh_doctor=True)
     print_payload(payload)
     return 0 if payload["doctor"]["ok"] and payload["watch_run"]["ok"] else 1
 

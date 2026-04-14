@@ -24,6 +24,9 @@ The single canonical doctor path is:
 - diagnosis authority: `tools/openmoss/control_center/system_doctor.py`
 - aggregated doctor health payload: `tools/openmoss/ops/jinclaw_ops.py`
 
+Operational rule:
+- explicit operator doctor entrypoints such as `jinclaw-doctor` must refresh the canonical doctor result before presenting the aggregated payload; they may not silently rely on structurally stale cache data as the final authority
+
 Governance anchors:
 - `JINCLAW_CONSTITUTION.md`
 - `tools/openmoss/control_center/README.md`
