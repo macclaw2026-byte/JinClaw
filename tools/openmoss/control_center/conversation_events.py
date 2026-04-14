@@ -104,6 +104,23 @@ def record_execution_handoff_event(
     - 输出角色：供 doctor、status、control plane 判断 transport 和 runtime 是否已经共用同一条执行真源。
     """
     payload = build_execution_handoff_schema(**dict(execution_handoff or {}))
+    if not str(payload.get("execution_session_strategy", "")).strip():
+        linked_session_key = str(payload.get("linked_session_key", "")).strip()
+        execution_session_key = str(payload.get("execution_session_key", "")).strip()
+        task_id = str(payload.get("task_id", "")).strip()
+        if linked_session_key and execution_session_key:
+            if execution_session_key == linked_session_key:
+                payload["execution_session_strategy"] = "linked_session"
+                payload["execution_session_strategy_reason"] = (
+                    str(payload.get("execution_session_strategy_reason", "")).strip()
+                    or "derived_from_matching_session_key"
+                )
+            elif task_id and execution_session_key == f"{linked_session_key}:autonomy:{task_id}":
+                payload["execution_session_strategy"] = "autonomy_derived_session"
+                payload["execution_session_strategy_reason"] = (
+                    str(payload.get("execution_session_strategy_reason", "")).strip()
+                    or "derived_from_autonomy_session_suffix"
+                )
     return record_conversation_event(
         provider=provider,
         conversation_id=conversation_id,
@@ -114,6 +131,7 @@ def record_execution_handoff_event(
             "handoff_status": str(payload.get("handoff_status", "")).strip(),
             "runtime_mode": str(payload.get("runtime_mode", "")).strip(),
             "execution_session_key": str(payload.get("execution_session_key", "")).strip(),
+            "execution_session_strategy": str(payload.get("execution_session_strategy", "")).strip(),
             "execution_handoff": payload,
         },
     )
@@ -146,6 +164,18 @@ def build_conversation_event_registry() -> Dict[str, Any]:
             execution_events = [item for item in events if str(item.get("event_type", "")).strip() == "execution_handoff_updated"]
             latest_execution_payload = ((execution_events[-1] if execution_events else {}).get("payload", {}) or {})
             latest_execution_handoff = latest_execution_payload.get("execution_handoff", {}) or {}
+            latest_execution_strategy = str(
+                latest_execution_payload.get("execution_session_strategy", "") or latest_execution_handoff.get("execution_session_strategy", "")
+            ).strip()
+            if not latest_execution_strategy:
+                linked_session_key = str(latest_execution_handoff.get("linked_session_key", "")).strip()
+                execution_session_key = str(latest_execution_handoff.get("execution_session_key", "")).strip()
+                task_id = str(latest_execution_handoff.get("task_id", "")).strip()
+                if linked_session_key and execution_session_key:
+                    if execution_session_key == linked_session_key:
+                        latest_execution_strategy = "linked_session"
+                    elif task_id and execution_session_key == f"{linked_session_key}:autonomy:{task_id}":
+                        latest_execution_strategy = "autonomy_derived_session"
             rows.append(
                 {
                     "provider": str(latest.get("provider", "")).strip(),
@@ -158,6 +188,7 @@ def build_conversation_event_registry() -> Dict[str, Any]:
                     "latest_execution_status": str(latest_execution_payload.get("handoff_status", "") or latest_execution_handoff.get("handoff_status", "")).strip(),
                     "latest_execution_stage": str(latest_execution_payload.get("stage_name", "") or latest_execution_handoff.get("stage_name", "")).strip(),
                     "latest_execution_runtime_mode": str(latest_execution_payload.get("runtime_mode", "") or latest_execution_handoff.get("runtime_mode", "")).strip(),
+                    "latest_execution_strategy": latest_execution_strategy,
                     "latest_recorded_at": str(latest.get("recorded_at", "")).strip(),
                     "path": str(path),
                     "has_ingress_event": "ingress_received" in event_types,

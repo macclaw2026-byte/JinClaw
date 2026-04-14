@@ -2846,127 +2846,172 @@ def _run_execution_event_integration_checks() -> Dict[str, object]:
     from conversation_events import build_conversation_event_registry, conversation_event_path, load_conversation_events, record_execution_handoff_event
     from telegram_binding import bind_telegram_message
 
-    provider = 'telegram'
-    conversation_id = 'doctor-execution-kernel'
-    focus_path = conversation_focus_path(provider, conversation_id)
-    envelope_path = instruction_envelope_path(provider, conversation_id)
-    event_path = conversation_event_path(provider, conversation_id)
-    route_path = BRAIN_ROUTES_ROOT / provider / f'{conversation_id}.json'
-    receipt_path = BRAIN_RECEIPTS_ROOT / provider / f'{conversation_id}.json'
-    link_file = link_path(provider, conversation_id)
+    scenarios = [
+        {
+            'provider': 'telegram',
+            'conversation_id': 'doctor-execution-kernel-mission',
+            'message_id': 'exec-mission-1',
+            'text': '用 ziniao 浏览器打开已绑定店铺，进入对账中心导出三月份账务明细，并在导出历史确认结果',
+            'expected_mode': 'mission_runtime',
+            'expected_strategy': 'autonomy_derived_session',
+        },
+        {
+            'provider': 'telegram',
+            'conversation_id': 'doctor-execution-kernel-interactive',
+            'message_id': 'exec-interactive-1',
+            'text': '请排查并修复 runtime dispatch path 的一个 bug，然后补回归测试',
+            'expected_mode': 'interactive_session',
+            'expected_strategy': 'linked_session',
+        },
+    ]
+    cleanup_paths: List[Path] = []
     touched_task_ids: set[str] = set()
-    for path in [focus_path, envelope_path, event_path, route_path, receipt_path, link_file]:
-        if path.exists():
-            path.unlink()
     try:
-        result = bind_telegram_message(
-            chat_id=conversation_id,
-            chat_type='group',
-            sender_id='doctor-user',
-            sender_name='doctor-execution-user',
-            message_id='exec-1',
-            text='用 ziniao 浏览器打开已绑定店铺，进入对账中心导出三月份账务明细，并在导出历史确认结果',
-        )
-        task_id = str(((result.get('brain_route', {}) or {}).get('task_id', ''))).strip()
-        if task_id:
-            touched_task_ids.add(task_id)
-        focus = load_conversation_focus(provider, conversation_id)
-        link = find_link_by_task_id(task_id) if task_id else {}
-        state = load_state(task_id) if task_id else None
-        if state and task_id:
-            state.status = 'waiting_external'
-            state.current_stage = state.current_stage or 'execute'
-            state.next_action = 'poll_run:doctor-run-1'
-            state.metadata['active_execution'] = {
-                'run_id': 'doctor-run-1',
-                'stage_name': state.current_stage,
-                'session_key': f"{str(link.get('session_key', '')).strip()}:autonomy:{task_id}",
-                'linked_session_key': str(link.get('session_key', '')).strip(),
-                'dispatched_at': _utc_now_iso(),
-            }
-            state.metadata['waiting_external'] = {
-                'run_id': 'doctor-run-1',
-                'stage_name': state.current_stage,
-                'reason': 'doctor_execution_check',
-                'wait_status': 'timeout',
-                'wait_error': '',
-                'last_polled_at': _utc_now_iso(),
-            }
-            save_state(state)
-        record_execution_handoff_event(
-            provider=provider,
-            conversation_id=conversation_id,
-            execution_handoff=build_execution_handoff_schema(
-                enabled=True,
-                contract_source='doctor_execution_check',
-                task_id=task_id,
-                stage_name='execute',
-                handoff_status='waiting_external',
+        for scenario in scenarios:
+            provider = scenario['provider']
+            conversation_id = scenario['conversation_id']
+            focus_path = conversation_focus_path(provider, conversation_id)
+            envelope_path = instruction_envelope_path(provider, conversation_id)
+            event_path = conversation_event_path(provider, conversation_id)
+            route_path = BRAIN_ROUTES_ROOT / provider / f'{conversation_id}.json'
+            receipt_path = BRAIN_RECEIPTS_ROOT / provider / f'{conversation_id}.json'
+            link_file = link_path(provider, conversation_id)
+            cleanup_paths.extend([focus_path, envelope_path, event_path, route_path, receipt_path, link_file])
+            for path in [focus_path, envelope_path, event_path, route_path, receipt_path, link_file]:
+                if path.exists():
+                    path.unlink()
+
+            result = bind_telegram_message(
+                chat_id=conversation_id,
+                chat_type='group',
+                sender_id='doctor-user',
+                sender_name='doctor-execution-user',
+                message_id=scenario['message_id'],
+                text=scenario['text'],
+            )
+            task_id = str(((result.get('brain_route', {}) or {}).get('task_id', ''))).strip()
+            if task_id:
+                touched_task_ids.add(task_id)
+            focus = load_conversation_focus(provider, conversation_id)
+            link = find_link_by_task_id(task_id) if task_id else {}
+            linked_session_key = str(link.get('session_key', '')).strip()
+            state = load_state(task_id) if task_id else None
+            if state and task_id:
+                state.status = 'waiting_external'
+                state.current_stage = state.current_stage or 'execute'
+                state.next_action = 'poll_run:doctor-run-1'
+                execution_session_key = linked_session_key if scenario['expected_strategy'] == 'linked_session' else f"{linked_session_key}:autonomy:{task_id}"
+                state.metadata['active_execution'] = {
+                    'run_id': 'doctor-run-1',
+                    'stage_name': state.current_stage,
+                    'session_key': execution_session_key,
+                    'linked_session_key': linked_session_key,
+                    'execution_session_strategy': scenario['expected_strategy'],
+                    'execution_session_strategy_reason': 'doctor_execution_check',
+                    'runtime_mode': scenario['expected_mode'],
+                    'runtime_mode_reason': 'doctor_execution_check',
+                    'dispatched_at': _utc_now_iso(),
+                }
+                state.metadata['waiting_external'] = {
+                    'run_id': 'doctor-run-1',
+                    'stage_name': state.current_stage,
+                    'reason': 'doctor_execution_check',
+                    'wait_status': 'timeout',
+                    'wait_error': '',
+                    'last_polled_at': _utc_now_iso(),
+                }
+                save_state(state)
+            record_execution_handoff_event(
                 provider=provider,
                 conversation_id=conversation_id,
-                session_key=str(focus.get('session_key', '')).strip(),
-                linked_session_key=str(link.get('session_key', '')).strip(),
-                execution_session_key=f"{str(link.get('session_key', '')).strip()}:autonomy:{task_id}",
-                run_id='doctor-run-1',
-                runtime_mode=str(focus.get('resolved_mode', '')).strip(),
-                runtime_mode_reason=str(focus.get('resolved_mode_reason', '')).strip(),
-                next_action='poll_run:doctor-run-1',
-                wait_status='timeout',
-                dispatched_at=_utc_now_iso(),
-                updated_at=_utc_now_iso(),
-                conversation_focus_ready=bool(focus.get('context_ready')),
-            ),
-        )
-        snapshot = build_task_status_snapshot(task_id) if task_id else {}
+                execution_handoff=build_execution_handoff_schema(
+                    enabled=True,
+                    contract_source='doctor_execution_check',
+                    task_id=task_id,
+                    stage_name='execute',
+                    handoff_status='waiting_external',
+                    provider=provider,
+                    conversation_id=conversation_id,
+                    session_key=str(focus.get('session_key', '')).strip(),
+                    linked_session_key=linked_session_key,
+                    execution_session_key=linked_session_key if scenario['expected_strategy'] == 'linked_session' else f"{linked_session_key}:autonomy:{task_id}",
+                    execution_session_strategy=scenario['expected_strategy'],
+                    execution_session_strategy_reason='doctor_execution_check',
+                    run_id='doctor-run-1',
+                    runtime_mode=scenario['expected_mode'],
+                    runtime_mode_reason='doctor_execution_check',
+                    next_action='poll_run:doctor-run-1',
+                    wait_status='timeout',
+                    dispatched_at=_utc_now_iso(),
+                    updated_at=_utc_now_iso(),
+                    conversation_focus_ready=bool(focus.get('context_ready')),
+                ),
+            )
+            snapshot = build_task_status_snapshot(task_id) if task_id else {}
 
-        events = load_conversation_events(provider, conversation_id, limit=20)
-        event_types = [str(item.get('event_type', '')).strip() for item in events]
-        if 'execution_handoff_updated' not in event_types:
-            errors.append('execution_event_missing_execution_event')
-        if {'route_resolved', 'execution_handoff_updated'}.issubset(set(event_types)):
-            if event_types.index('route_resolved') > event_types.index('execution_handoff_updated'):
-                errors.append('execution_event_invalid_event_order')
-        execution_events = [item for item in events if str(item.get('event_type', '')).strip() == 'execution_handoff_updated']
-        execution_payload = ((execution_events[-1] if execution_events else {}).get('payload', {}) or {})
-        execution_handoff = execution_payload.get('execution_handoff', {}) or {}
-        if str(execution_payload.get('handoff_status', '') or execution_handoff.get('handoff_status', '')).strip() != 'waiting_external':
-            errors.append('execution_event_missing_handoff_status')
-        if not str((execution_handoff.get('execution_session_key', ''))).strip():
-            errors.append('execution_event_missing_execution_session_key')
-        if not str((execution_handoff.get('runtime_mode', ''))).strip():
-            errors.append('execution_event_missing_runtime_mode')
-        if not bool((snapshot.get('execution_handoff', {}) or {}).get('enabled')):
-            errors.append('execution_event_snapshot_missing_handoff')
-        if str(((snapshot.get('execution_handoff', {}) or {}).get('handoff_status', '')).strip()) != 'waiting_external':
-            errors.append('execution_event_snapshot_missing_waiting_status')
-        if str((((snapshot.get('reply_contract', {}) or {}).get('execution_handoff', {}) or {}).get('handoff_status', '')).strip()) != 'waiting_external':
-            errors.append('execution_event_reply_contract_missing_handoff')
+            events = load_conversation_events(provider, conversation_id, limit=20)
+            event_types = [str(item.get('event_type', '')).strip() for item in events]
+            if 'execution_handoff_updated' not in event_types:
+                errors.append('execution_event_missing_execution_event')
+            if {'route_resolved', 'execution_handoff_updated'}.issubset(set(event_types)):
+                if event_types.index('route_resolved') > event_types.index('execution_handoff_updated'):
+                    errors.append('execution_event_invalid_event_order')
+            scenario_execution_events = [item for item in events if str(item.get('event_type', '')).strip() == 'execution_handoff_updated']
+            execution_payload = ((scenario_execution_events[-1] if scenario_execution_events else {}).get('payload', {}) or {})
+            execution_handoff = execution_payload.get('execution_handoff', {}) or {}
+            if str(execution_payload.get('handoff_status', '') or execution_handoff.get('handoff_status', '')).strip() != 'waiting_external':
+                errors.append('execution_event_missing_handoff_status')
+            if not str((execution_handoff.get('execution_session_key', ''))).strip():
+                errors.append('execution_event_missing_execution_session_key')
+            if not str((execution_handoff.get('runtime_mode', ''))).strip():
+                errors.append('execution_event_missing_runtime_mode')
+            if str((execution_handoff.get('runtime_mode', '')).strip()) != scenario['expected_mode']:
+                errors.append(f"execution_event_wrong_runtime_mode:{scenario['expected_mode']}")
+            if str((execution_handoff.get('execution_session_strategy', '')).strip()) != scenario['expected_strategy']:
+                errors.append(f"execution_event_wrong_strategy:{scenario['expected_strategy']}")
+            if not bool((snapshot.get('execution_handoff', {}) or {}).get('enabled')):
+                errors.append('execution_event_snapshot_missing_handoff')
+            if str(((snapshot.get('execution_handoff', {}) or {}).get('handoff_status', '')).strip()) != 'waiting_external':
+                errors.append('execution_event_snapshot_missing_waiting_status')
+            if str((((snapshot.get('reply_contract', {}) or {}).get('execution_handoff', {}) or {}).get('handoff_status', '')).strip()) != 'waiting_external':
+                errors.append('execution_event_reply_contract_missing_handoff')
+            if str(((snapshot.get('execution_handoff', {}) or {}).get('execution_session_strategy', '')).strip()) != scenario['expected_strategy']:
+                errors.append(f"execution_event_snapshot_wrong_strategy:{scenario['expected_strategy']}")
+            if str(((snapshot.get('execution_handoff', {}) or {}).get('runtime_mode', '')).strip()) != scenario['expected_mode']:
+                errors.append(f"execution_event_snapshot_wrong_runtime_mode:{scenario['expected_mode']}")
 
-        registry = build_conversation_event_registry()
-        row = next(
-            (
-                item
-                for item in (registry.get('items', []) or [])
-                if str(item.get('provider', '')).strip() == provider and str(item.get('conversation_id', '')).strip() == conversation_id
-            ),
-            {},
-        )
-        if not row:
-            errors.append('execution_event_registry_missing_row')
-        if not bool(row.get('has_execution_event')):
-            errors.append('execution_event_registry_missing_execution_flag')
-        if str(row.get('latest_execution_status', '')).strip() != 'waiting_external':
-            errors.append('execution_event_registry_missing_latest_status')
+            registry = build_conversation_event_registry()
+            row = next(
+                (
+                    item
+                    for item in (registry.get('items', []) or [])
+                    if str(item.get('provider', '')).strip() == provider and str(item.get('conversation_id', '')).strip() == conversation_id
+                ),
+                {},
+            )
+            if not row:
+                errors.append('execution_event_registry_missing_row')
+            if not bool(row.get('has_execution_event')):
+                errors.append('execution_event_registry_missing_execution_flag')
+            if str(row.get('latest_execution_status', '')).strip() != 'waiting_external':
+                errors.append('execution_event_registry_missing_latest_status')
+            if str(row.get('latest_execution_strategy', '')).strip() != scenario['expected_strategy']:
+                errors.append(f"execution_event_registry_wrong_strategy:{scenario['expected_strategy']}")
 
         plane = build_control_plane(stale_after_seconds=300, escalation_after_seconds=900)
         summary = (plane.get('system_snapshot', {}) or {}).get('summary', {}) or {}
         if 'conversation_event_with_execution_total' not in summary:
             errors.append('execution_event_control_plane_missing_execution_total')
     finally:
-        for path in [focus_path, envelope_path, event_path, route_path, receipt_path, link_file]:
+        for path in cleanup_paths:
             if path.exists():
                 path.unlink()
-        for parent in [event_path.parent, route_path.parent, receipt_path.parent]:
+        parent_paths = {
+            path.parent
+            for path in cleanup_paths
+            if path.name.endswith('.json') or path.name.endswith('.jsonl')
+        }
+        for parent in parent_paths:
             if parent.exists():
                 try:
                     next(parent.iterdir())
@@ -2998,6 +3043,18 @@ def _run_execution_event_integration_checks() -> Dict[str, object]:
                 'execution_event_snapshot_missing_waiting_status',
                 'execution_event_reply_contract_missing_handoff',
             }
+            for item in errors
+        ),
+        'runtime_mode_session_strategy_contract': not any(
+            str(item).startswith(
+                (
+                    'execution_event_wrong_runtime_mode:',
+                    'execution_event_wrong_strategy:',
+                    'execution_event_snapshot_wrong_strategy:',
+                    'execution_event_snapshot_wrong_runtime_mode:',
+                    'execution_event_registry_wrong_strategy:',
+                )
+            )
             for item in errors
         ),
         'control_plane_visibility_contract': not any(

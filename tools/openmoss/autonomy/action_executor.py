@@ -87,7 +87,7 @@ def _execution_records_dir(task_id: str) -> Path:
     return task_dir(task_id) / "executions"
 
 
-def _derive_execution_session_key(session_key: str, task_id: str) -> str:
+def _derive_execution_session_key(session_key: str, task_id: str, *, runtime_mode: str = "mission_runtime") -> str:
     """
     中文注解：
     - 功能：实现 `_derive_execution_session_key` 对应的处理逻辑。
@@ -97,7 +97,44 @@ def _derive_execution_session_key(session_key: str, task_id: str) -> str:
     normalized = str(session_key or "").strip()
     if not normalized:
         return normalized
+    if str(runtime_mode or "").strip() == "interactive_session":
+        return normalized
     return f"{normalized}:autonomy:{task_id}"
+
+
+def _resolve_execution_session_binding(link: Dict, task_id: str) -> Dict:
+    """
+    中文注解：
+    - 功能：根据 conversation runtime mode 决定当前任务应该复用 linked session 还是切到 autonomy session。
+    - 输入角色：消费会话 link 与 focus 真源。
+    - 输出角色：供 dispatch/runtime/doctor 使用统一的执行会话绑定策略。
+    """
+    linked_session_key = str(link.get("session_key", "")).strip() or infer_link_session_key(link)
+    provider = str(link.get("provider", "")).strip()
+    conversation_id = str(link.get("conversation_id", "")).strip()
+    focus = load_conversation_focus(provider, conversation_id) if provider and conversation_id else {}
+    runtime_mode = str(focus.get("resolved_mode", "") or focus.get("requested_mode", "")).strip() or "interactive_session"
+    runtime_mode_reason = str(focus.get("resolved_mode_reason", "") or focus.get("requested_mode_reason", "")).strip() or "focus_default"
+    if runtime_mode == "mission_runtime":
+        strategy = "autonomy_derived_session"
+        strategy_reason = "mission_runtime_requires_continuous_background_execution"
+    else:
+        strategy = "linked_session"
+        strategy_reason = "interactive_session_prefers_shared_transport_session"
+    execution_session_key = _derive_execution_session_key(
+        linked_session_key,
+        task_id,
+        runtime_mode=runtime_mode,
+    )
+    return {
+        "linked_session_key": linked_session_key,
+        "execution_session_key": execution_session_key,
+        "execution_session_strategy": strategy,
+        "execution_session_strategy_reason": strategy_reason,
+        "runtime_mode": runtime_mode,
+        "runtime_mode_reason": runtime_mode_reason,
+        "focus": focus,
+    }
 
 
 def _write_json(path: Path, payload: Dict) -> None:
@@ -131,6 +168,8 @@ def _build_execution_handoff(
     link: Dict,
     handoff_status: str,
     execution_session_key: str = "",
+    execution_session_strategy: str = "",
+    execution_session_strategy_reason: str = "",
     linked_session_key: str = "",
     run_id: str = "",
     wait_status: str = "",
@@ -161,6 +200,10 @@ def _build_execution_handoff(
         session_key=str(focus.get("session_key", "") or linked_key).strip(),
         linked_session_key=linked_key,
         execution_session_key=execution_key,
+        execution_session_strategy=str(execution_session_strategy or active_execution.get("execution_session_strategy", "")).strip(),
+        execution_session_strategy_reason=str(
+            execution_session_strategy_reason or active_execution.get("execution_session_strategy_reason", "")
+        ).strip(),
         run_id=str(run_id or active_execution.get("run_id", "")).strip(),
         runtime_mode=str(focus.get("resolved_mode", "") or focus.get("requested_mode", "")).strip(),
         runtime_mode_reason=str(focus.get("resolved_mode_reason", "") or focus.get("requested_mode_reason", "")).strip(),
@@ -182,6 +225,8 @@ def _record_execution_handoff(
     link: Dict,
     handoff_status: str,
     execution_session_key: str = "",
+    execution_session_strategy: str = "",
+    execution_session_strategy_reason: str = "",
     linked_session_key: str = "",
     run_id: str = "",
     wait_status: str = "",
@@ -200,6 +245,8 @@ def _record_execution_handoff(
         link=link,
         handoff_status=handoff_status,
         execution_session_key=execution_session_key,
+        execution_session_strategy=execution_session_strategy,
+        execution_session_strategy_reason=execution_session_strategy_reason,
         linked_session_key=linked_session_key,
         run_id=run_id,
         wait_status=wait_status,
@@ -828,10 +875,11 @@ def dispatch_stage(task_id: str) -> Dict:
         return local_crawler_result
 
     link = find_link_by_task_id(task_id)
-    linked_session_key = str(link.get("session_key", "")).strip() or infer_link_session_key(link)
+    binding = _resolve_execution_session_binding(link, task_id)
+    linked_session_key = str(binding.get("linked_session_key", "")).strip()
     if not linked_session_key:
         return {"ok": False, "status": "no_bound_session"}
-    session_key = _derive_execution_session_key(linked_session_key, task_id)
+    session_key = str(binding.get("execution_session_key", "")).strip()
 
     active = state.metadata.get("active_execution", {})
     if active.get("stage_name") == stage_name and active.get("run_id"):
@@ -895,6 +943,8 @@ def dispatch_stage(task_id: str) -> Dict:
             link=link,
             handoff_status="preflight_blocked",
             execution_session_key=session_key,
+            execution_session_strategy=str(binding.get("execution_session_strategy", "")).strip(),
+            execution_session_strategy_reason=str(binding.get("execution_session_strategy_reason", "")).strip(),
             linked_session_key=linked_session_key,
             contract_source="runtime_preflight",
         )
@@ -943,6 +993,10 @@ def dispatch_stage(task_id: str) -> Dict:
         "stage_name": stage_name,
         "session_key": session_key,
         "linked_session_key": linked_session_key,
+        "execution_session_strategy": str(binding.get("execution_session_strategy", "")).strip(),
+        "execution_session_strategy_reason": str(binding.get("execution_session_strategy_reason", "")).strip(),
+        "runtime_mode": str(binding.get("runtime_mode", "")).strip(),
+        "runtime_mode_reason": str(binding.get("runtime_mode_reason", "")).strip(),
         "dispatched_at": utc_now_iso(),
     }
     state.status = "waiting_external"
@@ -966,6 +1020,8 @@ def dispatch_stage(task_id: str) -> Dict:
         link=link,
         handoff_status="dispatched",
         execution_session_key=session_key,
+        execution_session_strategy=str(binding.get("execution_session_strategy", "")).strip(),
+        execution_session_strategy_reason=str(binding.get("execution_session_strategy_reason", "")).strip(),
         linked_session_key=linked_session_key,
         run_id=run_id,
         contract_source="runtime_dispatch",
@@ -992,6 +1048,8 @@ def dispatch_stage(task_id: str) -> Dict:
         link=link,
         handoff_status=str(result.get("status", "")).strip() or "waiting_external",
         execution_session_key=session_key,
+        execution_session_strategy=str(binding.get("execution_session_strategy", "")).strip(),
+        execution_session_strategy_reason=str(binding.get("execution_session_strategy_reason", "")).strip(),
         linked_session_key=linked_session_key,
         run_id=run_id,
         wait_status=str((result.get("wait", {}) or {}).get("status", "")).strip(),
@@ -1119,6 +1177,8 @@ def poll_active_execution(task_id: str) -> Dict:
             link=link,
             handoff_status="waiting_external",
             execution_session_key=str(active.get("session_key", "")).strip(),
+            execution_session_strategy=str(active.get("execution_session_strategy", "")).strip(),
+            execution_session_strategy_reason=str(active.get("execution_session_strategy_reason", "")).strip(),
             linked_session_key=str(active.get("linked_session_key", "")).strip(),
             run_id=run_id,
             wait_status=str((result.get("wait", {}) or {}).get("status", "")).strip(),
@@ -1138,6 +1198,8 @@ def poll_active_execution(task_id: str) -> Dict:
         link=link,
         handoff_status="completed",
         execution_session_key=str(active.get("session_key", "")).strip(),
+        execution_session_strategy=str(active.get("execution_session_strategy", "")).strip(),
+        execution_session_strategy_reason=str(active.get("execution_session_strategy_reason", "")).strip(),
         linked_session_key=str(active.get("linked_session_key", "")).strip(),
         run_id=run_id,
         wait_status=str((result.get("wait", {}) or {}).get("status", "")).strip(),

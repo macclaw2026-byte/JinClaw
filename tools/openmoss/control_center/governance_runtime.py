@@ -475,6 +475,7 @@ def _build_doctor_coverage_bundle() -> Dict[str, Any]:
                 "doctor_checks": [
                     "execution_event_persistence",
                     "execution_handoff_snapshot_contract",
+                    "runtime_mode_session_strategy_contract",
                     "control_plane_execution_visibility",
                 ],
                 "primary_monitor": "system_doctor.integration_health.execution_events",
