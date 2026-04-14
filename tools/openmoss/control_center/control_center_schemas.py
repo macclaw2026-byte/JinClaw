@@ -681,6 +681,7 @@ def build_outcome_evaluation_schema(
     report_reason: str = "",
     path: str = "",
     checked_at: str = "",
+    scorecard: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """
     中文注解：
@@ -706,6 +707,37 @@ def build_outcome_evaluation_schema(
         "report_reason": str(report_reason).strip(),
         "path": str(path).strip(),
         "checked_at": str(checked_at).strip(),
+        "scorecard": dict(scorecard or {}),
+    }
+
+
+def build_outcome_scorecard_schema(
+    *,
+    enabled: bool = False,
+    aggregate_score: float = 0.0,
+    goal_proof_score: float = 0.0,
+    stage_coverage_score: float = 0.0,
+    verification_strength_score: float = 0.0,
+    delivery_readiness_score: float = 0.0,
+    repeatability_score: float = 0.0,
+    delivery_readiness: str = "",
+    scoring_basis: List[str] | None = None,
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：构造 outcome scorecard schema。
+    - 设计意图：把“结果质量如何、是否值得交付、是否便于复用”拆成可解释维度，而不是只留一个 completion_score。
+    """
+    return {
+        "enabled": bool(enabled),
+        "aggregate_score": float(aggregate_score or 0.0),
+        "goal_proof_score": float(goal_proof_score or 0.0),
+        "stage_coverage_score": float(stage_coverage_score or 0.0),
+        "verification_strength_score": float(verification_strength_score or 0.0),
+        "delivery_readiness_score": float(delivery_readiness_score or 0.0),
+        "repeatability_score": float(repeatability_score or 0.0),
+        "delivery_readiness": str(delivery_readiness).strip(),
+        "scoring_basis": list(scoring_basis or []),
     }
 
 

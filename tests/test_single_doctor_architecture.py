@@ -88,6 +88,7 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertEqual(integration.get('completion_reflection_chain'), 'ok')
         self.assertTrue((integration.get('completion_reflection', {}) or {}).get('ok'))
         self.assertTrue((integration.get('completion_reflection', {}) or {}).get('outcome_evaluation_contract'))
+        self.assertTrue((integration.get('completion_reflection', {}) or {}).get('outcome_scorecard_contract'))
         self.assertTrue((integration.get('completion_reflection', {}) or {}).get('reflection_report_contract'))
         self.assertTrue((integration.get('completion_reflection', {}) or {}).get('authoritative_summary_visibility_contract'))
         self.assertEqual(integration.get('goal_continuation_chain'), 'ok')

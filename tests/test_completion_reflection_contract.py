@@ -66,15 +66,20 @@ class CompletionReflectionContractTest(unittest.TestCase):
 
         outcome = snapshot.get('outcome_evaluation', {}) or {}
         reflection = snapshot.get('reflection_report', {}) or {}
+        scorecard = outcome.get('scorecard', {}) or {}
         self.assertTrue(outcome.get('enabled'))
         self.assertEqual(outcome.get('outcome_status'), 'goal_reached')
         self.assertGreater(float(outcome.get('completion_score', 0.0) or 0.0), 0.0)
+        self.assertTrue(scorecard.get('enabled'))
+        self.assertGreater(float(scorecard.get('aggregate_score', 0.0) or 0.0), 0.0)
+        self.assertTrue(str(scorecard.get('delivery_readiness', '')).strip())
         self.assertTrue(Path(str(outcome.get('path', '')).strip()).exists())
         self.assertTrue(reflection.get('enabled'))
         self.assertTrue(reflection.get('optimization_proposals'))
         self.assertTrue(reflection.get('reusable_rules'))
         self.assertTrue(Path(str(reflection.get('path', '')).strip()).exists())
         self.assertIn('Outcome evaluation is goal_reached', snapshot.get('authoritative_summary', ''))
+        self.assertIn('Outcome scorecard is', snapshot.get('authoritative_summary', ''))
         self.assertIn('Reflection report has', snapshot.get('authoritative_summary', ''))
 
 

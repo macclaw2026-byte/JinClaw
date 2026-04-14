@@ -69,7 +69,7 @@ from system_doctor import run_system_doctor
 from task_receipt_engine import emit_route_receipt
 from task_status_snapshot import build_task_status_snapshot
 from execution_governor import classify_blocked_runtime_state
-from control_center_schemas import build_outcome_evaluation_schema, build_reflection_report_schema
+from control_center_schemas import build_outcome_evaluation_schema, build_outcome_scorecard_schema, build_reflection_report_schema
 from capability_gap_engine import build_capability_gap_report
 
 
@@ -1670,6 +1670,70 @@ def _completion_score(state, business: dict, *, proof_summary: str, open_stages:
     return max(0.0, min(100.0, round(score, 2)))
 
 
+def _build_outcome_scorecard(
+    state,
+    business: dict,
+    *,
+    proof_summary: str,
+    open_stages: list[str],
+    completed_stage_total: int,
+    total_stage_total: int,
+    completion_score: float,
+) -> dict:
+    """
+    中文注解：
+    - 功能：把 terminal outcome 拆成可解释的质量评分卡。
+    - 设计意图：让系统不仅知道 done/not-done，还能解释交付质量、可验证性和可复用性。
+    """
+    verify_stage = (state.stages or {}).get("verify")
+    verification_status = str(getattr(verify_stage, "verification_status", "") or "").strip().lower()
+    goal_proof_score = 0.0
+    if business.get("goal_satisfied") is True:
+        goal_proof_score += 40.0
+    if business.get("user_visible_result_confirmed") is True:
+        goal_proof_score += 30.0
+    if proof_summary:
+        goal_proof_score += 30.0
+    stage_coverage_ratio = float(completed_stage_total) / float(total_stage_total) if total_stage_total else 0.0
+    stage_coverage_score = round(stage_coverage_ratio * 100.0, 2)
+    verification_strength_score = 100.0 if verification_status in {"passed", "verified", "ok"} else (60.0 if proof_summary else 0.0)
+    delivery_readiness_score = 100.0 if not open_stages and not (state.blockers or []) else max(
+        0.0,
+        round(100.0 - min(100.0, float(len(open_stages)) * 20.0 + float(len(state.blockers or [])) * 25.0), 2),
+    )
+    repeatability_score = 100.0
+    if state.learning_backlog:
+        repeatability_score -= min(60.0, float(len(state.learning_backlog)) * 20.0)
+    if not (state.metadata.get("postmortem", {}) or {}).get("written"):
+        repeatability_score -= 20.0
+    repeatability_score = max(0.0, round(repeatability_score, 2))
+    if delivery_readiness_score >= 90.0 and goal_proof_score >= 90.0:
+        delivery_readiness = "ready"
+    elif delivery_readiness_score >= 60.0:
+        delivery_readiness = "guarded"
+    else:
+        delivery_readiness = "not_ready"
+    scoring_basis = [
+        f"goal_proof={goal_proof_score:.1f}",
+        f"stage_coverage={stage_coverage_score:.1f}",
+        f"verification_strength={verification_strength_score:.1f}",
+        f"delivery_readiness={delivery_readiness_score:.1f}",
+        f"repeatability={repeatability_score:.1f}",
+        f"completion_score={float(completion_score or 0.0):.1f}",
+    ]
+    return build_outcome_scorecard_schema(
+        enabled=True,
+        aggregate_score=float(completion_score or 0.0),
+        goal_proof_score=goal_proof_score,
+        stage_coverage_score=stage_coverage_score,
+        verification_strength_score=verification_strength_score,
+        delivery_readiness_score=delivery_readiness_score,
+        repeatability_score=repeatability_score,
+        delivery_readiness=delivery_readiness,
+        scoring_basis=scoring_basis,
+    )
+
+
 def _write_task_completion_reports(task_id: str, *, reason: str = "") -> dict:
     """
     中文注解：
@@ -1711,6 +1775,15 @@ def _write_task_completion_reports(task_id: str, *, reason: str = "") -> dict:
         open_stages=open_stages,
         completed_stage_total=len(completed_stages),
         total_stage_total=len(state.stage_order or []),
+    )
+    outcome_scorecard = _build_outcome_scorecard(
+        state,
+        business,
+        proof_summary=proof_summary,
+        open_stages=open_stages,
+        completed_stage_total=len(completed_stages),
+        total_stage_total=len(state.stage_order or []),
+        completion_score=completion_score,
     )
     recommended_next_step = "promote_reusable_rule_and_keep_monitoring" if outcome_status == "goal_reached" else "continue_repair_or_replan"
     what_worked: list[str] = []
@@ -1769,6 +1842,7 @@ def _write_task_completion_reports(task_id: str, *, reason: str = "") -> dict:
         report_reason=reason or "terminal_completion_reports",
         path=str(outcome_path),
         checked_at=utc_now_iso(),
+        scorecard=outcome_scorecard,
     )
     reflection_payload = build_reflection_report_schema(
         enabled=True,

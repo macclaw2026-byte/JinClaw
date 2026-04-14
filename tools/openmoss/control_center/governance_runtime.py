@@ -492,6 +492,7 @@ def _build_doctor_coverage_bundle() -> Dict[str, Any]:
                 ],
                 "doctor_checks": [
                     "outcome_evaluation_contract",
+                    "outcome_scorecard_contract",
                     "reflection_report_contract",
                     "authoritative_summary_visibility",
                 ],

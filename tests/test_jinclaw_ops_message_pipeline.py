@@ -86,6 +86,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                     },
                     'completion_reflection': {
                         'outcome_evaluation_contract': True,
+                        'outcome_scorecard_contract': True,
                         'reflection_report_contract': True,
                         'authoritative_summary_visibility_contract': True,
                     },
@@ -201,6 +202,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                 },
                 'completion_reflection': {
                     'outcome_evaluation_contract': True,
+                    'outcome_scorecard_contract': True,
                     'reflection_report_contract': True,
                     'authoritative_summary_visibility_contract': True,
                 },

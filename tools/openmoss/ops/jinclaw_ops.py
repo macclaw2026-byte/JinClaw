@@ -84,6 +84,7 @@ DOCTOR_REQUIRED_EXECUTION_EVENT_CONTRACTS = (
 )
 DOCTOR_REQUIRED_COMPLETION_REFLECTION_CONTRACTS = (
     "outcome_evaluation_contract",
+    "outcome_scorecard_contract",
     "reflection_report_contract",
     "authoritative_summary_visibility_contract",
 )
@@ -528,6 +529,7 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
             },
             "completion_reflection": {
                 "outcome_evaluation_contract": bool((integration_health.get("completion_reflection", {}) or {}).get("outcome_evaluation_contract")),
+                "outcome_scorecard_contract": bool((integration_health.get("completion_reflection", {}) or {}).get("outcome_scorecard_contract")),
                 "reflection_report_contract": bool((integration_health.get("completion_reflection", {}) or {}).get("reflection_report_contract")),
                 "authoritative_summary_visibility_contract": bool((integration_health.get("completion_reflection", {}) or {}).get("authoritative_summary_visibility_contract")),
             },
