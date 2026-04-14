@@ -41,6 +41,13 @@ class TaskReceiptEngineTest(unittest.TestCase):
                         'requires_user_confirmation': False,
                     }
                 },
+                'delivery_contract': {
+                    'enabled': True,
+                    'delivery_mode': 'guarded_answer',
+                    'channel': provider,
+                    'cadence': 'event_driven',
+                    'prefer_attachment_delivery': False,
+                },
                 'milestone_progress': {},
                 'governance': {},
                 'blocked_runtime_state': {},
@@ -56,7 +63,9 @@ class TaskReceiptEngineTest(unittest.TestCase):
             self.assertEqual(receipt['text'], projection['rendered_text'])
             persisted = json.loads(receipt_path.read_text())
             self.assertIn('reply_projection', persisted)
+            self.assertIn('delivery_contract', persisted)
             self.assertEqual(persisted['reply_projection']['message_kind'], 'task_status')
+            self.assertEqual(persisted['delivery_contract']['delivery_mode'], 'guarded_answer')
             events = load_conversation_events(provider, conversation_id, limit=10)
             self.assertTrue(any(item.get('event_type') == 'reply_projection_emitted' for item in events))
         finally:

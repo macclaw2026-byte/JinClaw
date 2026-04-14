@@ -661,6 +661,64 @@ def build_execution_handoff_schema(
     }
 
 
+def build_delivery_contract_schema(
+    *,
+    enabled: bool = False,
+    contract_source: str = "",
+    task_id: str = "",
+    provider: str = "",
+    conversation_id: str = "",
+    channel: str = "",
+    delivery_mode: str = "",
+    cadence: str = "",
+    output_kind: str = "",
+    prefer_attachment_delivery: bool = False,
+    allow_session_receipt: bool = True,
+    requires_authoritative_summary: bool = True,
+    requires_completion_proof: bool = False,
+    requires_disclosure: bool = False,
+    requires_user_confirmation: bool = False,
+    periodic_delivery: bool = False,
+    final_delivery_ready: bool = False,
+    attachment_total: int = 0,
+    attachment_paths: List[str] | None = None,
+    summary_lines: List[str] | None = None,
+    blocker_reasons: List[str] | None = None,
+    recommended_next_actions: List[str] | None = None,
+    completion_score: float = 0.0,
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：构造统一 delivery contract schema。
+    - 设计意图：让 snapshot、receipt、周期任务和 doctor 都围绕同一份“结果如何交付”合同工作。
+    """
+    return {
+        "enabled": bool(enabled),
+        "contract_source": str(contract_source).strip(),
+        "task_id": str(task_id).strip(),
+        "provider": str(provider).strip(),
+        "conversation_id": str(conversation_id).strip(),
+        "channel": str(channel).strip(),
+        "delivery_mode": str(delivery_mode).strip(),
+        "cadence": str(cadence).strip(),
+        "output_kind": str(output_kind).strip(),
+        "prefer_attachment_delivery": bool(prefer_attachment_delivery),
+        "allow_session_receipt": bool(allow_session_receipt),
+        "requires_authoritative_summary": bool(requires_authoritative_summary),
+        "requires_completion_proof": bool(requires_completion_proof),
+        "requires_disclosure": bool(requires_disclosure),
+        "requires_user_confirmation": bool(requires_user_confirmation),
+        "periodic_delivery": bool(periodic_delivery),
+        "final_delivery_ready": bool(final_delivery_ready),
+        "attachment_total": int(attachment_total or 0),
+        "attachment_paths": list(attachment_paths or []),
+        "summary_lines": list(summary_lines or []),
+        "blocker_reasons": list(blocker_reasons or []),
+        "recommended_next_actions": list(recommended_next_actions or []),
+        "completion_score": float(completion_score or 0.0),
+    }
+
+
 def build_outcome_evaluation_schema(
     *,
     enabled: bool = False,

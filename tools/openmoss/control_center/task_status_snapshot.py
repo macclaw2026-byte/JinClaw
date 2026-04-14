@@ -24,6 +24,7 @@ from canonical_active_task import resolve_canonical_active_task
 from control_center_schemas import (
     build_acquisition_response_handoff_schema,
     build_capability_gap_schema,
+    build_delivery_contract_schema,
     build_execution_handoff_schema,
     build_goal_continuation_schema,
 )
@@ -582,6 +583,78 @@ def _build_capability_gap(snapshot: Dict[str, Any], state: Dict[str, Any]) -> Di
     )
 
 
+def _build_delivery_contract(snapshot: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：为任务快照生成统一的 delivery contract。
+    - 设计意图：让结果如何交付、是否需要附件、是否是周期性更新，都有一份单一真源可被 receipt/runtime/doctor 共用。
+    """
+    task_id = str(snapshot.get("task_id", "")).strip()
+    if not task_id:
+        return build_delivery_contract_schema(enabled=False)
+    link = _find_link_for_task(task_id)
+    provider = str((link or {}).get("provider", "")).strip()
+    conversation_id = str((link or {}).get("conversation_id", "")).strip()
+    output_attachments = snapshot.get("output_attachments", []) or []
+    acquisition_response = ((snapshot.get("reply_contract", {}) or {}).get("acquisition_response", {}) or {})
+    goal_continuation = snapshot.get("goal_continuation", {}) or {}
+    outcome_evaluation = snapshot.get("outcome_evaluation", {}) or {}
+    scorecard = outcome_evaluation.get("scorecard", {}) or {}
+    metadata = state.get("metadata", {}) or {}
+    delivery_schedule = metadata.get("delivery_schedule", {}) or {}
+    periodic_delivery = bool(delivery_schedule) and str(delivery_schedule.get("cadence", "")).strip() not in {"", "once", "event_driven"}
+    continuation_required = bool(goal_continuation.get("continuation_required"))
+    acquisition_enabled = bool(acquisition_response.get("enabled"))
+    final_delivery_ready = bool(
+        str(outcome_evaluation.get("outcome_status", "")).strip() == "goal_reached"
+        and not continuation_required
+    )
+    if continuation_required:
+        delivery_mode = "progress_update"
+    elif acquisition_enabled:
+        delivery_mode = str(acquisition_response.get("response_mode", "")).strip() or "result_delivery"
+    elif final_delivery_ready:
+        delivery_mode = "final_result"
+    else:
+        delivery_mode = "status_update"
+    cadence = str(delivery_schedule.get("cadence", "")).strip() or ("periodic" if periodic_delivery else "event_driven")
+    summary_lines: List[str] = []
+    blocker_reasons = [str(item).strip() for item in (acquisition_response.get("blocker_reasons", []) or []) if str(item).strip()]
+    recommended_next_actions = [str(item).strip() for item in (acquisition_response.get("recommended_next_actions", []) or []) if str(item).strip()]
+    if continuation_required and not recommended_next_actions:
+        recommended_next_actions.extend([str(item).strip() for item in (goal_continuation.get("recommended_next_actions", []) or []) if str(item).strip()])
+    if final_delivery_ready:
+        summary_lines.append(f"Goal reached with score {float(outcome_evaluation.get('completion_score', 0.0) or 0.0):.1f}.")
+    if acquisition_enabled:
+        summary_lines.extend([str(item).strip() for item in (acquisition_response.get("preview_lines", []) or []) if str(item).strip()][:2])
+    output_kind = "attachment_and_summary" if output_attachments else "summary_only"
+    return build_delivery_contract_schema(
+        enabled=bool(provider and conversation_id),
+        contract_source="authoritative_task_snapshot",
+        task_id=task_id,
+        provider=provider,
+        conversation_id=conversation_id,
+        channel=provider or "webchat",
+        delivery_mode=delivery_mode,
+        cadence=cadence,
+        output_kind=output_kind,
+        prefer_attachment_delivery=bool(output_attachments),
+        allow_session_receipt=True,
+        requires_authoritative_summary=True,
+        requires_completion_proof=final_delivery_ready,
+        requires_disclosure=bool(acquisition_response.get("requires_disclosure")),
+        requires_user_confirmation=bool(acquisition_response.get("requires_user_confirmation")),
+        periodic_delivery=periodic_delivery,
+        final_delivery_ready=final_delivery_ready,
+        attachment_total=len(output_attachments),
+        attachment_paths=[str(item.get("path", "")).strip() for item in output_attachments if str(item.get("path", "")).strip()],
+        summary_lines=summary_lines,
+        blocker_reasons=blocker_reasons,
+        recommended_next_actions=recommended_next_actions,
+        completion_score=float(scorecard.get("aggregate_score", 0.0) or outcome_evaluation.get("completion_score", 0.0) or 0.0),
+    )
+
+
 def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: Dict[str, Any], browser_signals: Dict[str, Any]) -> str:
     """
     中文注解：
@@ -643,6 +716,13 @@ def _build_authoritative_summary(task_id: str, snapshot: Dict[str, Any], state: 
     if bool(reflection_report.get("enabled")):
         completion_suffix += (
             f" Reflection report has {len(reflection_report.get('optimization_proposals', []) or [])} optimization proposals."
+        )
+    delivery_contract = snapshot.get("delivery_contract", {}) or {}
+    if bool(delivery_contract.get("enabled")):
+        completion_suffix += (
+            f" Delivery contract is {str(delivery_contract.get('delivery_mode', '')).strip() or 'unknown'}"
+            f" via {str(delivery_contract.get('channel', '')).strip() or 'unknown'}"
+            f" with cadence {str(delivery_contract.get('cadence', '')).strip() or 'unknown'}."
         )
     continuation_suffix = ""
     if bool(goal_continuation.get("enabled")) and bool(goal_continuation.get("continuation_required")):
@@ -799,6 +879,7 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
     snapshot["execution_handoff"] = _build_execution_handoff(snapshot, state)
     snapshot["goal_continuation"] = _build_goal_continuation(contract, snapshot, state)
     snapshot["capability_gap"] = _build_capability_gap(snapshot, state)
+    snapshot["delivery_contract"] = _build_delivery_contract(snapshot, state)
     snapshot["reply_contract"] = {
         "must_use_authoritative_snapshot": True,
         "must_prefer_task_state_over_chat_memory": True,
@@ -810,6 +891,7 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
         "goal_continuation": snapshot.get("goal_continuation", {}),
         "capability_gap": snapshot.get("capability_gap", {}),
         "skill_action_plane": snapshot.get("skill_action_plane", {}),
+        "delivery_contract": snapshot.get("delivery_contract", {}),
         "completion_reflection": {
             "outcome_evaluation_enabled": bool((snapshot.get("outcome_evaluation", {}) or {}).get("enabled")),
             "reflection_report_enabled": bool((snapshot.get("reflection_report", {}) or {}).get("enabled")),
@@ -818,6 +900,13 @@ def build_task_status_snapshot(task_id: str) -> Dict[str, Any]:
         },
     }
     snapshot["authoritative_summary"] = _build_authoritative_summary(canonical_task_id, snapshot, state, browser_signals)
+    delivery_contract = snapshot.get("delivery_contract", {}) or {}
+    if bool(delivery_contract.get("enabled")):
+        summary_lines = [str(snapshot.get("authoritative_summary", "")).strip()]
+        summary_lines.extend([str(item).strip() for item in (delivery_contract.get("summary_lines", []) or []) if str(item).strip()])
+        delivery_contract["summary_lines"] = list(dict.fromkeys([line for line in summary_lines if line]))[:3]
+        snapshot["delivery_contract"] = delivery_contract
+        snapshot["reply_contract"]["delivery_contract"] = delivery_contract
     snapshot["snapshot_path"] = _write_json(TASK_STATUS_ROOT / f"{canonical_task_id}.json", snapshot)
     return snapshot
 
