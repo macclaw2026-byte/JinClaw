@@ -70,6 +70,7 @@ from task_receipt_engine import emit_route_receipt
 from task_status_snapshot import build_task_status_snapshot
 from execution_governor import classify_blocked_runtime_state
 from control_center_schemas import build_outcome_evaluation_schema, build_reflection_report_schema
+from capability_gap_engine import build_capability_gap_report
 
 
 def utc_now_iso() -> str:
@@ -146,6 +147,181 @@ def _sync_blocked_runtime_metadata(state, *, governance_attention: dict | None =
     if str(getattr(state, "next_action", "")).strip() != "await_project_crawler_remediation":
         metadata.pop("project_crawler_gate", None)
     state.metadata = metadata
+
+
+def _clear_capability_gap_metadata(state) -> None:
+    """
+    中文注解：
+    - 功能：清理阻塞态之外残留的 capability-gap 元数据。
+    - 设计意图：避免旧的能力缺口合同污染已经恢复或完成的任务快照。
+    """
+    metadata = getattr(state, "metadata", {}) or {}
+    metadata.pop("capability_gap", None)
+    state.metadata = metadata
+
+
+def _sync_capability_gap_metadata(task_id: str, contract, state) -> dict:
+    """
+    中文注解：
+    - 功能：在 blocked/recovering 阶段同步 capability-gap 合同到 state metadata。
+    - 输入角色：消费当前 task 的 goal、allowed tools、blockers 和 next_action。
+    - 输出角色：供 runtime 自愈梯子、task snapshot、doctor 和 ops 共用。
+    """
+    if str(getattr(state, "status", "")).strip() not in {"blocked", "recovering"}:
+        _clear_capability_gap_metadata(state)
+        return {}
+    metadata = getattr(state, "metadata", {}) or {}
+    gap = build_capability_gap_report(
+        task_id=task_id,
+        goal=str(getattr(contract, "user_goal", "") or ""),
+        next_action=str(getattr(state, "next_action", "") or ""),
+        blockers=list(getattr(state, "blockers", []) or []),
+        allowed_tools=list(getattr(contract, "allowed_tools", []) or []),
+        target_stage=str(getattr(state, "current_stage", "") or ""),
+        previous_gap=metadata.get("capability_gap", {}) or {},
+    )
+    metadata["capability_gap"] = gap
+    state.metadata = metadata
+    return gap
+
+
+def _run_capability_gap_self_heal(task_id: str) -> dict | None:
+    """
+    中文注解：
+    - 功能：执行 capability-gap 自愈梯子：先复用本地能力，再研究，再准备本地重建，最后才升级给 doctor/user。
+    - 设计意图：把“卡住了”升级成结构化的自救动作，而不是把 inspect/build/research 这种 next_action 直接晾成 blocked。
+    """
+    contract = load_contract(task_id)
+    state = load_state(task_id)
+    gap = _sync_capability_gap_metadata(task_id, contract, state)
+    if not gap.get("enabled"):
+        state.last_update_at = utc_now_iso()
+        save_state(state)
+        return None
+
+    attempted_steps = [str(item).strip() for item in (gap.get("attempted_steps", []) or []) if str(item).strip()]
+    current_stage = str(getattr(state, "current_stage", "") or "")
+    next_action = str(getattr(state, "next_action", "") or "")
+    selected_path = str(gap.get("selected_path", "")).strip()
+
+    if bool(gap.get("auto_continue")) and "local_reuse" not in attempted_steps:
+        gap["attempted_steps"] = [*attempted_steps, "local_reuse"]
+        gap["auto_continue"] = False
+        gap["next_step"] = "retry_current_stage_with_local_capability"
+        state.metadata["capability_gap"] = gap
+        state.status = "planning"
+        state.blockers = []
+        state.next_action = f"start_stage:{current_stage}" if current_stage else "initialize"
+        state.last_update_at = utc_now_iso()
+        save_state(state)
+        log_event(task_id, "capability_gap_local_reuse_ready", capability_gap=gap)
+        return {
+            "task_id": task_id,
+            "status": state.status,
+            "current_stage": state.current_stage,
+            "next_action": state.next_action,
+            "action": "capability_gap_local_reuse_ready",
+            "capability_gap": gap,
+        }
+
+    if next_action == "inspect_runtime_contract_or_environment":
+        if selected_path == "research_existing_tooling":
+            gap["attempted_steps"] = [*attempted_steps, "inspect_runtime_contract"]
+            state.metadata["capability_gap"] = gap
+            state.status = "recovering"
+            state.next_action = "research_capability_gap"
+            state.last_update_at = utc_now_iso()
+            save_state(state)
+            log_event(task_id, "capability_gap_research_selected", capability_gap=gap)
+            return {
+                "task_id": task_id,
+                "status": state.status,
+                "current_stage": state.current_stage,
+                "next_action": state.next_action,
+                "action": "capability_gap_research_selected",
+                "capability_gap": gap,
+            }
+        if selected_path == "build_local_capability":
+            gap["attempted_steps"] = [*attempted_steps, "inspect_runtime_contract"]
+            state.metadata["capability_gap"] = gap
+            state.status = "recovering"
+            state.next_action = "build_missing_capability"
+            state.last_update_at = utc_now_iso()
+            save_state(state)
+            log_event(task_id, "capability_gap_build_selected", capability_gap=gap)
+            return {
+                "task_id": task_id,
+                "status": state.status,
+                "current_stage": state.current_stage,
+                "next_action": state.next_action,
+                "action": "capability_gap_build_selected",
+                "capability_gap": gap,
+            }
+
+    if next_action == "research_capability_gap":
+        if "research_existing_tooling" not in attempted_steps:
+            gap["attempted_steps"] = [*attempted_steps, "research_existing_tooling"]
+        state.metadata["capability_gap"] = gap
+        if bool(gap.get("build_feasible")) and "build_local_capability" not in gap.get("attempted_steps", []):
+            state.status = "recovering"
+            state.next_action = "build_missing_capability"
+            state.last_update_at = utc_now_iso()
+            save_state(state)
+            log_event(task_id, "capability_gap_build_escalated", capability_gap=gap)
+            return {
+                "task_id": task_id,
+                "status": state.status,
+                "current_stage": state.current_stage,
+                "next_action": state.next_action,
+                "action": "capability_gap_build_escalated",
+                "capability_gap": gap,
+            }
+        state.status = "blocked"
+        state.next_action = "doctor_request_human_guidance"
+        state.blockers = list(dict.fromkeys([*state.blockers, "capability_gap_research_exhausted"]))
+        state.last_update_at = utc_now_iso()
+        save_state(state)
+        log_event(task_id, "capability_gap_research_exhausted", capability_gap=gap)
+        return {
+            "task_id": task_id,
+            "status": state.status,
+            "current_stage": state.current_stage,
+            "next_action": state.next_action,
+            "action": "capability_gap_research_exhausted",
+            "capability_gap": gap,
+        }
+
+    if next_action == "build_missing_capability":
+        if "build_local_capability" not in attempted_steps:
+            gap["attempted_steps"] = [*attempted_steps, "build_local_capability"]
+        state.metadata["capability_gap"] = gap
+        learning_item = "capability_gap:prepare_in_house_build"
+        state.learning_backlog = list(dict.fromkeys([*state.learning_backlog, learning_item]))
+        state.status = "blocked"
+        state.next_action = "doctor_request_human_guidance"
+        state.blockers = list(dict.fromkeys([*state.blockers, "capability_gap_needs_in_house_build_followthrough"]))
+        state.last_update_at = utc_now_iso()
+        save_state(state)
+        log_event(task_id, "capability_gap_build_planned", capability_gap=gap)
+        return {
+            "task_id": task_id,
+            "status": state.status,
+            "current_stage": state.current_stage,
+            "next_action": state.next_action,
+            "action": "capability_gap_build_planned",
+            "capability_gap": gap,
+        }
+
+    state.last_update_at = utc_now_iso()
+    save_state(state)
+    return {
+        "task_id": task_id,
+        "status": state.status,
+        "current_stage": state.current_stage,
+        "next_action": state.next_action,
+        "action": "capability_gap_observed_only",
+        "capability_gap": gap,
+    }
 
 
 def _preferred_browser_url(state) -> str:
@@ -1815,6 +1991,11 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
     _upgrade_missing_crawler_system(task_id)
     contract = load_contract(task_id)
     state = load_state(task_id)
+    if state.status not in {"blocked", "recovering"} and (state.metadata.get("capability_gap", {}) or {}):
+        _clear_capability_gap_metadata(state)
+        state.last_update_at = utc_now_iso()
+        save_state(state)
+        state = load_state(task_id)
     reopened_terminal_crawler = _reopen_incomplete_terminal_crawler_task(task_id)
     if reopened_terminal_crawler:
         contract = load_contract(task_id)
@@ -1926,7 +2107,19 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
             }
 
     if state.status == "blocked":
+        if state.next_action in {
+            "inspect_runtime_contract_or_environment",
+            "research_capability_gap",
+            "build_missing_capability",
+        }:
+            capability_gap_result = _run_capability_gap_self_heal(task_id)
+            if capability_gap_result:
+                state = load_state(task_id)
+                capability_gap_result["mission_cycle"] = mission_cycle
+                if state.status != "blocked":
+                    return capability_gap_result
         _sync_blocked_runtime_metadata(state)
+        _sync_capability_gap_metadata(task_id, contract, state)
         blocked_runtime_state = state.metadata.get("blocked_runtime_state", {}) or {}
         state.last_update_at = utc_now_iso()
         save_state(state)
@@ -1974,6 +2167,15 @@ def process_task(task_id: str, stale_after_seconds: int) -> dict:
 
     # recovering 分支是 runtime 的自救通道：这里会根据 next_action 进入更细的恢复动作。
     if state.status == "recovering":
+        if state.next_action in {
+            "inspect_runtime_contract_or_environment",
+            "research_capability_gap",
+            "build_missing_capability",
+        }:
+            capability_gap_result = _run_capability_gap_self_heal(task_id)
+            if capability_gap_result:
+                capability_gap_result["mission_cycle"] = mission_cycle
+                return capability_gap_result
         if state.next_action == "satisfy_stage_contract_preflight":
             details = _preflight_block_details(state)
             statuses = set(details["statuses"])

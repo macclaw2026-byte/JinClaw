@@ -787,6 +787,62 @@ def build_goal_continuation_schema(
     }
 
 
+def build_capability_gap_schema(
+    *,
+    enabled: bool = False,
+    gap_detected: bool = False,
+    task_id: str = "",
+    target_stage: str = "",
+    current_action: str = "",
+    classification: str = "",
+    blocker: str = "",
+    missing_dependency: str = "",
+    selected_path: str = "",
+    next_step: str = "",
+    auto_continue: bool = False,
+    requires_external_research: bool = False,
+    build_feasible: bool = False,
+    requires_human_decision: bool = False,
+    local_tool_candidates: List[Dict[str, Any]] | None = None,
+    skill_candidates: List[Dict[str, Any]] | None = None,
+    generated_capability_candidates: List[Dict[str, Any]] | None = None,
+    attempted_steps: List[str] | None = None,
+    ladder_steps: List[Dict[str, Any]] | None = None,
+    rationale: List[str] | None = None,
+    contract_source: str = "",
+    checked_at: str = "",
+) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 功能：构造 capability-gap schema。
+    - 设计意图：把“卡住后下一步怎么自救”沉淀成统一合同，避免 runtime/doctor/ops 各自猜一套能力缺口策略。
+    """
+    return {
+        "enabled": bool(enabled),
+        "gap_detected": bool(gap_detected),
+        "task_id": str(task_id).strip(),
+        "target_stage": str(target_stage).strip(),
+        "current_action": str(current_action).strip(),
+        "classification": str(classification).strip(),
+        "blocker": str(blocker).strip(),
+        "missing_dependency": str(missing_dependency).strip(),
+        "selected_path": str(selected_path).strip(),
+        "next_step": str(next_step).strip(),
+        "auto_continue": bool(auto_continue),
+        "requires_external_research": bool(requires_external_research),
+        "build_feasible": bool(build_feasible),
+        "requires_human_decision": bool(requires_human_decision),
+        "local_tool_candidates": list(local_tool_candidates or []),
+        "skill_candidates": list(skill_candidates or []),
+        "generated_capability_candidates": list(generated_capability_candidates or []),
+        "attempted_steps": list(attempted_steps or []),
+        "ladder_steps": list(ladder_steps or []),
+        "rationale": list(rationale or []),
+        "contract_source": str(contract_source).strip(),
+        "checked_at": str(checked_at).strip(),
+    }
+
+
 def build_acquisition_answer_synthesis_schema(
     *,
     scope: str = "site",

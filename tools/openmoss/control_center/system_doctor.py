@@ -129,6 +129,12 @@ GOAL_CONTINUATION_REQUIRED_FILES = [
     WORKSPACE_ROOT / 'tools/openmoss/control_center/task_status_snapshot.py',
     WORKSPACE_ROOT / 'tools/openmoss/control_center/system_doctor.py',
 ]
+CAPABILITY_GAP_REQUIRED_FILES = [
+    WORKSPACE_ROOT / 'tools/openmoss/autonomy/capability_gap_engine.py',
+    WORKSPACE_ROOT / 'tools/openmoss/autonomy/runtime_service.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/task_status_snapshot.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/system_doctor.py',
+]
 GSTACK_LIFECYCLE = ['think', 'plan', 'build', 'review', 'test', 'ship', 'reflect']
 DOCTOR_RESOLUTION_REQUIRED_FIELDS = [
     "scope",
@@ -3317,6 +3323,106 @@ def _run_goal_continuation_integration_checks() -> Dict[str, object]:
     }
 
 
+def _run_capability_gap_integration_checks() -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：验证 capability-gap 自愈梯子已经成为 runtime/snapshot/doctor 的统一合同。
+    - 输入角色：消费 runtime capability-gap loop 与 authoritative snapshot。
+    - 输出角色：供 canonical doctor 判断“阻塞时是否会先自救，而不是直接静默停住”。
+    """
+    errors = []
+    for path in CAPABILITY_GAP_REQUIRED_FILES:
+        if not path.exists():
+            errors.append(f'missing_required_file:{path}')
+
+    if str(CONTROL_CENTER_ROOT) not in sys.path:
+        sys.path.insert(0, str(CONTROL_CENTER_ROOT))
+    if str(AUTONOMY_DIR) not in sys.path:
+        sys.path.insert(0, str(AUTONOMY_DIR))
+
+    from runtime_service import _run_capability_gap_self_heal
+
+    task_id = 'doctor-capability-gap-contract'
+    task_path = task_dir(task_id)
+    try:
+        if task_path.exists():
+            shutil.rmtree(task_path, ignore_errors=True)
+        contract = TaskContract(
+            task_id=task_id,
+            user_goal='Recover from a missing local runtime dependency without stopping at the first blocked state.',
+            done_definition='Capability gap is explained and the runtime tries local reuse before escalating.',
+            allowed_tools=['curl', 'python', 'search'],
+            stages=[
+                StageContract(name='understand', goal='understand'),
+                StageContract(name='plan', goal='plan'),
+                StageContract(name='execute', goal='execute'),
+                StageContract(name='verify', goal='verify'),
+                StageContract(name='learn', goal='learn'),
+            ],
+        )
+        create_task_from_contract(contract)
+        state = load_state(task_id)
+        state.status = 'blocked'
+        state.current_stage = 'execute'
+        state.next_action = 'inspect_runtime_contract_or_environment'
+        state.blockers = ['command not found: curl']
+        execute_stage = state.stages.get('execute')
+        if execute_stage:
+            execute_stage.status = 'failed'
+            execute_stage.blocker = 'command not found: curl'
+            execute_stage.updated_at = _utc_now_iso()
+        save_state(state)
+        result = _run_capability_gap_self_heal(task_id)
+        state = load_state(task_id)
+        snapshot = build_task_status_snapshot(task_id)
+        capability_gap = snapshot.get('capability_gap', {}) or {}
+        if not result or str(result.get('action', '')).strip() != 'capability_gap_local_reuse_ready':
+            errors.append('capability_gap_did_not_attempt_local_reuse')
+        if str(state.status).strip() != 'planning':
+            errors.append('capability_gap_runtime_not_reopened')
+        if str(state.next_action).strip() != 'start_stage:execute':
+            errors.append('capability_gap_wrong_next_action')
+        if not bool(capability_gap.get('enabled')):
+            errors.append('capability_gap_missing_snapshot_contract')
+        if str(capability_gap.get('selected_path', '')).strip() != 'reuse_local_capability':
+            errors.append('capability_gap_missing_selected_path')
+        local_names = [str(item.get('name', '')).strip() for item in (capability_gap.get('local_tool_candidates', []) or [])]
+        if 'curl' not in local_names:
+            errors.append('capability_gap_missing_local_tool_candidate')
+        if 'Capability-gap loop selected' not in str(snapshot.get('authoritative_summary', '')).strip():
+            errors.append('capability_gap_missing_summary_signal')
+    finally:
+        if task_path.exists():
+            shutil.rmtree(task_path, ignore_errors=True)
+
+    return {
+        'single_doctor_rule': True,
+        'authoritative_doctor': 'tools/openmoss/control_center/system_doctor.py',
+        'required_files_checked': len(CAPABILITY_GAP_REQUIRED_FILES),
+        'required_files': [str(path.relative_to(WORKSPACE_ROOT)) for path in CAPABILITY_GAP_REQUIRED_FILES],
+        'capability_gap_contract': not any(
+            item in {
+                'capability_gap_missing_snapshot_contract',
+                'capability_gap_missing_selected_path',
+                'capability_gap_missing_local_tool_candidate',
+            }
+            for item in errors
+        ),
+        'self_heal_ladder_contract': not any(
+            item in {
+                'capability_gap_did_not_attempt_local_reuse',
+                'capability_gap_runtime_not_reopened',
+                'capability_gap_wrong_next_action',
+            }
+            for item in errors
+        ),
+        'authoritative_summary_visibility_contract': 'capability_gap_missing_summary_signal' not in errors,
+        'capability_gap_chain': 'ok' if not errors else 'error',
+        'errors': errors,
+        'ok': not errors,
+    }
+
+
 def _run_integration_health_checks() -> Dict[str, object]:
     """
     中文注解：
@@ -3332,6 +3438,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
     execution_events = _run_execution_event_integration_checks()
     completion_reflection = _run_completion_reflection_integration_checks()
     goal_continuation = _run_goal_continuation_integration_checks()
+    capability_gap = _run_capability_gap_integration_checks()
     errors = (
         list(gstack.get('errors', []) or [])
         + list(acquisition_hand.get('errors', []) or [])
@@ -3341,6 +3448,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         + list(execution_events.get('errors', []) or [])
         + list(completion_reflection.get('errors', []) or [])
         + list(goal_continuation.get('errors', []) or [])
+        + list(capability_gap.get('errors', []) or [])
     )
     return {
         'single_doctor_rule': True,
@@ -3353,7 +3461,8 @@ def _run_integration_health_checks() -> Dict[str, object]:
         + int(conversation_events.get('required_files_checked', 0) or 0)
         + int(execution_events.get('required_files_checked', 0) or 0)
         + int(completion_reflection.get('required_files_checked', 0) or 0)
-        + int(goal_continuation.get('required_files_checked', 0) or 0),
+        + int(goal_continuation.get('required_files_checked', 0) or 0)
+        + int(capability_gap.get('required_files_checked', 0) or 0),
         'lifecycle': GSTACK_LIFECYCLE,
         'gstack': gstack,
         'acquisition_hand': acquisition_hand,
@@ -3363,6 +3472,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         'execution_events': execution_events,
         'completion_reflection': completion_reflection,
         'goal_continuation': goal_continuation,
+        'capability_gap': capability_gap,
         'coding_chain': gstack.get('coding_chain', 'unknown'),
         'noncoding_chain': gstack.get('noncoding_chain', 'unknown'),
         'acquisition_chain': acquisition_hand.get('acquisition_chain', 'unknown'),
@@ -3372,6 +3482,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         'execution_event_chain': execution_events.get('execution_event_chain', 'unknown'),
         'completion_reflection_chain': completion_reflection.get('completion_reflection_chain', 'unknown'),
         'goal_continuation_chain': goal_continuation.get('goal_continuation_chain', 'unknown'),
+        'capability_gap_chain': capability_gap.get('capability_gap_chain', 'unknown'),
         'errors': errors,
         'ok': (
             bool(gstack.get('ok'))
@@ -3382,6 +3493,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
             and bool(execution_events.get('ok'))
             and bool(completion_reflection.get('ok'))
             and bool(goal_continuation.get('ok'))
+            and bool(capability_gap.get('ok'))
         ),
     }
 
