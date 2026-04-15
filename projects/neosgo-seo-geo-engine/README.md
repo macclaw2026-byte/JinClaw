@@ -60,6 +60,7 @@ New output artifacts:
 - `output/<run_id>/opportunity-registry.json`
 - `output/<run_id>/page-action-plan.json`
 - `output/<run_id>/maintenance-plan.json`
+- `output/<run_id>/maintenance-execution-packet.json`
 - `output/<run_id>/consolidation-plan.json`
 - `output/<run_id>/post-publish-scorecard.json`
 - `output/<run_id>/technical-release-gates.json`

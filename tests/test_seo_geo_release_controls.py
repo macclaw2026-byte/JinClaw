@@ -9,6 +9,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from analytics_feedback_client import normalize_admin_ops_analytics
 from consolidation_planner import build_consolidation_plan
+from maintenance_execution_packet import build_maintenance_execution_packet
 from maintenance_planner import build_maintenance_plan
 from page_action_decider import build_page_action_plan
 from opportunity_registry import build_opportunity_registry
@@ -205,6 +206,40 @@ class SeoGeoReleaseControlTests(unittest.TestCase):
         self.assertEqual(scorecard["strong_count"], 1)
         self.assertEqual(scorecard["weak_count"], 1)
         self.assertEqual(scorecard["top_pages"][0]["slug"], "winner")
+
+    def test_maintenance_execution_packet_promotes_due_actions(self) -> None:
+        maintenance_plan = {
+            "weekly_due": True,
+            "monthly_due": True,
+            "weekly_actions": [
+                {"type": "ctr_packaging_review", "count": 1, "slugs": ["weak-page"]},
+            ],
+            "monthly_actions": [
+                {"type": "merge_or_prune_review", "count": 2, "slugs": ["merge-me", "prune-me"]},
+            ],
+        }
+        scorecard = {
+            "items": [
+                {"slug": "weak-page", "performance_band": "weak", "aggregate_score": 28, "recommended_action": "refresh_ctr"},
+                {"slug": "merge-me", "performance_band": "watch", "aggregate_score": 48, "recommended_action": "refresh_content"},
+                {"slug": "prune-me", "performance_band": "weak", "aggregate_score": 22, "recommended_action": "monitor"},
+            ]
+        }
+        consolidation_plan = {
+            "merge_candidates": [{"slug": "merge-me", "target_slug": "winner"}],
+            "redirect_candidates": [],
+            "prune_candidates": [{"slug": "prune-me", "reason": "low_signal_and_stale"}],
+        }
+        packet = build_maintenance_execution_packet(
+            maintenance_plan=maintenance_plan,
+            post_publish_scorecard=scorecard,
+            consolidation_plan=consolidation_plan,
+        )
+        self.assertEqual(packet["ready_action_count"], 2)
+        ready = {row["type"]: row for row in packet["ready_actions"]}
+        self.assertEqual(ready["ctr_packaging_review"]["priority"], "high")
+        self.assertEqual(ready["merge_or_prune_review"]["priority"], "high")
+        self.assertEqual(ready["merge_or_prune_review"]["merge_candidates"][0]["slug"], "merge-me")
 
 
 if __name__ == "__main__":

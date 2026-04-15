@@ -23,6 +23,7 @@ from consolidation_planner import build_consolidation_plan
 from opportunity_registry import build_opportunity_registry
 from page_action_decider import build_page_action_plan
 from maintenance_planner import build_maintenance_plan
+from maintenance_execution_packet import build_maintenance_execution_packet
 from post_publish_scorecard import build_post_publish_scorecard
 from technical_release_gate import evaluate_release_gate
 
@@ -1355,6 +1356,7 @@ def run_cycle() -> dict[str, Any]:
         "opportunity_registry": {},
         "page_action_plan": {},
         "maintenance_plan": {},
+        "maintenance_execution_packet": {},
         "consolidation_plan": {},
         "post_publish_scorecard": {},
         "research_briefs": [],
@@ -1421,6 +1423,11 @@ def run_cycle() -> dict[str, Any]:
                 feedback_summary=result["historical_feedback"],
                 gsc_sync=result.get("gsc_sync") or {},
                 analytics_sync=result.get("analytics_sync") or {},
+            )
+            result["maintenance_execution_packet"] = build_maintenance_execution_packet(
+                maintenance_plan=result["maintenance_plan"],
+                post_publish_scorecard=result["post_publish_scorecard"],
+                consolidation_plan=result["consolidation_plan"],
             )
             result["market_research"] = _build_market_research(config, result["historical_feedback"], inventory_summary)
             result["adaptive_profile"] = _build_adaptive_profile(
@@ -1902,6 +1909,7 @@ def run_cycle() -> dict[str, Any]:
                 "publish_blocked_count": publish_blocked_count,
                 "weekly_maintenance_due": bool((result.get("maintenance_plan") or {}).get("weekly_due")),
                 "monthly_maintenance_due": bool((result.get("maintenance_plan") or {}).get("monthly_due")),
+                "maintenance_ready_action_count": int((result.get("maintenance_execution_packet") or {}).get("ready_action_count", 0) or 0),
                 "post_publish_dual_truth_ready": bool((result.get("post_publish_scorecard") or {}).get("dual_truth_ready")),
                 "scorecard_strong_count": int((result.get("post_publish_scorecard") or {}).get("strong_count", 0) or 0),
                 "scorecard_watch_count": int((result.get("post_publish_scorecard") or {}).get("watch_count", 0) or 0),
@@ -1951,6 +1959,7 @@ def run_cycle() -> dict[str, Any]:
             f"- Scorecard strong/watch/weak: {(result.get('summary') or {}).get('scorecard_strong_count', 0)}/{(result.get('summary') or {}).get('scorecard_watch_count', 0)}/{(result.get('summary') or {}).get('scorecard_weak_count', 0)}",
             f"- Weekly maintenance due: {(result.get('summary') or {}).get('weekly_maintenance_due', False)}",
             f"- Monthly maintenance due: {(result.get('summary') or {}).get('monthly_maintenance_due', False)}",
+            f"- Maintenance ready actions: {(result.get('summary') or {}).get('maintenance_ready_action_count', 0)}",
             f"- Writes this run: {(result.get('summary') or {}).get('writes_count', 0)}",
             f"- Merge candidates: {(result.get('summary') or {}).get('merge_candidate_count', 0)}",
             f"- Redirect candidates: {(result.get('summary') or {}).get('redirect_candidate_count', 0)}",
@@ -2048,6 +2057,16 @@ def run_cycle() -> dict[str, Any]:
     for item in (scorecard.get("top_pages") or [])[:5]:
         md_lines.append(
             f"- `{item.get('slug')}` | band={item.get('performance_band')} | aggregate={item.get('aggregate_score')} | action={item.get('recommended_action')}"
+        )
+
+    md_lines.extend(["", "## Maintenance execution packet"])
+    maintenance_packet = result.get("maintenance_execution_packet") or {}
+    md_lines.append(f"- Weekly due: {maintenance_packet.get('weekly_due', False)}")
+    md_lines.append(f"- Monthly due: {maintenance_packet.get('monthly_due', False)}")
+    md_lines.append(f"- Ready actions: {maintenance_packet.get('ready_action_count', 0)}")
+    for item in (maintenance_packet.get("ready_actions") or [])[:5]:
+        md_lines.append(
+            f"- {item.get('window')} / {item.get('type')} | priority={item.get('priority')} | slugs={', '.join(item.get('slugs') or [])}"
         )
 
     md_lines.extend(["", "## GEO SEO packaging"])
@@ -2177,6 +2196,7 @@ def run_cycle() -> dict[str, Any]:
     opportunity_registry_path = output_base / "opportunity-registry.json"
     action_plan_path = output_base / "page-action-plan.json"
     maintenance_plan_path = output_base / "maintenance-plan.json"
+    maintenance_execution_packet_path = output_base / "maintenance-execution-packet.json"
     consolidation_plan_path = output_base / "consolidation-plan.json"
     post_publish_scorecard_path = output_base / "post-publish-scorecard.json"
     technical_release_gate_path = output_base / "technical-release-gates.json"
@@ -2185,6 +2205,7 @@ def run_cycle() -> dict[str, Any]:
     opportunity_registry_path.write_text(json.dumps(result.get("opportunity_registry") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
     action_plan_path.write_text(json.dumps(result.get("page_action_plan") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
     maintenance_plan_path.write_text(json.dumps(result.get("maintenance_plan") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
+    maintenance_execution_packet_path.write_text(json.dumps(result.get("maintenance_execution_packet") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
     consolidation_plan_path.write_text(json.dumps(result.get("consolidation_plan") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
     post_publish_scorecard_path.write_text(json.dumps(result.get("post_publish_scorecard") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
     technical_release_gate_path.write_text(json.dumps(result.get("technical_release_gates") or [], ensure_ascii=False, indent=2), encoding="utf-8")
@@ -2204,6 +2225,7 @@ def run_cycle() -> dict[str, Any]:
             "opportunity_registry_json": str(opportunity_registry_path),
             "page_action_plan_json": str(action_plan_path),
             "maintenance_plan_json": str(maintenance_plan_path),
+            "maintenance_execution_packet_json": str(maintenance_execution_packet_path),
             "consolidation_plan_json": str(consolidation_plan_path),
             "post_publish_scorecard_json": str(post_publish_scorecard_path),
             "technical_release_gate_json": str(technical_release_gate_path),
@@ -2237,6 +2259,10 @@ def run_cycle() -> dict[str, Any]:
         **dict(state.get("maintenance_state") or {}),
         "last_weekly_run_at": result["generated_at"] if (result.get("maintenance_plan") or {}).get("weekly_due") else (dict(state.get("maintenance_state") or {}).get("last_weekly_run_at")),
         "last_monthly_run_at": result["generated_at"] if (result.get("maintenance_plan") or {}).get("monthly_due") else (dict(state.get("maintenance_state") or {}).get("last_monthly_run_at")),
+    }
+    state["last_maintenance_execution_packet"] = {
+        "ready_action_count": int((result.get("maintenance_execution_packet") or {}).get("ready_action_count", 0) or 0),
+        "ready_actions": (result.get("maintenance_execution_packet") or {}).get("ready_actions", [])[:10],
     }
     state["last_technical_release_gate_summary"] = {
         "pass_count": (result.get("summary") or {}).get("technical_release_gate_pass_count", 0),
