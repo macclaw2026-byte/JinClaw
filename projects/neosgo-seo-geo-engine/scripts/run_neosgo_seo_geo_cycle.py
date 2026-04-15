@@ -19,6 +19,8 @@ from typing import Any, Optional
 from neosgo_admin_marketing_api import MarketingApiClient, MarketingApiError
 from google_search_console_client import GoogleSearchConsoleError, sync_gsc_feedback
 from opportunity_registry import build_opportunity_registry
+from page_action_decider import build_page_action_plan
+from maintenance_planner import build_maintenance_plan
 from technical_release_gate import evaluate_release_gate
 
 
@@ -1328,6 +1330,8 @@ def run_cycle() -> dict[str, Any]:
         "adaptive_profile": {},
         "iteration_plan": {},
         "opportunity_registry": {},
+        "page_action_plan": {},
+        "maintenance_plan": {},
         "research_briefs": [],
         "seo_packaging_reviews": [],
         "geo_seo_packaging_reviews": [],
@@ -1371,6 +1375,15 @@ def run_cycle() -> dict[str, Any]:
                 notes_by_slug=notes_by_slug,
                 feedback_summary=result["historical_feedback"],
                 geo_targets=geo_targets,
+            )
+            result["page_action_plan"] = build_page_action_plan(
+                opportunity_registry=result["opportunity_registry"],
+                create_limit=int(config.get("daily_create_limit", 2) or 2),
+                geo_limit=int(config.get("daily_geo_variant_limit", 4) or 4),
+            )
+            result["maintenance_plan"] = build_maintenance_plan(
+                opportunity_registry=result["opportunity_registry"],
+                state=state,
             )
             result["market_research"] = _build_market_research(config, result["historical_feedback"], inventory_summary)
             result["adaptive_profile"] = _build_adaptive_profile(
@@ -1420,10 +1433,14 @@ def run_cycle() -> dict[str, Any]:
             backfill_published_notes = 0
             backfill_published_variants = 0
             publish_blocked_count = 0
+            action_by_slug = dict((result.get("page_action_plan") or {}).get("action_by_slug") or {})
 
             for item in enhanced_backlog:
                 slug = str(item.get("slug") or "").strip()
                 if not slug:
+                    continue
+                action_plan_row = dict(action_by_slug.get(slug) or {})
+                if not action_plan_row.get("execute_this_run"):
                     continue
                 note_gate = dict(note_release_gates.get(slug) or {})
                 note = notes_by_slug.get(slug)
@@ -1833,6 +1850,8 @@ def run_cycle() -> dict[str, Any]:
                 "backlog_note_count": len(backlog),
                 "feedback_row_count": result["historical_feedback"].get("row_count", 0),
                 "opportunity_item_count": (result.get("opportunity_registry") or {}).get("item_count", 0),
+                "selected_action_count": len((result.get("page_action_plan") or {}).get("selected_actions", [])),
+                "skipped_action_count": len((result.get("page_action_plan") or {}).get("skipped_actions", [])),
                 "writes_count": len(result["writes"]),
                 "gap_count": len(result["gaps"]),
                 "published_note_backfills": backfill_published_notes,
@@ -1841,6 +1860,8 @@ def run_cycle() -> dict[str, Any]:
                 "technical_release_gate_pass_count": sum(1 for row in result["technical_release_gates"] if row.get("passed")),
                 "technical_release_gate_fail_count": sum(1 for row in result["technical_release_gates"] if not row.get("passed")),
                 "publish_blocked_count": publish_blocked_count,
+                "weekly_maintenance_due": bool((result.get("maintenance_plan") or {}).get("weekly_due")),
+                "monthly_maintenance_due": bool((result.get("maintenance_plan") or {}).get("monthly_due")),
                 "geo_priority_order": [target.get("state") for target in geo_targets],
                 "primary_focus_topic": result["adaptive_profile"].get("primary_focus_topic"),
                 "research_lead_topic": result["adaptive_profile"].get("research_lead_topic"),
@@ -1872,6 +1893,8 @@ def run_cycle() -> dict[str, Any]:
             f"- Backlog notes: {(result.get('summary') or {}).get('backlog_note_count', 0)}",
             f"- Historical feedback rows loaded: {(result.get('summary') or {}).get('feedback_row_count', 0)}",
             f"- Opportunity items: {(result.get('summary') or {}).get('opportunity_item_count', 0)}",
+            f"- Selected actions: {(result.get('summary') or {}).get('selected_action_count', 0)}",
+            f"- Skipped actions: {(result.get('summary') or {}).get('skipped_action_count', 0)}",
             f"- GSC sync: {((result.get('gsc_sync') or {}).get('reason') or ('ok' if (result.get('gsc_sync') or {}).get('ran') else 'not_run'))}",
             f"- Primary focus topic: {(result.get('summary') or {}).get('primary_focus_topic', 'n/a')}",
             f"- Research lead topic: {(result.get('summary') or {}).get('research_lead_topic', 'n/a')}",
@@ -1879,6 +1902,8 @@ def run_cycle() -> dict[str, Any]:
             f"- Technical release gate pass count: {(result.get('summary') or {}).get('technical_release_gate_pass_count', 0)}",
             f"- Technical release gate fail count: {(result.get('summary') or {}).get('technical_release_gate_fail_count', 0)}",
             f"- Publish blocked by gate: {(result.get('summary') or {}).get('publish_blocked_count', 0)}",
+            f"- Weekly maintenance due: {(result.get('summary') or {}).get('weekly_maintenance_due', False)}",
+            f"- Monthly maintenance due: {(result.get('summary') or {}).get('monthly_maintenance_due', False)}",
             f"- Writes this run: {(result.get('summary') or {}).get('writes_count', 0)}",
             f"- Published note backfills: {(result.get('summary') or {}).get('published_note_backfills', 0)}",
             f"- Published GEO backfills: {(result.get('summary') or {}).get('published_variant_backfills', 0)}",
@@ -1999,6 +2024,15 @@ def run_cycle() -> dict[str, Any]:
     else:
         md_lines.append("- No opportunity registry rows computed.")
 
+    md_lines.extend(["", "## Page action plan"])
+    if (result.get("page_action_plan") or {}).get("selected_actions"):
+        for item in (result.get("page_action_plan") or {}).get("selected_actions", [])[:10]:
+            md_lines.append(
+                f"- `{item['slug']}` | action={item['recommended_action']} | score={item['action_score']} | execute={item['execute_this_run']}"
+            )
+    else:
+        md_lines.append("- No page actions selected.")
+
     md_lines.extend(["", "## Technical release gate"])
     if result.get("technical_release_gates"):
         for item in (result.get("technical_release_gates") or [])[:10]:
@@ -2009,6 +2043,15 @@ def run_cycle() -> dict[str, Any]:
                 md_lines.append(f"  blockers: {', '.join(item.get('blocking_items')[:6])}")
     else:
         md_lines.append("- No technical release gates computed.")
+
+    md_lines.extend(["", "## Maintenance plan"])
+    maintenance_plan = result.get("maintenance_plan") or {}
+    md_lines.append(f"- Weekly due: {maintenance_plan.get('weekly_due', False)}")
+    md_lines.append(f"- Monthly due: {maintenance_plan.get('monthly_due', False)}")
+    for item in maintenance_plan.get("weekly_actions", []):
+        md_lines.append(f"- Weekly action `{item.get('type')}` | count={item.get('count')} | slugs={', '.join(item.get('slugs', [])[:5])}")
+    for item in maintenance_plan.get("monthly_actions", []):
+        md_lines.append(f"- Monthly action `{item.get('type')}` | count={item.get('count')} | slugs={', '.join(item.get('slugs', [])[:5])}")
 
     md_lines.extend(["", "## Interior Designer Daily Article"])
     designer_program = result.get("designer_daily_program") or {}
@@ -2043,10 +2086,14 @@ def run_cycle() -> dict[str, Any]:
     md_path = output_base / "report.md"
     json_path = output_base / "report.json"
     opportunity_registry_path = output_base / "opportunity-registry.json"
+    action_plan_path = output_base / "page-action-plan.json"
+    maintenance_plan_path = output_base / "maintenance-plan.json"
     technical_release_gate_path = output_base / "technical-release-gates.json"
     md_path.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
     json_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     opportunity_registry_path.write_text(json.dumps(result.get("opportunity_registry") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
+    action_plan_path.write_text(json.dumps(result.get("page_action_plan") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
+    maintenance_plan_path.write_text(json.dumps(result.get("maintenance_plan") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
     technical_release_gate_path.write_text(json.dumps(result.get("technical_release_gates") or [], ensure_ascii=False, indent=2), encoding="utf-8")
 
     state.setdefault("runs", []).append(
@@ -2062,6 +2109,8 @@ def run_cycle() -> dict[str, Any]:
             "report_markdown": str(md_path),
             "report_json": str(json_path),
             "opportunity_registry_json": str(opportunity_registry_path),
+            "page_action_plan_json": str(action_plan_path),
+            "maintenance_plan_json": str(maintenance_plan_path),
             "technical_release_gate_json": str(technical_release_gate_path),
         }
     )
@@ -2072,6 +2121,15 @@ def run_cycle() -> dict[str, Any]:
     state["last_opportunity_registry"] = {
         "item_count": (result.get("opportunity_registry") or {}).get("item_count", 0),
         "top_actions": (result.get("opportunity_registry") or {}).get("top_actions", [])[:5],
+    }
+    state["last_page_action_plan"] = {
+        "selected_actions": (result.get("page_action_plan") or {}).get("selected_actions", [])[:10],
+        "skipped_actions": (result.get("page_action_plan") or {}).get("skipped_actions", [])[:10],
+    }
+    state["maintenance_state"] = {
+        **dict(state.get("maintenance_state") or {}),
+        "last_weekly_run_at": result["generated_at"] if (result.get("maintenance_plan") or {}).get("weekly_due") else (dict(state.get("maintenance_state") or {}).get("last_weekly_run_at")),
+        "last_monthly_run_at": result["generated_at"] if (result.get("maintenance_plan") or {}).get("monthly_due") else (dict(state.get("maintenance_state") or {}).get("last_monthly_run_at")),
     }
     state["last_technical_release_gate_summary"] = {
         "pass_count": (result.get("summary") or {}).get("technical_release_gate_pass_count", 0),

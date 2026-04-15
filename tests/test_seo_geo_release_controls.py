@@ -7,6 +7,8 @@ SCRIPT_DIR = Path("/Users/mac_claw/.openclaw/workspace/projects/neosgo-seo-geo-e
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from maintenance_planner import build_maintenance_plan
+from page_action_decider import build_page_action_plan
 from opportunity_registry import build_opportunity_registry
 from technical_release_gate import evaluate_release_gate
 
@@ -83,6 +85,41 @@ class SeoGeoReleaseControlTests(unittest.TestCase):
         gate = evaluate_release_gate(strong, config, kind="geo_variant")
         self.assertTrue(gate["passed"])
         self.assertEqual(gate["blocking_items"], [])
+
+    def test_page_action_plan_respects_limits(self) -> None:
+        registry = {
+            "items": [
+                {"slug": "a", "recommended_action": "create", "action_score": 100, "status": "MISSING"},
+                {"slug": "b", "recommended_action": "create", "action_score": 90, "status": "MISSING"},
+                {"slug": "c", "recommended_action": "build_geo", "action_score": 80, "status": "PUBLISHED"},
+                {"slug": "d", "recommended_action": "refresh_ctr", "action_score": 70, "status": "PUBLISHED"},
+                {"slug": "e", "recommended_action": "monitor", "action_score": 60, "status": "PUBLISHED"},
+            ]
+        }
+        plan = build_page_action_plan(opportunity_registry=registry, create_limit=1, geo_limit=1)
+        selected = {row["slug"]: row for row in plan["selected_actions"]}
+        skipped = {row["slug"]: row for row in plan["skipped_actions"]}
+        self.assertIn("a", selected)
+        self.assertIn("c", selected)
+        self.assertIn("d", selected)
+        self.assertEqual(skipped["b"]["skip_reason"], "create_limit_reached")
+        self.assertEqual(skipped["e"]["skip_reason"], "monitor_only")
+
+    def test_maintenance_plan_marks_weekly_and_monthly_due(self) -> None:
+        registry = {
+            "items": [
+                {"slug": "ctr-page", "freshness_days": 10, "impressions": 120, "clicks": 0, "geo_gap": 1},
+                {"slug": "stale-page", "freshness_days": 60, "impressions": 10, "clicks": 3, "geo_gap": 0},
+            ]
+        }
+        plan = build_maintenance_plan(opportunity_registry=registry, state={})
+        self.assertTrue(plan["weekly_due"])
+        self.assertTrue(plan["monthly_due"])
+        weekly_types = {row["type"] for row in plan["weekly_actions"]}
+        monthly_types = {row["type"] for row in plan["monthly_actions"]}
+        self.assertIn("ctr_packaging_review", weekly_types)
+        self.assertIn("stale_content_refresh_review", weekly_types)
+        self.assertIn("merge_or_prune_review", monthly_types)
 
 
 if __name__ == "__main__":

@@ -56,6 +56,8 @@ Hardcore automation upgrade reference:
 New output artifacts:
 
 - `output/<run_id>/opportunity-registry.json`
+- `output/<run_id>/page-action-plan.json`
+- `output/<run_id>/maintenance-plan.json`
 - `output/<run_id>/technical-release-gates.json`
 
 Interior designer daily article program:
