@@ -29,6 +29,26 @@
     "enabled": true,
     "goal": "Use search plus on-site analytics as a dual-truth scorecard before deciding whether to expand, refresh, merge, or prune content."
   },
+  "delivery_contract": {
+    "launch_agent_label": "ai.jinclaw.neosgo-seo-geo-daily",
+    "cadence": "daily",
+    "start_calendar_interval": {
+      "hour": 6,
+      "minute": 0
+    },
+    "telegram_required": true,
+    "required_artifacts": [
+      "report_markdown",
+      "report_json",
+      "opportunity_registry_json",
+      "page_action_plan_json",
+      "maintenance_plan_json",
+      "maintenance_execution_packet_json",
+      "consolidation_plan_json",
+      "post_publish_scorecard_json",
+      "technical_release_gate_json"
+    ]
+  },
   "research_framework": {
     "goal": "Use historical signal first, then market-gap research, then adapt note and GEO priorities before each write cycle.",
     "topic_families": [

@@ -9,6 +9,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from analytics_feedback_client import normalize_admin_ops_analytics
 from consolidation_planner import build_consolidation_plan
+from delivery_proof import build_delivery_proof
 from maintenance_execution_packet import build_maintenance_execution_packet
 from maintenance_planner import build_maintenance_plan
 from page_action_decider import build_page_action_plan
@@ -240,6 +241,43 @@ class SeoGeoReleaseControlTests(unittest.TestCase):
         self.assertEqual(ready["ctr_packaging_review"]["priority"], "high")
         self.assertEqual(ready["merge_or_prune_review"]["priority"], "high")
         self.assertEqual(ready["merge_or_prune_review"]["merge_candidates"][0]["slug"], "merge-me")
+
+    def test_delivery_proof_requires_artifacts_delivery_and_next_window(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            required = [
+                "report_markdown",
+                "report_json",
+                "post_publish_scorecard_json",
+                "maintenance_execution_packet_json",
+            ]
+            artifacts = {}
+            for name in required:
+                path = base / f"{name}.json"
+                path.write_text("{}", encoding="utf-8")
+                artifacts[name] = str(path)
+            proof = build_delivery_proof(
+                result={
+                    "run_id": "run-1",
+                    "generated_at": "2026-04-15T00:00:00Z",
+                    "blocked": False,
+                    "post_publish_scorecard": {"enabled": True, "dual_truth_ready": True},
+                    "maintenance_execution_packet": {"enabled": True, "ready_action_count": 2},
+                },
+                artifacts=artifacts,
+                delivery_contract={
+                    "required_artifacts": required,
+                    "telegram_required": True,
+                    "cadence": "daily",
+                    "launch_agent_label": "ai.jinclaw.neosgo-seo-geo-daily",
+                },
+                deliveries=[{"returncode": 0}, {"returncode": 0}],
+            )
+            self.assertTrue(proof["ok"])
+            self.assertEqual(proof["goal_status"], "continuous_delivery_ready")
+            self.assertTrue(proof["next_window"]["continues_after_success"])
 
 
 if __name__ == "__main__":
