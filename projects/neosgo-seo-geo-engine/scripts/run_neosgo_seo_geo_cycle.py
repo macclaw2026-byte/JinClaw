@@ -18,6 +18,7 @@ from typing import Any, Optional
 
 from neosgo_admin_marketing_api import MarketingApiClient, MarketingApiError
 from google_search_console_client import GoogleSearchConsoleError, sync_gsc_feedback
+from consolidation_planner import build_consolidation_plan
 from opportunity_registry import build_opportunity_registry
 from page_action_decider import build_page_action_plan
 from maintenance_planner import build_maintenance_plan
@@ -1332,6 +1333,7 @@ def run_cycle() -> dict[str, Any]:
         "opportunity_registry": {},
         "page_action_plan": {},
         "maintenance_plan": {},
+        "consolidation_plan": {},
         "research_briefs": [],
         "seo_packaging_reviews": [],
         "geo_seo_packaging_reviews": [],
@@ -1385,6 +1387,7 @@ def run_cycle() -> dict[str, Any]:
                 opportunity_registry=result["opportunity_registry"],
                 state=state,
             )
+            result["consolidation_plan"] = build_consolidation_plan(result["opportunity_registry"])
             result["market_research"] = _build_market_research(config, result["historical_feedback"], inventory_summary)
             result["adaptive_profile"] = _build_adaptive_profile(
                 config,
@@ -1854,6 +1857,9 @@ def run_cycle() -> dict[str, Any]:
                 "skipped_action_count": len((result.get("page_action_plan") or {}).get("skipped_actions", [])),
                 "writes_count": len(result["writes"]),
                 "gap_count": len(result["gaps"]),
+                "merge_candidate_count": len((result.get("consolidation_plan") or {}).get("merge_candidates", [])),
+                "redirect_candidate_count": len((result.get("consolidation_plan") or {}).get("redirect_candidates", [])),
+                "prune_candidate_count": len((result.get("consolidation_plan") or {}).get("prune_candidates", [])),
                 "published_note_backfills": backfill_published_notes,
                 "published_variant_backfills": backfill_published_variants,
                 "editorial_pass_count": sum(1 for row in result["editorial_reviews"] if row.get("passed")),
@@ -1905,6 +1911,9 @@ def run_cycle() -> dict[str, Any]:
             f"- Weekly maintenance due: {(result.get('summary') or {}).get('weekly_maintenance_due', False)}",
             f"- Monthly maintenance due: {(result.get('summary') or {}).get('monthly_maintenance_due', False)}",
             f"- Writes this run: {(result.get('summary') or {}).get('writes_count', 0)}",
+            f"- Merge candidates: {(result.get('summary') or {}).get('merge_candidate_count', 0)}",
+            f"- Redirect candidates: {(result.get('summary') or {}).get('redirect_candidate_count', 0)}",
+            f"- Prune candidates: {(result.get('summary') or {}).get('prune_candidate_count', 0)}",
             f"- Published note backfills: {(result.get('summary') or {}).get('published_note_backfills', 0)}",
             f"- Published GEO backfills: {(result.get('summary') or {}).get('published_variant_backfills', 0)}",
             f"- Remaining gaps: {(result.get('summary') or {}).get('gap_count', 0)}",
@@ -2053,6 +2062,22 @@ def run_cycle() -> dict[str, Any]:
     for item in maintenance_plan.get("monthly_actions", []):
         md_lines.append(f"- Monthly action `{item.get('type')}` | count={item.get('count')} | slugs={', '.join(item.get('slugs', [])[:5])}")
 
+    md_lines.extend(["", "## Consolidation plan"])
+    consolidation_plan = result.get("consolidation_plan") or {}
+    md_lines.append(f"- Topic clusters: {consolidation_plan.get('topic_cluster_count', 0)}")
+    for item in consolidation_plan.get("merge_candidates", [])[:8]:
+        md_lines.append(
+            f"- Merge review `{item.get('slug')}` -> `{item.get('target_slug')}` | topic={item.get('topic')} | clicks={item.get('clicks')} | impressions={item.get('impressions')}"
+        )
+    for item in consolidation_plan.get("redirect_candidates", [])[:8]:
+        md_lines.append(
+            f"- Redirect review `{item.get('slug')}` -> `{item.get('target_slug')}` | topic={item.get('topic')} | impressions={item.get('impressions')}"
+        )
+    for item in consolidation_plan.get("prune_candidates", [])[:8]:
+        md_lines.append(
+            f"- Prune review `{item.get('slug')}` | topic={item.get('topic')} | freshness_days={item.get('freshness_days')} | impressions={item.get('impressions')}"
+        )
+
     md_lines.extend(["", "## Interior Designer Daily Article"])
     designer_program = result.get("designer_daily_program") or {}
     md_lines.append(f"- Enabled: {designer_program.get('enabled', False)}")
@@ -2088,12 +2113,14 @@ def run_cycle() -> dict[str, Any]:
     opportunity_registry_path = output_base / "opportunity-registry.json"
     action_plan_path = output_base / "page-action-plan.json"
     maintenance_plan_path = output_base / "maintenance-plan.json"
+    consolidation_plan_path = output_base / "consolidation-plan.json"
     technical_release_gate_path = output_base / "technical-release-gates.json"
     md_path.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
     json_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     opportunity_registry_path.write_text(json.dumps(result.get("opportunity_registry") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
     action_plan_path.write_text(json.dumps(result.get("page_action_plan") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
     maintenance_plan_path.write_text(json.dumps(result.get("maintenance_plan") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
+    consolidation_plan_path.write_text(json.dumps(result.get("consolidation_plan") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
     technical_release_gate_path.write_text(json.dumps(result.get("technical_release_gates") or [], ensure_ascii=False, indent=2), encoding="utf-8")
 
     state.setdefault("runs", []).append(
@@ -2111,6 +2138,7 @@ def run_cycle() -> dict[str, Any]:
             "opportunity_registry_json": str(opportunity_registry_path),
             "page_action_plan_json": str(action_plan_path),
             "maintenance_plan_json": str(maintenance_plan_path),
+            "consolidation_plan_json": str(consolidation_plan_path),
             "technical_release_gate_json": str(technical_release_gate_path),
         }
     )
@@ -2125,6 +2153,11 @@ def run_cycle() -> dict[str, Any]:
     state["last_page_action_plan"] = {
         "selected_actions": (result.get("page_action_plan") or {}).get("selected_actions", [])[:10],
         "skipped_actions": (result.get("page_action_plan") or {}).get("skipped_actions", [])[:10],
+    }
+    state["last_consolidation_plan"] = {
+        "merge_candidates": (result.get("consolidation_plan") or {}).get("merge_candidates", [])[:10],
+        "redirect_candidates": (result.get("consolidation_plan") or {}).get("redirect_candidates", [])[:10],
+        "prune_candidates": (result.get("consolidation_plan") or {}).get("prune_candidates", [])[:10],
     }
     state["maintenance_state"] = {
         **dict(state.get("maintenance_state") or {}),
