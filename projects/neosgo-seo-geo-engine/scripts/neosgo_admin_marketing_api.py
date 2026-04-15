@@ -74,6 +74,10 @@ class MarketingApiClient:
     def list_design_notes(self) -> dict[str, Any]:
         return self._request("GET", "/api/automation/admin/design-notes")
 
+    def get_admin_ops_analytics(self, from_date: str, to_date: str) -> dict[str, Any]:
+        query = urllib.parse.urlencode({"from": from_date, "to": to_date})
+        return self._request("GET", f"/api/automation/admin/ops/analytics?{query}")
+
     def get_design_note(self, note_id: str) -> dict[str, Any]:
         payload = self._request("GET", f"/api/automation/admin/design-notes/{urllib.parse.quote(str(note_id))}")
         return self._unwrap_single(payload, ("note", "data", "item"))

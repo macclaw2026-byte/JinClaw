@@ -17,9 +17,17 @@
       "avgPosition",
       "feedbackScore",
       "conversionRate",
+      "pageViews",
+      "uniqueVisitors",
+      "avgActiveTime",
+      "engagementScore",
       "city",
       "state"
     ]
+  },
+  "post_publish_scorecard": {
+    "enabled": true,
+    "goal": "Use search plus on-site analytics as a dual-truth scorecard before deciding whether to expand, refresh, merge, or prune content."
   },
   "research_framework": {
     "goal": "Use historical signal first, then market-gap research, then adapt note and GEO priorities before each write cycle.",

@@ -36,14 +36,16 @@ Core entrypoint:
 Execution order:
 
 1. sync Google Search Console snapshots when configured
-2. ingest history and optional feedback files
-3. distill historical signal
-4. build an opportunity registry across create/refresh/expand/build-geo actions
-5. run market-gap research against note inventory and GEO coverage
-6. compute an adaptive topic strategy
-7. create/update draft notes and GEO variants
-8. run a technical release gate before any publish call
-9. write state and deliver a daily report
+2. sync site analytics snapshots when configured
+3. ingest history and optional feedback files
+4. distill historical signal
+5. build an opportunity registry across create/refresh/expand/build-geo actions
+6. generate a dual-truth post-publish scorecard from Search Console and on-site analytics
+7. run market-gap research against note inventory and GEO coverage
+8. compute an adaptive topic strategy
+9. create/update draft notes and GEO variants
+10. run a technical release gate before any publish call
+11. write state and deliver a daily report
 
 Optional feedback drop folder:
 
@@ -59,6 +61,7 @@ New output artifacts:
 - `output/<run_id>/page-action-plan.json`
 - `output/<run_id>/maintenance-plan.json`
 - `output/<run_id>/consolidation-plan.json`
+- `output/<run_id>/post-publish-scorecard.json`
 - `output/<run_id>/technical-release-gates.json`
 
 Interior designer daily article program:
@@ -78,6 +81,10 @@ Accepted snapshot fields:
 - `avgPosition`
 - `feedbackScore`
 - `conversionRate`
+- `pageViews`
+- `uniqueVisitors`
+- `avgActiveTime`
+- `engagementScore`
 - `city`
 - `state`
 
@@ -98,6 +105,8 @@ Expected secret names:
 - `NEOSGO_GSC_REFRESH_TOKEN`
 - `NEOSGO_GSC_LOOKBACK_DAYS` (optional, defaults to 28)
 - `NEOSGO_GSC_ROW_LIMIT` (optional, defaults to 250)
+- `NEOSGO_ANALYTICS_ENABLED` (optional, defaults to `true`)
+- `NEOSGO_ANALYTICS_LOOKBACK_DAYS` (optional, defaults to 28)
 
 Recommended long-term GSC automation flow:
 

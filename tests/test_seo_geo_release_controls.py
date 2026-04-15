@@ -7,10 +7,12 @@ SCRIPT_DIR = Path("/Users/mac_claw/.openclaw/workspace/projects/neosgo-seo-geo-e
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from analytics_feedback_client import normalize_admin_ops_analytics
 from consolidation_planner import build_consolidation_plan
 from maintenance_planner import build_maintenance_plan
 from page_action_decider import build_page_action_plan
 from opportunity_registry import build_opportunity_registry
+from post_publish_scorecard import build_post_publish_scorecard
 from technical_release_gate import evaluate_release_gate
 
 
@@ -139,6 +141,70 @@ class SeoGeoReleaseControlTests(unittest.TestCase):
         self.assertEqual(redirects["redirect-me"]["target_slug"], "winner")
         self.assertIn("prune-me", prunes)
         self.assertEqual(merges["merge-me"]["target_slug"], "bath-winner")
+
+    def test_normalize_admin_ops_analytics_extracts_slug_fields(self) -> None:
+        payload = {
+            "data": {
+                "topPages": [
+                    {"path": "/notes/kitchen-island-lighting", "views": 120, "uniqueVisitors": 80, "avgActiveTime": 35},
+                    {"path": "/notes/pendant-size/geo/providence-ri", "views": 40, "visitors": 30, "averageActiveTime": 20},
+                ]
+            }
+        }
+        rows = normalize_admin_ops_analytics(payload, "https://neosgo.com")
+        self.assertEqual(rows[0]["slug"], "kitchen-island-lighting")
+        self.assertEqual(rows[0]["geoSlug"], "")
+        self.assertEqual(rows[1]["slug"], "pendant-size")
+        self.assertEqual(rows[1]["geoSlug"], "providence-ri")
+        self.assertGreater(rows[0]["engagementScore"], 0)
+
+    def test_post_publish_scorecard_uses_dual_truth(self) -> None:
+        registry = {
+            "items": [
+                {
+                    "slug": "winner",
+                    "topic": "pendant",
+                    "recommended_action": "expand",
+                    "clicks": 18,
+                    "impressions": 220,
+                    "ctr": 0.08,
+                    "conversion_rate": 0.03,
+                    "page_views": 180,
+                    "unique_visitors": 120,
+                    "avg_engagement_score": 42,
+                    "freshness_days": 12,
+                },
+                {
+                    "slug": "weak-page",
+                    "topic": "bathroom",
+                    "recommended_action": "refresh_ctr",
+                    "clicks": 0,
+                    "impressions": 25,
+                    "ctr": 0.0,
+                    "conversion_rate": 0.0,
+                    "page_views": 10,
+                    "unique_visitors": 8,
+                    "avg_engagement_score": 4,
+                    "freshness_days": 120,
+                },
+            ]
+        }
+        feedback_summary = {
+            "slug_metrics": {
+                "winner": {"feedbackScore": 18.0},
+                "weak-page": {"feedbackScore": 1.0},
+            }
+        }
+        scorecard = build_post_publish_scorecard(
+            opportunity_registry=registry,
+            feedback_summary=feedback_summary,
+            gsc_sync={"ran": True},
+            analytics_sync={"ran": True},
+        )
+        self.assertTrue(scorecard["dual_truth_ready"])
+        self.assertEqual(scorecard["strong_count"], 1)
+        self.assertEqual(scorecard["weak_count"], 1)
+        self.assertEqual(scorecard["top_pages"][0]["slug"], "winner")
 
 
 if __name__ == "__main__":

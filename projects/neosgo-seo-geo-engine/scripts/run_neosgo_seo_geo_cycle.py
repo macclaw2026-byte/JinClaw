@@ -18,10 +18,12 @@ from typing import Any, Optional
 
 from neosgo_admin_marketing_api import MarketingApiClient, MarketingApiError
 from google_search_console_client import GoogleSearchConsoleError, sync_gsc_feedback
+from analytics_feedback_client import AnalyticsFeedbackError, sync_analytics_feedback
 from consolidation_planner import build_consolidation_plan
 from opportunity_registry import build_opportunity_registry
 from page_action_decider import build_page_action_plan
 from maintenance_planner import build_maintenance_plan
+from post_publish_scorecard import build_post_publish_scorecard
 from technical_release_gate import evaluate_release_gate
 
 
@@ -301,6 +303,9 @@ def _summarize_feedback(rows: list[dict[str, Any]], backlog: list[dict[str, Any]
         "impressions": 0.0,
         "feedbackScore": 0.0,
         "conversionRate": 0.0,
+        "pageViews": 0.0,
+        "uniqueVisitors": 0.0,
+        "engagementScore": 0.0,
         "samples": 0,
     })
     by_topic: dict[str, dict[str, Any]] = defaultdict(lambda: {
@@ -308,6 +313,9 @@ def _summarize_feedback(rows: list[dict[str, Any]], backlog: list[dict[str, Any]
         "impressions": 0.0,
         "feedbackScore": 0.0,
         "conversionRate": 0.0,
+        "pageViews": 0.0,
+        "uniqueVisitors": 0.0,
+        "engagementScore": 0.0,
         "samples": 0,
         "queryClicks": 0.0,
         "queryImpressions": 0.0,
@@ -342,6 +350,9 @@ def _summarize_feedback(rows: list[dict[str, Any]], backlog: list[dict[str, Any]
         ctr = _safe_float(row.get("ctr"))
         feedback_score = _safe_float(row.get("feedbackScore"))
         conversion_rate = _safe_float(row.get("conversionRate"))
+        page_views = _safe_float(row.get("pageViews") or row.get("views"))
+        unique_visitors = _safe_float(row.get("uniqueVisitors") or row.get("visitors"))
+        engagement_score = _safe_float(row.get("engagementScore"))
         if ctr <= 0 and clicks > 0 and impressions > 0:
             ctr = clicks / impressions
         target_slug = by_slug[slug]
@@ -349,12 +360,18 @@ def _summarize_feedback(rows: list[dict[str, Any]], backlog: list[dict[str, Any]
         target_slug["impressions"] += impressions
         target_slug["feedbackScore"] += feedback_score
         target_slug["conversionRate"] += conversion_rate
+        target_slug["pageViews"] += page_views
+        target_slug["uniqueVisitors"] += unique_visitors
+        target_slug["engagementScore"] += engagement_score
         target_slug["samples"] += 1
         target_topic = by_topic[topic]
         target_topic["clicks"] += clicks
         target_topic["impressions"] += impressions
         target_topic["feedbackScore"] += feedback_score
         target_topic["conversionRate"] += conversion_rate
+        target_topic["pageViews"] += page_views
+        target_topic["uniqueVisitors"] += unique_visitors
+        target_topic["engagementScore"] += engagement_score
         target_topic["samples"] += 1
         if query:
             target_topic["queryClicks"] += clicks
@@ -380,10 +397,13 @@ def _summarize_feedback(rows: list[dict[str, Any]], backlog: list[dict[str, Any]
                 "avg_conversion_rate": round(value["conversionRate"] / value["samples"], 4) if value["samples"] else 0.0,
                 "query_clicks": round(value["queryClicks"], 2),
                 "query_impressions": round(value["queryImpressions"], 2),
+                "page_views": round(value["pageViews"], 2),
+                "unique_visitors": round(value["uniqueVisitors"], 2),
+                "avg_engagement_score": round(value["engagementScore"] / value["samples"], 3) if value["samples"] else 0.0,
             }
             for key, value in by_topic.items()
         ),
-        key=lambda item: (item["query_clicks"], item["clicks"], item["avg_feedback_score"], item["avg_conversion_rate"]),
+        key=lambda item: (item["query_clicks"], item["clicks"], item["page_views"], item["avg_feedback_score"], item["avg_conversion_rate"]),
         reverse=True,
     )
     top_query_topics = sorted(
@@ -1317,6 +1337,7 @@ def run_cycle() -> dict[str, Any]:
         "missing_requirements": [],
         "workflow_order": [
             "sync_google_search_console",
+            "sync_site_analytics",
             "ingest_history_and_feedback",
             "distill_feedback",
             "market_research",
@@ -1326,6 +1347,7 @@ def run_cycle() -> dict[str, Any]:
         ],
         "historical_feedback": {},
         "gsc_sync": {},
+        "analytics_sync": {},
         "history_summary": {},
         "market_research": {},
         "adaptive_profile": {},
@@ -1334,6 +1356,7 @@ def run_cycle() -> dict[str, Any]:
         "page_action_plan": {},
         "maintenance_plan": {},
         "consolidation_plan": {},
+        "post_publish_scorecard": {},
         "research_briefs": [],
         "seo_packaging_reviews": [],
         "geo_seo_packaging_reviews": [],
@@ -1359,6 +1382,11 @@ def run_cycle() -> dict[str, Any]:
     except GoogleSearchConsoleError as exc:
         result["gsc_sync"] = {"enabled": True, "ran": False, "reason": "sync_failed"}
         result["missing_requirements"].append(f"gsc_sync_failed:{exc}")
+    try:
+        result["analytics_sync"] = sync_analytics_feedback(env, FEEDBACK_DIR, run_id, site_url=str(config.get("site_positioning", {}).get("website_url") or DEFAULT_BASE_URL))
+    except AnalyticsFeedbackError as exc:
+        result["analytics_sync"] = {"enabled": True, "ran": False, "reason": "sync_failed"}
+        result["missing_requirements"].append(f"analytics_sync_failed:{exc}")
     feedback_rows, feedback_issues = _load_feedback_rows(config)
     result["historical_feedback"] = _summarize_feedback(feedback_rows, backlog, config)
     result["history_summary"] = _summarize_run_history(state)
@@ -1388,6 +1416,12 @@ def run_cycle() -> dict[str, Any]:
                 state=state,
             )
             result["consolidation_plan"] = build_consolidation_plan(result["opportunity_registry"])
+            result["post_publish_scorecard"] = build_post_publish_scorecard(
+                opportunity_registry=result["opportunity_registry"],
+                feedback_summary=result["historical_feedback"],
+                gsc_sync=result.get("gsc_sync") or {},
+                analytics_sync=result.get("analytics_sync") or {},
+            )
             result["market_research"] = _build_market_research(config, result["historical_feedback"], inventory_summary)
             result["adaptive_profile"] = _build_adaptive_profile(
                 config,
@@ -1868,6 +1902,10 @@ def run_cycle() -> dict[str, Any]:
                 "publish_blocked_count": publish_blocked_count,
                 "weekly_maintenance_due": bool((result.get("maintenance_plan") or {}).get("weekly_due")),
                 "monthly_maintenance_due": bool((result.get("maintenance_plan") or {}).get("monthly_due")),
+                "post_publish_dual_truth_ready": bool((result.get("post_publish_scorecard") or {}).get("dual_truth_ready")),
+                "scorecard_strong_count": int((result.get("post_publish_scorecard") or {}).get("strong_count", 0) or 0),
+                "scorecard_watch_count": int((result.get("post_publish_scorecard") or {}).get("watch_count", 0) or 0),
+                "scorecard_weak_count": int((result.get("post_publish_scorecard") or {}).get("weak_count", 0) or 0),
                 "geo_priority_order": [target.get("state") for target in geo_targets],
                 "primary_focus_topic": result["adaptive_profile"].get("primary_focus_topic"),
                 "research_lead_topic": result["adaptive_profile"].get("research_lead_topic"),
@@ -1902,12 +1940,15 @@ def run_cycle() -> dict[str, Any]:
             f"- Selected actions: {(result.get('summary') or {}).get('selected_action_count', 0)}",
             f"- Skipped actions: {(result.get('summary') or {}).get('skipped_action_count', 0)}",
             f"- GSC sync: {((result.get('gsc_sync') or {}).get('reason') or ('ok' if (result.get('gsc_sync') or {}).get('ran') else 'not_run'))}",
+            f"- Analytics sync: {((result.get('analytics_sync') or {}).get('reason') or ('ok' if (result.get('analytics_sync') or {}).get('ran') else 'not_run'))}",
             f"- Primary focus topic: {(result.get('summary') or {}).get('primary_focus_topic', 'n/a')}",
             f"- Research lead topic: {(result.get('summary') or {}).get('research_lead_topic', 'n/a')}",
             f"- Editorial pass count: {(result.get('summary') or {}).get('editorial_pass_count', 0)}",
             f"- Technical release gate pass count: {(result.get('summary') or {}).get('technical_release_gate_pass_count', 0)}",
             f"- Technical release gate fail count: {(result.get('summary') or {}).get('technical_release_gate_fail_count', 0)}",
             f"- Publish blocked by gate: {(result.get('summary') or {}).get('publish_blocked_count', 0)}",
+            f"- Post-publish dual truth ready: {(result.get('summary') or {}).get('post_publish_dual_truth_ready', False)}",
+            f"- Scorecard strong/watch/weak: {(result.get('summary') or {}).get('scorecard_strong_count', 0)}/{(result.get('summary') or {}).get('scorecard_watch_count', 0)}/{(result.get('summary') or {}).get('scorecard_weak_count', 0)}",
             f"- Weekly maintenance due: {(result.get('summary') or {}).get('weekly_maintenance_due', False)}",
             f"- Monthly maintenance due: {(result.get('summary') or {}).get('monthly_maintenance_due', False)}",
             f"- Writes this run: {(result.get('summary') or {}).get('writes_count', 0)}",
@@ -1953,6 +1994,20 @@ def run_cycle() -> dict[str, Any]:
     else:
         md_lines.append(f"- Not synced: {gsc_sync.get('reason', 'not_configured')}")
 
+    md_lines.extend(["", "## Site analytics sync"])
+    analytics_sync = result.get("analytics_sync") or {}
+    if analytics_sync.get("ran"):
+        md_lines.append(
+            f"- Lookback={analytics_sync.get('lookback_days')}d | {analytics_sync.get('start_date')} -> {analytics_sync.get('end_date')}"
+        )
+        md_lines.append(
+            f"- page_views_total={analytics_sync.get('page_views_total', 0)} | unique_visitors_total={analytics_sync.get('unique_visitors_total', 0)} | avg_active_time={analytics_sync.get('avg_active_time', 0)}"
+        )
+        for label, info in (analytics_sync.get("snapshots") or {}).items():
+            md_lines.append(f"- {label}: rows={info.get('row_count', 0)}")
+    else:
+        md_lines.append(f"- Not synced: {analytics_sync.get('reason', 'not_configured')}")
+
     md_lines.extend(["", "## Market research"])
     market = result.get("market_research") or {}
     if market.get("top_research_candidates"):
@@ -1985,6 +2040,15 @@ def run_cycle() -> dict[str, Any]:
             md_lines.append(f"  quickAnswer: {item.get('quickAnswer')}")
     else:
         md_lines.append("- No SEO packaging reviews computed.")
+
+    md_lines.extend(["", "## Post-publish scorecard"])
+    scorecard = result.get("post_publish_scorecard") or {}
+    md_lines.append(f"- Dual truth ready: {scorecard.get('dual_truth_ready', False)}")
+    md_lines.append(f"- Strong/watch/weak: {scorecard.get('strong_count', 0)}/{scorecard.get('watch_count', 0)}/{scorecard.get('weak_count', 0)}")
+    for item in (scorecard.get("top_pages") or [])[:5]:
+        md_lines.append(
+            f"- `{item.get('slug')}` | band={item.get('performance_band')} | aggregate={item.get('aggregate_score')} | action={item.get('recommended_action')}"
+        )
 
     md_lines.extend(["", "## GEO SEO packaging"])
     if result.get("geo_seo_packaging_reviews"):
@@ -2114,6 +2178,7 @@ def run_cycle() -> dict[str, Any]:
     action_plan_path = output_base / "page-action-plan.json"
     maintenance_plan_path = output_base / "maintenance-plan.json"
     consolidation_plan_path = output_base / "consolidation-plan.json"
+    post_publish_scorecard_path = output_base / "post-publish-scorecard.json"
     technical_release_gate_path = output_base / "technical-release-gates.json"
     md_path.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
     json_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -2121,6 +2186,7 @@ def run_cycle() -> dict[str, Any]:
     action_plan_path.write_text(json.dumps(result.get("page_action_plan") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
     maintenance_plan_path.write_text(json.dumps(result.get("maintenance_plan") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
     consolidation_plan_path.write_text(json.dumps(result.get("consolidation_plan") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
+    post_publish_scorecard_path.write_text(json.dumps(result.get("post_publish_scorecard") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
     technical_release_gate_path.write_text(json.dumps(result.get("technical_release_gates") or [], ensure_ascii=False, indent=2), encoding="utf-8")
 
     state.setdefault("runs", []).append(
@@ -2139,6 +2205,7 @@ def run_cycle() -> dict[str, Any]:
             "page_action_plan_json": str(action_plan_path),
             "maintenance_plan_json": str(maintenance_plan_path),
             "consolidation_plan_json": str(consolidation_plan_path),
+            "post_publish_scorecard_json": str(post_publish_scorecard_path),
             "technical_release_gate_json": str(technical_release_gate_path),
         }
     )
@@ -2158,6 +2225,13 @@ def run_cycle() -> dict[str, Any]:
         "merge_candidates": (result.get("consolidation_plan") or {}).get("merge_candidates", [])[:10],
         "redirect_candidates": (result.get("consolidation_plan") or {}).get("redirect_candidates", [])[:10],
         "prune_candidates": (result.get("consolidation_plan") or {}).get("prune_candidates", [])[:10],
+    }
+    state["last_post_publish_scorecard"] = {
+        "dual_truth_ready": bool((result.get("post_publish_scorecard") or {}).get("dual_truth_ready")),
+        "strong_count": int((result.get("post_publish_scorecard") or {}).get("strong_count", 0) or 0),
+        "watch_count": int((result.get("post_publish_scorecard") or {}).get("watch_count", 0) or 0),
+        "weak_count": int((result.get("post_publish_scorecard") or {}).get("weak_count", 0) or 0),
+        "top_pages": (result.get("post_publish_scorecard") or {}).get("top_pages", [])[:10],
     }
     state["maintenance_state"] = {
         **dict(state.get("maintenance_state") or {}),

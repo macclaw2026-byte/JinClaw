@@ -104,6 +104,9 @@ def build_opportunity_registry(
         if ctr <= 0 and clicks > 0 and impressions > 0:
             ctr = clicks / impressions
         conversions = _safe_float(slug_perf.get("conversionRate"))
+        page_views = _safe_float(slug_perf.get("pageViews"))
+        unique_visitors = _safe_float(slug_perf.get("uniqueVisitors"))
+        engagement_score = _safe_float(slug_perf.get("engagementScore"))
         query_impressions = _safe_float(topic_perf.get("queryImpressions"))
         freshness_days = _days_since(str(note.get("updatedAt") or note.get("publishedAt") or note.get("createdAt") or ""))
         geo_gap = max(0, geo_target_count - geo_count) if geo_target_count else 0
@@ -119,6 +122,9 @@ def build_opportunity_registry(
             clicks * 3.0
             + impressions * 0.05
             + conversions * 100.0
+            + page_views * 0.08
+            + unique_visitors * 0.12
+            + engagement_score * 0.8
             + max(0, geo_gap) * 2.0
             + (8.0 if action == "create" else 6.0 if action == "refresh_ctr" else 5.0 if action == "build_geo" else 3.0 if action == "refresh_content" else 1.0),
             2,
@@ -134,6 +140,9 @@ def build_opportunity_registry(
                 "impressions": round(impressions, 2),
                 "ctr": round(ctr, 4),
                 "conversion_rate": round(conversions, 4),
+                "page_views": round(page_views, 2),
+                "unique_visitors": round(unique_visitors, 2),
+                "avg_engagement_score": round(engagement_score, 3),
                 "topic_query_impressions": round(query_impressions, 2),
                 "geo_variant_count": geo_count,
                 "geo_gap": geo_gap,
