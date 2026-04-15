@@ -170,6 +170,12 @@
       "freshGeoNeed": 1.5
     }
   },
+  "technical_release_gate": {
+    "min_sections": 4,
+    "min_internal_links": 2,
+    "max_seo_title_length": 80,
+    "max_seo_description_length": 180
+  },
   "editorial_framework": {
     "goal": "Every note should be genuinely useful, expert-sounding, easy to read, and strong enough to function as both SEO entry content and a trust-building reference asset.",
     "required_section_patterns": [

@@ -18,6 +18,8 @@ from typing import Any, Optional
 
 from neosgo_admin_marketing_api import MarketingApiClient, MarketingApiError
 from google_search_console_client import GoogleSearchConsoleError, sync_gsc_feedback
+from opportunity_registry import build_opportunity_registry
+from technical_release_gate import evaluate_release_gate
 
 
 ROOT = Path("/Users/mac_claw/.openclaw/workspace/projects/neosgo-seo-geo-engine")
@@ -1325,10 +1327,12 @@ def run_cycle() -> dict[str, Any]:
         "market_research": {},
         "adaptive_profile": {},
         "iteration_plan": {},
+        "opportunity_registry": {},
         "research_briefs": [],
         "seo_packaging_reviews": [],
         "geo_seo_packaging_reviews": [],
         "editorial_reviews": [],
+        "technical_release_gates": [],
         "designer_daily_program": {},
         "summary": {},
         "writes": [],
@@ -1361,6 +1365,13 @@ def run_cycle() -> dict[str, Any]:
             notes_payload = client.list_design_notes()
             notes_by_slug = _existing_notes_by_slug(notes_payload)
             inventory_summary = _build_inventory_summary(notes_by_slug, backlog, client)
+            geo_targets = sorted(config.get("geo_targets") or [], key=lambda item: int(item.get("priority", 9999)))
+            result["opportunity_registry"] = build_opportunity_registry(
+                backlog=backlog,
+                notes_by_slug=notes_by_slug,
+                feedback_summary=result["historical_feedback"],
+                geo_targets=geo_targets,
+            )
             result["market_research"] = _build_market_research(config, result["historical_feedback"], inventory_summary)
             result["adaptive_profile"] = _build_adaptive_profile(
                 config,
@@ -1378,12 +1389,16 @@ def run_cycle() -> dict[str, Any]:
             )
 
             ranked_backlog = _rank_backlog(backlog, result["adaptive_profile"], result["historical_feedback"], inventory_summary)
+            note_release_gates: dict[str, dict[str, Any]] = {}
             enhanced_backlog: list[dict[str, Any]] = []
             for item in ranked_backlog:
                 enriched = _prepare_item_for_publish(item, config, result["market_research"], result["adaptive_profile"])
                 brief = enriched["_research_brief"]
                 seo_packaging = enriched["_seo_packaging"]
                 review = enriched["_editorial_review"]
+                note_payload = _note_payload(enriched, config)
+                release_gate = evaluate_release_gate(note_payload, config, kind="note")
+                note_release_gates[str(item.get("slug") or "").strip()] = release_gate
                 enhanced_backlog.append(enriched)
                 result["research_briefs"].append({"slug": item.get("slug"), **brief})
                 result["seo_packaging_reviews"].append(
@@ -1396,19 +1411,21 @@ def run_cycle() -> dict[str, Any]:
                     }
                 )
                 result["editorial_reviews"].append({"slug": item.get("slug"), **review})
+                result["technical_release_gates"].append({"slug": item.get("slug"), **release_gate})
 
-            geo_targets = sorted(config.get("geo_targets") or [], key=lambda item: int(item.get("priority", 9999)))
             create_limit = int(config.get("daily_create_limit", 2) or 2)
             geo_limit = int(config.get("daily_geo_variant_limit", 4) or 4)
             created = 0
             created_variants = 0
             backfill_published_notes = 0
             backfill_published_variants = 0
+            publish_blocked_count = 0
 
             for item in enhanced_backlog:
                 slug = str(item.get("slug") or "").strip()
                 if not slug:
                     continue
+                note_gate = dict(note_release_gates.get(slug) or {})
                 note = notes_by_slug.get(slug)
                 if not note:
                     result["gaps"].append(
@@ -1427,9 +1444,11 @@ def run_cycle() -> dict[str, Any]:
                         note_id_for_publish = str((note or {}).get("id") or "").strip()
                         publish_result: dict[str, Any] = {}
                         final_status = (note or write or {}).get("status", "DRAFT")
-                        if config.get("publish_allowed") and note_id_for_publish:
+                        if config.get("publish_allowed") and note_id_for_publish and note_gate.get("passed"):
                             publish_result = client.publish_design_note(note_id_for_publish)
                             final_status = publish_result.get("status", final_status)
+                        elif config.get("publish_allowed") and note_id_for_publish and not note_gate.get("passed"):
+                            publish_blocked_count += 1
                         result["writes"].append(
                             {
                                 "kind": "design_note_create",
@@ -1437,9 +1456,11 @@ def run_cycle() -> dict[str, Any]:
                                 "topic": _topic_family_from_item(item),
                                 "adaptive_score": item.get("_adaptive_score", 0),
                                 "editorial_score": ((item.get("_editorial_review") or {}).get("score")),
+                                "release_gate_passed": note_gate.get("passed", False),
+                                "release_gate_blockers": note_gate.get("blocking_items", []),
                                 "status": final_status,
                                 "id": (note or write or {}).get("id"),
-                                "published": bool(config.get("publish_allowed") and note_id_for_publish),
+                                "published": bool(config.get("publish_allowed") and note_id_for_publish and note_gate.get("passed")),
                                 "publish_result": publish_result if publish_result else None,
                                 "public_url": _public_note_url(config, slug),
                             }
@@ -1468,7 +1489,7 @@ def run_cycle() -> dict[str, Any]:
                             "public_url": _public_note_url(config, slug),
                         }
                     )
-                if config.get("publish_allowed") and _should_publish_note(note):
+                if config.get("publish_allowed") and _should_publish_note(note) and note_gate.get("passed"):
                     publish_result = client.publish_design_note(note_id)
                     note["status"] = publish_result.get("status", note.get("status"))
                     note["publishedAt"] = publish_result.get("publishedAt", note.get("publishedAt"))
@@ -1484,6 +1505,15 @@ def run_cycle() -> dict[str, Any]:
                         }
                     )
                     backfill_published_notes += 1
+                elif config.get("publish_allowed") and _should_publish_note(note) and not note_gate.get("passed"):
+                    publish_blocked_count += 1
+                    result["gaps"].append(
+                        {
+                            "type": "note_release_gate_blocked",
+                            "slug": slug,
+                            "blocking_items": note_gate.get("blocking_items", []),
+                        }
+                    )
                 variants = _variant_rows(client.list_geo_variants(note_id))
                 existing_geo_slugs = {
                     str(row.get("geoSlug") or row.get("slug") or "").strip(): row
@@ -1492,6 +1522,7 @@ def run_cycle() -> dict[str, Any]:
                 }
                 if config.get("publish_allowed"):
                     for existing_slug, existing_variant in existing_geo_slugs.items():
+                        geo_gate: dict[str, Any] = {"passed": True, "blocking_items": []}
                         matched_target = next(
                             (
                                 target for target in geo_targets
@@ -1502,6 +1533,14 @@ def run_cycle() -> dict[str, Any]:
                         )
                         if matched_target:
                             geo_payload = _geo_variant_payload(note, matched_target, config)
+                            geo_gate = evaluate_release_gate(geo_payload, config, kind="geo_variant")
+                            result["technical_release_gates"].append(
+                                {
+                                    "slug": slug,
+                                    "geo_slug": existing_slug,
+                                    **geo_gate,
+                                }
+                            )
                             result["geo_seo_packaging_reviews"].append(
                                 {
                                     "note_slug": slug,
@@ -1529,10 +1568,21 @@ def run_cycle() -> dict[str, Any]:
                                         "seoDescription": geo_patch.get("seoDescription"),
                                         "quickAnswer": geo_patch.get("quickAnswer"),
                                         "public_url": _public_geo_url(config, slug, existing_slug),
-                                    }
-                                )
+                                }
+                            )
                         variant_id = str(existing_variant.get("id") or existing_variant.get("variantId") or "").strip()
                         if not variant_id or not _should_publish_variant(existing_variant):
+                            continue
+                        if not geo_gate.get("passed"):
+                            publish_blocked_count += 1
+                            result["gaps"].append(
+                                {
+                                    "type": "geo_release_gate_blocked",
+                                    "note_slug": slug,
+                                    "geo_slug": existing_slug,
+                                    "blocking_items": geo_gate.get("blocking_items", []),
+                                }
+                            )
                             continue
                         publish_result = client.publish_geo_variant(note_id, variant_id)
                         existing_variant["status"] = publish_result.get("status", existing_variant.get("status"))
@@ -1567,6 +1617,14 @@ def run_cycle() -> dict[str, Any]:
                         )
                         if created_variants < geo_limit:
                             payload = _geo_variant_payload(item, target, config)
+                            geo_gate = evaluate_release_gate(payload, config, kind="geo_variant")
+                            result["technical_release_gates"].append(
+                                {
+                                    "slug": slug,
+                                    "geo_slug": geo_slug,
+                                    **geo_gate,
+                                }
+                            )
                             write = client.create_geo_variant(note_id, payload)
                             resolved_variant = (
                                 write
@@ -1576,9 +1634,11 @@ def run_cycle() -> dict[str, Any]:
                             variant_id = (resolved_variant or write).get("variantId") or (resolved_variant or write).get("id")
                             final_status = (resolved_variant or write).get("status", "DRAFT")
                             publish_result: dict[str, Any] = {}
-                            if config.get("publish_allowed") and variant_id:
+                            if config.get("publish_allowed") and variant_id and geo_gate.get("passed"):
                                 publish_result = client.publish_geo_variant(note_id, str(variant_id))
                                 final_status = publish_result.get("status", final_status)
+                            elif config.get("publish_allowed") and variant_id and not geo_gate.get("passed"):
+                                publish_blocked_count += 1
                             result["writes"].append(
                                 {
                                     "kind": "geo_variant_create",
@@ -1588,7 +1648,9 @@ def run_cycle() -> dict[str, Any]:
                                     "geo_slug": write.get("geoSlug") or geo_slug,
                                     "state": target.get("state"),
                                     "status": final_status,
-                                    "published": bool(config.get("publish_allowed") and variant_id),
+                                    "release_gate_passed": geo_gate.get("passed", False),
+                                    "release_gate_blockers": geo_gate.get("blocking_items", []),
+                                    "published": bool(config.get("publish_allowed") and variant_id and geo_gate.get("passed")),
                                     "publish_result": publish_result if publish_result else None,
                                     "public_url": _public_geo_url(config, slug, write.get("geoSlug") or geo_slug),
                                 }
@@ -1612,6 +1674,26 @@ def run_cycle() -> dict[str, Any]:
                     elif config.get("publish_allowed") and _should_publish_variant(matched_variant):
                         variant_id = str(matched_variant.get("id") or matched_variant.get("variantId") or "").strip()
                         if variant_id:
+                            geo_payload = _geo_variant_payload(note, target, config)
+                            geo_gate = evaluate_release_gate(geo_payload, config, kind="geo_variant")
+                            result["technical_release_gates"].append(
+                                {
+                                    "slug": slug,
+                                    "geo_slug": geo_slug,
+                                    **geo_gate,
+                                }
+                            )
+                            if not geo_gate.get("passed"):
+                                publish_blocked_count += 1
+                                result["gaps"].append(
+                                    {
+                                        "type": "geo_release_gate_blocked",
+                                        "note_slug": slug,
+                                        "geo_slug": geo_slug,
+                                        "blocking_items": geo_gate.get("blocking_items", []),
+                                    }
+                                )
+                                continue
                             publish_result = client.publish_geo_variant(note_id, variant_id)
                             matched_slug = str(matched_variant.get("geoSlug") or matched_variant.get("slug") or geo_slug)
                             result["writes"].append(
@@ -1750,11 +1832,15 @@ def run_cycle() -> dict[str, Any]:
                 "existing_note_count": inventory_summary.get("existing_note_count", 0),
                 "backlog_note_count": len(backlog),
                 "feedback_row_count": result["historical_feedback"].get("row_count", 0),
+                "opportunity_item_count": (result.get("opportunity_registry") or {}).get("item_count", 0),
                 "writes_count": len(result["writes"]),
                 "gap_count": len(result["gaps"]),
                 "published_note_backfills": backfill_published_notes,
                 "published_variant_backfills": backfill_published_variants,
                 "editorial_pass_count": sum(1 for row in result["editorial_reviews"] if row.get("passed")),
+                "technical_release_gate_pass_count": sum(1 for row in result["technical_release_gates"] if row.get("passed")),
+                "technical_release_gate_fail_count": sum(1 for row in result["technical_release_gates"] if not row.get("passed")),
+                "publish_blocked_count": publish_blocked_count,
                 "geo_priority_order": [target.get("state") for target in geo_targets],
                 "primary_focus_topic": result["adaptive_profile"].get("primary_focus_topic"),
                 "research_lead_topic": result["adaptive_profile"].get("research_lead_topic"),
@@ -1785,10 +1871,14 @@ def run_cycle() -> dict[str, Any]:
             f"- Existing notes: {(result.get('summary') or {}).get('existing_note_count', 0)}",
             f"- Backlog notes: {(result.get('summary') or {}).get('backlog_note_count', 0)}",
             f"- Historical feedback rows loaded: {(result.get('summary') or {}).get('feedback_row_count', 0)}",
+            f"- Opportunity items: {(result.get('summary') or {}).get('opportunity_item_count', 0)}",
             f"- GSC sync: {((result.get('gsc_sync') or {}).get('reason') or ('ok' if (result.get('gsc_sync') or {}).get('ran') else 'not_run'))}",
             f"- Primary focus topic: {(result.get('summary') or {}).get('primary_focus_topic', 'n/a')}",
             f"- Research lead topic: {(result.get('summary') or {}).get('research_lead_topic', 'n/a')}",
             f"- Editorial pass count: {(result.get('summary') or {}).get('editorial_pass_count', 0)}",
+            f"- Technical release gate pass count: {(result.get('summary') or {}).get('technical_release_gate_pass_count', 0)}",
+            f"- Technical release gate fail count: {(result.get('summary') or {}).get('technical_release_gate_fail_count', 0)}",
+            f"- Publish blocked by gate: {(result.get('summary') or {}).get('publish_blocked_count', 0)}",
             f"- Writes this run: {(result.get('summary') or {}).get('writes_count', 0)}",
             f"- Published note backfills: {(result.get('summary') or {}).get('published_note_backfills', 0)}",
             f"- Published GEO backfills: {(result.get('summary') or {}).get('published_variant_backfills', 0)}",
@@ -1900,6 +1990,26 @@ def run_cycle() -> dict[str, Any]:
     else:
         md_lines.append("- No editorial reviews computed.")
 
+    md_lines.extend(["", "## Opportunity registry"])
+    if (result.get("opportunity_registry") or {}).get("top_actions"):
+        for item in (result.get("opportunity_registry") or {}).get("top_actions", [])[:8]:
+            md_lines.append(
+                f"- `{item['slug']}` | action={item['recommended_action']} | score={item['action_score']} | status={item['status']} | clicks={item['clicks']} | impressions={item['impressions']} | geo_gap={item['geo_gap']}"
+            )
+    else:
+        md_lines.append("- No opportunity registry rows computed.")
+
+    md_lines.extend(["", "## Technical release gate"])
+    if result.get("technical_release_gates"):
+        for item in (result.get("technical_release_gates") or [])[:10]:
+            md_lines.append(
+                f"- `{item.get('slug')}`{(' / ' + str(item.get('geo_slug'))) if item.get('geo_slug') else ''} | kind={item.get('kind')} | passed={item.get('passed')} | score={item.get('score')}"
+            )
+            if item.get("blocking_items"):
+                md_lines.append(f"  blockers: {', '.join(item.get('blocking_items')[:6])}")
+    else:
+        md_lines.append("- No technical release gates computed.")
+
     md_lines.extend(["", "## Interior Designer Daily Article"])
     designer_program = result.get("designer_daily_program") or {}
     md_lines.append(f"- Enabled: {designer_program.get('enabled', False)}")
@@ -1932,8 +2042,12 @@ def run_cycle() -> dict[str, Any]:
 
     md_path = output_base / "report.md"
     json_path = output_base / "report.json"
+    opportunity_registry_path = output_base / "opportunity-registry.json"
+    technical_release_gate_path = output_base / "technical-release-gates.json"
     md_path.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
     json_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    opportunity_registry_path.write_text(json.dumps(result.get("opportunity_registry") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
+    technical_release_gate_path.write_text(json.dumps(result.get("technical_release_gates") or [], ensure_ascii=False, indent=2), encoding="utf-8")
 
     state.setdefault("runs", []).append(
         {
@@ -1947,12 +2061,23 @@ def run_cycle() -> dict[str, Any]:
             "feedback_row_count": (result.get("summary") or {}).get("feedback_row_count", 0),
             "report_markdown": str(md_path),
             "report_json": str(json_path),
+            "opportunity_registry_json": str(opportunity_registry_path),
+            "technical_release_gate_json": str(technical_release_gate_path),
         }
     )
     state["runs"] = state["runs"][-30:]
     state["adaptive_profile"] = result.get("adaptive_profile") or {}
     state["last_market_research"] = result.get("market_research") or {}
     state["last_iteration_plan"] = result.get("iteration_plan") or {}
+    state["last_opportunity_registry"] = {
+        "item_count": (result.get("opportunity_registry") or {}).get("item_count", 0),
+        "top_actions": (result.get("opportunity_registry") or {}).get("top_actions", [])[:5],
+    }
+    state["last_technical_release_gate_summary"] = {
+        "pass_count": (result.get("summary") or {}).get("technical_release_gate_pass_count", 0),
+        "fail_count": (result.get("summary") or {}).get("technical_release_gate_fail_count", 0),
+        "publish_blocked_count": (result.get("summary") or {}).get("publish_blocked_count", 0),
+    }
     state["last_feedback_summary"] = {
         "row_count": hist.get("row_count", 0),
         "matched_slug_rows": hist.get("matched_slug_rows", 0),

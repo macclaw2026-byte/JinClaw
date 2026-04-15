@@ -38,10 +38,12 @@ Execution order:
 1. sync Google Search Console snapshots when configured
 2. ingest history and optional feedback files
 3. distill historical signal
-4. run market-gap research against note inventory and GEO coverage
-5. compute an adaptive topic strategy
-6. create/update draft notes and GEO variants
-7. write state and deliver a daily report
+4. build an opportunity registry across create/refresh/expand/build-geo actions
+5. run market-gap research against note inventory and GEO coverage
+6. compute an adaptive topic strategy
+7. create/update draft notes and GEO variants
+8. run a technical release gate before any publish call
+9. write state and deliver a daily report
 
 Optional feedback drop folder:
 
@@ -50,6 +52,11 @@ Optional feedback drop folder:
 Hardcore automation upgrade reference:
 
 - `references/seo-geo-hardcore-automation-plan-2026-04.md`
+
+New output artifacts:
+
+- `output/<run_id>/opportunity-registry.json`
+- `output/<run_id>/technical-release-gates.json`
 
 Interior designer daily article program:
 
