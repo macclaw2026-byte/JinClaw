@@ -589,6 +589,24 @@ def _build_doctor_coverage_bundle() -> Dict[str, Any]:
                 "primary_monitor": "system_doctor.integration_health.transport_binding",
                 "backstop_monitor": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.transport_binding",
                 "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.transport_binding",
+            },
+            {
+                "name": "seo-geo-delivery-kernel",
+                "required_files": [
+                    "projects/neosgo-seo-geo-engine/scripts/delivery_proof.py",
+                    "projects/neosgo-seo-geo-engine/scripts/run_neosgo_seo_geo_cycle.py",
+                    "projects/neosgo-seo-geo-engine/config/strategy.json",
+                    "tools/openmoss/control_center/generate_doctor_dashboard.py",
+                    "tools/openmoss/control_center/system_doctor.py",
+                ],
+                "doctor_checks": [
+                    "delivery_proof_contract",
+                    "continuous_schedule_contract",
+                    "doctor_visibility_contract",
+                ],
+                "primary_monitor": "system_doctor.integration_health.seo_geo_delivery",
+                "backstop_monitor": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.seo_geo_delivery",
+                "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.seo_geo_delivery",
             }
         ],
     }

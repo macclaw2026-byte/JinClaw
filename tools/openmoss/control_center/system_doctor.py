@@ -156,6 +156,13 @@ TRANSPORT_BINDING_REQUIRED_FILES = [
     WORKSPACE_ROOT / 'tools/openmoss/control_center/brain_enforcer.py',
     WORKSPACE_ROOT / 'tools/openmoss/control_center/system_doctor.py',
 ]
+SEO_GEO_DELIVERY_REQUIRED_FILES = [
+    WORKSPACE_ROOT / 'projects/neosgo-seo-geo-engine/scripts/delivery_proof.py',
+    WORKSPACE_ROOT / 'projects/neosgo-seo-geo-engine/scripts/run_neosgo_seo_geo_cycle.py',
+    WORKSPACE_ROOT / 'projects/neosgo-seo-geo-engine/config/strategy.json',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/generate_doctor_dashboard.py',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/system_doctor.py',
+]
 GSTACK_LIFECYCLE = ['think', 'plan', 'build', 'review', 'test', 'ship', 'reflect']
 DOCTOR_RESOLUTION_REQUIRED_FIELDS = [
     "scope",
@@ -3897,6 +3904,69 @@ def _run_transport_binding_integration_checks() -> Dict[str, object]:
     }
 
 
+def _run_seo_geo_delivery_integration_checks() -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：验证 NEOSGO SEO+GEO 已经具备持续交付证明，并由 canonical doctor 观察。
+    - 输入角色：读取 SEO/GEO cycle、配置、dashboard 与可选 runtime state。
+    - 输出角色：供 doctor/ops 判断 SEO/GEO 自动化是否已经从“跑一次”升级为可持续交付链。
+    """
+    errors: List[str] = []
+    for path in SEO_GEO_DELIVERY_REQUIRED_FILES:
+        if not path.exists():
+            errors.append(f"missing_required_file:{path.relative_to(WORKSPACE_ROOT)}")
+
+    cycle_path = WORKSPACE_ROOT / 'projects/neosgo-seo-geo-engine/scripts/run_neosgo_seo_geo_cycle.py'
+    dashboard_path = WORKSPACE_ROOT / 'tools/openmoss/control_center/generate_doctor_dashboard.py'
+    config_path = WORKSPACE_ROOT / 'projects/neosgo-seo-geo-engine/config/strategy.json'
+    state_path = WORKSPACE_ROOT / 'projects/neosgo-seo-geo-engine/runtime/state.json'
+    cycle_source = cycle_path.read_text(encoding='utf-8') if cycle_path.exists() else ''
+    dashboard_source = dashboard_path.read_text(encoding='utf-8') if dashboard_path.exists() else ''
+    config_payload = _read_json(config_path) if config_path.exists() else {}
+    delivery_contract = dict(config_payload.get('delivery_contract') or {})
+    latest_state = _read_json(state_path) if state_path.exists() else {}
+    latest_proof = dict(latest_state.get('last_delivery_proof') or {})
+
+    if 'build_delivery_proof(' not in cycle_source or 'delivery-proof.json' not in cycle_source:
+        errors.append('seo_geo_delivery_proof_not_wired')
+    if 'last_delivery_proof' not in cycle_source:
+        errors.append('seo_geo_delivery_state_not_persisted')
+    if 'last_delivery_proof' not in dashboard_source or '持续交付证明' not in dashboard_source:
+        errors.append('seo_geo_delivery_dashboard_not_visible')
+    if str(delivery_contract.get('launch_agent_label') or '').strip() != 'ai.jinclaw.neosgo-seo-geo-daily':
+        errors.append('seo_geo_delivery_missing_launch_agent_contract')
+    if str(delivery_contract.get('cadence') or '').strip() != 'daily':
+        errors.append('seo_geo_delivery_missing_daily_cadence')
+    if not bool(delivery_contract.get('telegram_required')):
+        errors.append('seo_geo_delivery_missing_telegram_requirement')
+
+    return {
+        'required_files_checked': len(SEO_GEO_DELIVERY_REQUIRED_FILES),
+        'required_files': [str(path.relative_to(WORKSPACE_ROOT)) for path in SEO_GEO_DELIVERY_REQUIRED_FILES],
+        'delivery_proof_contract': not any(
+            item in {
+                'seo_geo_delivery_proof_not_wired',
+                'seo_geo_delivery_state_not_persisted',
+            }
+            for item in errors
+        ),
+        'continuous_schedule_contract': not any(
+            item in {
+                'seo_geo_delivery_missing_launch_agent_contract',
+                'seo_geo_delivery_missing_daily_cadence',
+                'seo_geo_delivery_missing_telegram_requirement',
+            }
+            for item in errors
+        ),
+        'doctor_visibility_contract': 'seo_geo_delivery_dashboard_not_visible' not in errors,
+        'latest_state_observed': bool(latest_proof),
+        'latest_goal_status': str(latest_proof.get('goal_status') or '').strip(),
+        'seo_geo_delivery_chain': 'ok' if not errors else 'error',
+        'errors': errors,
+        'ok': not errors,
+    }
+
+
 def _run_integration_health_checks() -> Dict[str, object]:
     """
     中文注解：
@@ -3916,6 +3986,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
     delivery_plane = _run_delivery_plane_integration_checks()
     skill_action_plane = _run_skill_action_plane_integration_checks()
     transport_binding = _run_transport_binding_integration_checks()
+    seo_geo_delivery = _run_seo_geo_delivery_integration_checks()
     errors = (
         list(gstack.get('errors', []) or [])
         + list(acquisition_hand.get('errors', []) or [])
@@ -3929,6 +4000,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         + list(delivery_plane.get('errors', []) or [])
         + list(skill_action_plane.get('errors', []) or [])
         + list(transport_binding.get('errors', []) or [])
+        + list(seo_geo_delivery.get('errors', []) or [])
     )
     return {
         'single_doctor_rule': True,
@@ -3945,7 +4017,8 @@ def _run_integration_health_checks() -> Dict[str, object]:
         + int(capability_gap.get('required_files_checked', 0) or 0)
         + int(delivery_plane.get('required_files_checked', 0) or 0)
         + int(skill_action_plane.get('required_files_checked', 0) or 0)
-        + int(transport_binding.get('required_files_checked', 0) or 0),
+        + int(transport_binding.get('required_files_checked', 0) or 0)
+        + int(seo_geo_delivery.get('required_files_checked', 0) or 0),
         'lifecycle': GSTACK_LIFECYCLE,
         'gstack': gstack,
         'acquisition_hand': acquisition_hand,
@@ -3959,6 +4032,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         'delivery_plane': delivery_plane,
         'skill_action_plane': skill_action_plane,
         'transport_binding': transport_binding,
+        'seo_geo_delivery': seo_geo_delivery,
         'coding_chain': gstack.get('coding_chain', 'unknown'),
         'noncoding_chain': gstack.get('noncoding_chain', 'unknown'),
         'acquisition_chain': acquisition_hand.get('acquisition_chain', 'unknown'),
@@ -3972,6 +4046,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         'delivery_plane_chain': delivery_plane.get('delivery_plane_chain', 'unknown'),
         'skill_action_plane_chain': skill_action_plane.get('skill_action_plane_chain', 'unknown'),
         'transport_binding_chain': transport_binding.get('transport_binding_chain', 'unknown'),
+        'seo_geo_delivery_chain': seo_geo_delivery.get('seo_geo_delivery_chain', 'unknown'),
         'errors': errors,
         'ok': (
             bool(gstack.get('ok'))
@@ -3986,6 +4061,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
             and bool(delivery_plane.get('ok'))
             and bool(skill_action_plane.get('ok'))
             and bool(transport_binding.get('ok'))
+            and bool(seo_geo_delivery.get('ok'))
         ),
     }
 
