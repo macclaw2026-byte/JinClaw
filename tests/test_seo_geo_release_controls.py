@@ -7,6 +7,7 @@ SCRIPT_DIR = Path("/Users/mac_claw/.openclaw/workspace/projects/neosgo-seo-geo-e
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from consolidation_planner import build_consolidation_plan
 from maintenance_planner import build_maintenance_plan
 from page_action_decider import build_page_action_plan
 from opportunity_registry import build_opportunity_registry
@@ -120,6 +121,24 @@ class SeoGeoReleaseControlTests(unittest.TestCase):
         self.assertIn("ctr_packaging_review", weekly_types)
         self.assertIn("stale_content_refresh_review", weekly_types)
         self.assertIn("merge_or_prune_review", monthly_types)
+
+    def test_consolidation_plan_surfaces_merge_redirect_and_prune(self) -> None:
+        registry = {
+            "items": [
+                {"slug": "winner", "topic": "pendant", "note_exists": True, "clicks": 12, "impressions": 100, "action_score": 90, "freshness_days": 10},
+                {"slug": "redirect-me", "topic": "pendant", "note_exists": True, "clicks": 0, "impressions": 80, "action_score": 40, "freshness_days": 20},
+                {"slug": "prune-me", "topic": "pendant", "note_exists": True, "clicks": 0, "impressions": 5, "action_score": 10, "freshness_days": 90},
+                {"slug": "merge-me", "topic": "bathroom", "note_exists": True, "clicks": 2, "impressions": 20, "action_score": 30, "freshness_days": 20},
+                {"slug": "bath-winner", "topic": "bathroom", "note_exists": True, "clicks": 10, "impressions": 40, "action_score": 80, "freshness_days": 20},
+            ]
+        }
+        plan = build_consolidation_plan(registry)
+        redirects = {row["slug"]: row for row in plan["redirect_candidates"]}
+        prunes = {row["slug"]: row for row in plan["prune_candidates"]}
+        merges = {row["slug"]: row for row in plan["merge_candidates"]}
+        self.assertEqual(redirects["redirect-me"]["target_slug"], "winner")
+        self.assertIn("prune-me", prunes)
+        self.assertEqual(merges["merge-me"]["target_slug"], "bath-winner")
 
 
 if __name__ == "__main__":
