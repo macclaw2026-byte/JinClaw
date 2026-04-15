@@ -72,6 +72,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                     'reply_projection_chain': 'ok',
                     'conversation_event_chain': 'ok',
                     'execution_event_chain': 'ok',
+                    'seo_geo_delivery_chain': 'ok',
                     'conversation_events': {
                         'ingress_event_contract': True,
                         'route_event_contract': True,
@@ -117,6 +118,13 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                         'telegram_binding_delegation_contract': True,
                         'openclaw_main_binding_delegation_contract': True,
                         'event_chain_parity_contract': True,
+                    },
+                    'seo_geo_delivery': {
+                        'delivery_proof_contract': True,
+                        'continuous_schedule_contract': True,
+                        'doctor_visibility_contract': True,
+                        'latest_state_observed': True,
+                        'latest_goal_status': 'continuous_delivery_ready',
                     },
                     'reply_projection': {
                         'projection_contract_presence': True,
@@ -171,6 +179,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                 'delivery_plane_chain': 'ok',
                 'skill_action_plane_chain': 'ok',
                 'transport_binding_chain': 'ok',
+                'seo_geo_delivery_chain': 'ok',
                 'acquisition_hand': {
                     'field_synthesis_contract': True,
                     'delivery_requirements_contract': True,
@@ -241,6 +250,13 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                     'telegram_binding_delegation_contract': True,
                     'openclaw_main_binding_delegation_contract': True,
                     'event_chain_parity_contract': True,
+                },
+                'seo_geo_delivery': {
+                    'delivery_proof_contract': True,
+                    'continuous_schedule_contract': True,
+                    'doctor_visibility_contract': True,
+                    'latest_state_observed': True,
+                    'latest_goal_status': 'continuous_delivery_ready',
                 },
                 'ok': True,
             },
@@ -382,6 +398,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
             self.assertEqual(summary['integration_health']['reply_projection_chain'], 'ok')
             self.assertEqual(summary['integration_health']['conversation_event_chain'], 'ok')
             self.assertEqual(summary['integration_health']['execution_event_chain'], 'ok')
+            self.assertEqual(summary['integration_health']['seo_geo_delivery_chain'], 'ok')
             self.assertTrue(summary['acquisition_health']['field_synthesis_contract'])
             self.assertTrue(summary['acquisition_health']['response_handoff_contract'])
             self.assertTrue(summary['acquisition_health']['execution_truth_contract'])
@@ -399,6 +416,9 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
             self.assertTrue(summary['integration_health']['execution_events']['execution_handoff_payload_contract'])
             self.assertTrue(summary['integration_health']['execution_events']['runtime_mode_session_strategy_contract'])
             self.assertTrue(summary['integration_health']['execution_events']['control_plane_visibility_contract'])
+            self.assertTrue(summary['integration_health']['seo_geo_delivery']['delivery_proof_contract'])
+            self.assertTrue(summary['integration_health']['seo_geo_delivery']['continuous_schedule_contract'])
+            self.assertTrue(summary['integration_health']['seo_geo_delivery']['doctor_visibility_contract'])
             self.assertEqual(summary['acquisition_health']['completion_status'], 'complete')
             self.assertTrue(summary['acquisition_health']['goal_reached'])
             self.assertTrue(summary['refresh']['attempted'])

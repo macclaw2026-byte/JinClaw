@@ -116,6 +116,11 @@ DOCTOR_REQUIRED_TRANSPORT_BINDING_CONTRACTS = (
     "openclaw_main_binding_delegation_contract",
     "event_chain_parity_contract",
 )
+DOCTOR_REQUIRED_SEO_GEO_DELIVERY_CONTRACTS = (
+    "delivery_proof_contract",
+    "continuous_schedule_contract",
+    "doctor_visibility_contract",
+)
 
 
 def utc_now() -> datetime:
@@ -454,6 +459,7 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
     delivery_plane = integration_health.get("delivery_plane", {}) or {}
     skill_action_plane = integration_health.get("skill_action_plane", {}) or {}
     transport_binding = integration_health.get("transport_binding", {}) or {}
+    seo_geo_delivery = integration_health.get("seo_geo_delivery", {}) or {}
     checked_at = str(payload.get("checked_at", "")).strip()
     return {
         "last_run_exists": DOCTOR_LAST_RUN_PATH.exists(),
@@ -513,6 +519,7 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
             "delivery_plane_chain": str(integration_health.get("delivery_plane_chain", "")).strip(),
             "skill_action_plane_chain": str(integration_health.get("skill_action_plane_chain", "")).strip(),
             "transport_binding_chain": str(integration_health.get("transport_binding_chain", "")).strip(),
+            "seo_geo_delivery_chain": str(integration_health.get("seo_geo_delivery_chain", "")).strip(),
             "conversation_context": {
                 "instruction_envelope_contract": bool(conversation_context.get("instruction_envelope_contract")),
                 "focus_contract": bool(conversation_context.get("focus_contract")),
@@ -569,6 +576,13 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
                 "telegram_binding_delegation_contract": bool(transport_binding.get("telegram_binding_delegation_contract")),
                 "openclaw_main_binding_delegation_contract": bool(transport_binding.get("openclaw_main_binding_delegation_contract")),
                 "event_chain_parity_contract": bool(transport_binding.get("event_chain_parity_contract")),
+            },
+            "seo_geo_delivery": {
+                "delivery_proof_contract": bool(seo_geo_delivery.get("delivery_proof_contract")),
+                "continuous_schedule_contract": bool(seo_geo_delivery.get("continuous_schedule_contract")),
+                "doctor_visibility_contract": bool(seo_geo_delivery.get("doctor_visibility_contract")),
+                "latest_state_observed": bool(seo_geo_delivery.get("latest_state_observed")),
+                "latest_goal_status": str(seo_geo_delivery.get("latest_goal_status", "")).strip(),
             },
         },
     }
@@ -635,6 +649,9 @@ def _doctor_runtime_payload_complete(payload: Dict[str, Any]) -> bool:
     transport_binding = integration.get("transport_binding", {}) or {}
     if not isinstance(transport_binding, dict) or not transport_binding:
         return False
+    seo_geo_delivery = integration.get("seo_geo_delivery", {}) or {}
+    if not isinstance(seo_geo_delivery, dict) or not seo_geo_delivery:
+        return False
     return all(name in acquisition_hand for name in DOCTOR_REQUIRED_ACQUISITION_CONTRACTS) and all(
         name in conversation_context for name in DOCTOR_REQUIRED_CONVERSATION_CONTEXT_CONTRACTS
     ) and all(
@@ -655,6 +672,8 @@ def _doctor_runtime_payload_complete(payload: Dict[str, Any]) -> bool:
         name in skill_action_plane for name in DOCTOR_REQUIRED_SKILL_ACTION_PLANE_CONTRACTS
     ) and all(
         name in transport_binding for name in DOCTOR_REQUIRED_TRANSPORT_BINDING_CONTRACTS
+    ) and all(
+        name in seo_geo_delivery for name in DOCTOR_REQUIRED_SEO_GEO_DELIVERY_CONTRACTS
     )
 
 
