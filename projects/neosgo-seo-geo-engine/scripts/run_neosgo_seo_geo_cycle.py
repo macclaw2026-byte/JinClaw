@@ -26,6 +26,7 @@ from maintenance_planner import build_maintenance_plan
 from maintenance_execution_packet import build_maintenance_execution_packet
 from post_publish_scorecard import build_post_publish_scorecard
 from technical_release_gate import evaluate_release_gate
+from delivery_proof import build_delivery_proof
 
 
 ROOT = Path("/Users/mac_claw/.openclaw/workspace/projects/neosgo-seo-geo-engine")
@@ -1359,6 +1360,7 @@ def run_cycle() -> dict[str, Any]:
         "maintenance_execution_packet": {},
         "consolidation_plan": {},
         "post_publish_scorecard": {},
+        "delivery_proof": {},
         "research_briefs": [],
         "seo_packaging_reviews": [],
         "geo_seo_packaging_reviews": [],
@@ -2199,6 +2201,7 @@ def run_cycle() -> dict[str, Any]:
     maintenance_execution_packet_path = output_base / "maintenance-execution-packet.json"
     consolidation_plan_path = output_base / "consolidation-plan.json"
     post_publish_scorecard_path = output_base / "post-publish-scorecard.json"
+    delivery_proof_path = output_base / "delivery-proof.json"
     technical_release_gate_path = output_base / "technical-release-gates.json"
     md_path.write_text("\n".join(md_lines) + "\n", encoding="utf-8")
     json_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -2209,6 +2212,18 @@ def run_cycle() -> dict[str, Any]:
     consolidation_plan_path.write_text(json.dumps(result.get("consolidation_plan") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
     post_publish_scorecard_path.write_text(json.dumps(result.get("post_publish_scorecard") or {}, ensure_ascii=False, indent=2), encoding="utf-8")
     technical_release_gate_path.write_text(json.dumps(result.get("technical_release_gates") or [], ensure_ascii=False, indent=2), encoding="utf-8")
+    artifact_paths = {
+        "report_markdown": str(md_path),
+        "report_json": str(json_path),
+        "opportunity_registry_json": str(opportunity_registry_path),
+        "page_action_plan_json": str(action_plan_path),
+        "maintenance_plan_json": str(maintenance_plan_path),
+        "maintenance_execution_packet_json": str(maintenance_execution_packet_path),
+        "consolidation_plan_json": str(consolidation_plan_path),
+        "post_publish_scorecard_json": str(post_publish_scorecard_path),
+        "technical_release_gate_json": str(technical_release_gate_path),
+        "delivery_proof_json": str(delivery_proof_path),
+    }
 
     state.setdefault("runs", []).append(
         {
@@ -2228,6 +2243,7 @@ def run_cycle() -> dict[str, Any]:
             "maintenance_execution_packet_json": str(maintenance_execution_packet_path),
             "consolidation_plan_json": str(consolidation_plan_path),
             "post_publish_scorecard_json": str(post_publish_scorecard_path),
+            "delivery_proof_json": str(delivery_proof_path),
             "technical_release_gate_json": str(technical_release_gate_path),
         }
     )
@@ -2297,6 +2313,23 @@ def run_cycle() -> dict[str, Any]:
         f"Gaps: {(result.get('summary') or {}).get('gap_count', 0)}"
     )
     result["deliveries"] = _send_to_telegram(report_chat, summary_text, [md_path, json_path])
+    result["delivery_proof"] = build_delivery_proof(
+        result=result,
+        artifacts=artifact_paths,
+        delivery_contract=dict(config.get("delivery_contract") or {}),
+        deliveries=result["deliveries"],
+    )
+    delivery_proof_path.write_text(json.dumps(result["delivery_proof"], ensure_ascii=False, indent=2), encoding="utf-8")
+    json_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    state["last_delivery_proof"] = {
+        "ok": bool(result["delivery_proof"].get("ok")),
+        "goal_status": result["delivery_proof"].get("goal_status"),
+        "telegram_delivery_ok": bool(result["delivery_proof"].get("telegram_delivery_ok")),
+        "missing_artifacts": result["delivery_proof"].get("missing_artifacts", []),
+        "next_window": result["delivery_proof"].get("next_window", {}),
+        "delivery_proof_json": str(delivery_proof_path),
+    }
+    STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     return result
 
 

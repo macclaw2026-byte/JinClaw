@@ -63,7 +63,14 @@ New output artifacts:
 - `output/<run_id>/maintenance-execution-packet.json`
 - `output/<run_id>/consolidation-plan.json`
 - `output/<run_id>/post-publish-scorecard.json`
+- `output/<run_id>/delivery-proof.json`
 - `output/<run_id>/technical-release-gates.json`
+
+Continuous delivery proof:
+
+- every completed cycle writes `delivery-proof.json`
+- proof checks required artifacts, Telegram delivery, scorecard readiness, maintenance packet readiness, and the next scheduled delivery window
+- latest proof is mirrored into `runtime/state.json` under `last_delivery_proof`
 
 Interior designer daily article program:
 

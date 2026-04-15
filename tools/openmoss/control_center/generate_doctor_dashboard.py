@@ -227,6 +227,7 @@ def _workflow_overview() -> list[dict[str, Any]]:
 
     seo_runs = list(seo_geo_state.get("runs", []) or [])
     latest_seo_run = seo_runs[-1] if seo_runs else {}
+    latest_seo_delivery = dict(seo_geo_state.get("last_delivery_proof") or {})
 
     return [
         {
@@ -334,6 +335,12 @@ def _workflow_overview() -> list[dict[str, Any]]:
                     "ok" if latest_seo_run and not latest_seo_run.get('blocked') else "review",
                     "触发进行",
                     f"writes={latest_seo_run.get('writes_count', '-')}，gap={latest_seo_run.get('gap_count', '-')}",
+                ),
+                _task_row(
+                    "持续交付证明",
+                    "ok" if latest_seo_delivery.get("ok") else "review",
+                    "持续进行",
+                    f"goal={latest_seo_delivery.get('goal_status', '-')}，telegram={latest_seo_delivery.get('telegram_delivery_ok', '-')}",
                 ),
             ],
         },
