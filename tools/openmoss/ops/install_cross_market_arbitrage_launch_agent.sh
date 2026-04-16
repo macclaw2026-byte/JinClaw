@@ -17,6 +17,13 @@ SOURCE="/Users/mac_claw/.openclaw/workspace/tools/openmoss/ops/ai.jinclaw.cross-
 TARGET="/Users/mac_claw/Library/LaunchAgents/ai.jinclaw.cross-market-arbitrage.plist"
 LABEL="ai.jinclaw.cross-market-arbitrage"
 UID="$(id -u)"
+DISABLED_SENTINEL="/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/control_center/governance/disabled_services/cross_market_arbitrage.json"
+
+if [[ -f "$DISABLED_SENTINEL" ]]; then
+  echo "cross-market arbitrage is disabled by sentinel: $DISABLED_SENTINEL" >&2
+  echo "refusing to install or start ${LABEL}; remove the sentinel intentionally before re-enabling" >&2
+  exit 1
+fi
 
 cp "$SOURCE" "$TARGET"
 launchctl bootout "gui/${UID}" "$TARGET" >/dev/null 2>&1 || true

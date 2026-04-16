@@ -10,14 +10,21 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
 OPENCLAW_BIN = "/opt/homebrew/bin/openclaw"
 DEFAULT_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 DEFAULT_CHAT = "8528973600"
+CONTROL_CENTER_ROOT = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/control_center")
 LATEST_REPORT = Path("/Users/mac_claw/.openclaw/workspace/output/cross-market-arbitrage-engine/latest-report.json")
 STATE_PATH = Path("/Users/mac_claw/.openclaw/workspace/output/cross-market-arbitrage-engine/daily-report-state.json")
+
+if str(CONTROL_CENTER_ROOT) not in sys.path:
+    sys.path.insert(0, str(CONTROL_CENTER_ROOT))
+
+from service_disable_registry import read_disabled_service  # noqa: E402
 
 
 def _subprocess_env() -> dict[str, str]:
@@ -55,6 +62,22 @@ def main() -> int:
     ap.add_argument("--state-path", default=str(STATE_PATH))
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
+
+    disabled_state = read_disabled_service("cross_market_arbitrage")
+    if disabled_state.get("disabled"):
+        print(
+            json.dumps(
+                {
+                    "ok": True,
+                    "skipped": True,
+                    "reason": "service_disabled_by_operator",
+                    "service_disabled": True,
+                    "disabled_service": disabled_state,
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0
 
     latest_path = Path(args.latest_report)
     if not latest_path.exists():
