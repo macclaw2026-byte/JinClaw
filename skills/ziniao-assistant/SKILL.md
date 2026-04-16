@@ -124,6 +124,8 @@ For seller-console work, keep this file lean and load the matching reference bef
   [references/seller_console_patterns.md](references/seller_console_patterns.md)
 - Validated Temu `对账中心 -> 账务明细 -> 三月查询 -> 导出历史确认` workflow:
   [references/temu_finance_export.md](references/temu_finance_export.md)
+- TEMU monthly order, finance, delay-rate, and after-sales statistics workflow:
+  [../temu-data-statistics/references/monthly-statistics-workflow.md](../temu-data-statistics/references/monthly-statistics-workflow.md)
 
 If the task mentions `Temu`, `kuajingmaihuo`, `账务明细`, `对账中心`, `订单`, `导出`, `店铺后台`, or an authenticated seller-console workflow, read the relevant reference first instead of improvising the flow from generic browser habits.
 
