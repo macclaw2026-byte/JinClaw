@@ -52,6 +52,7 @@ if str(CONTROL_CENTER_ROOT) not in sys.path:
 from control_plane_builder import build_control_plane
 from memory_writeback_runtime import record_memory_writeback
 from paths import CROSS_MARKET_ARBITRAGE_SCHEDULER_STATE_PATH
+from service_disable_registry import read_disabled_service
 
 DISCOVERY_INTERVAL_SECONDS = 30 * 60
 MATCH_INTERVAL_SECONDS = 60 * 60
@@ -59,6 +60,7 @@ REPORT_WINDOW_HOURS = 24
 REPORT_TIMEZONE = ZoneInfo("America/New_York")
 REPORT_HOUR = 18
 DEFAULT_TELEGRAM_TARGET = "8528973600"
+SERVICE_NAME = "cross_market_arbitrage"
 USD_TO_CNY_FALLBACK = 7.2
 _USD_TO_CNY_CACHE: dict[str, Any] | None = None
 DEFAULT_PLATFORM_FEE = 0.15
@@ -731,18 +733,67 @@ def _write_scheduler_state(payload: dict[str, Any]) -> None:
     _write_json_file(CROSS_MARKET_ARBITRAGE_SCHEDULER_STATE_PATH, payload)
 
 
+def _disabled_service_state() -> dict[str, Any]:
+    """
+    中文注解：
+    - 输入角色：无入参，读取 cross-market-arbitrage 的统一停用哨兵。
+    - 输出角色：返回调度、daemon、一次性运行入口都能消费的停用状态。
+    """
+    return read_disabled_service(SERVICE_NAME)
+
+
+def _disabled_run_payload(context: str, disabled_state: dict[str, Any]) -> dict[str, Any]:
+    """
+    中文注解：
+    - 输入角色：接收触发上下文与停用状态。
+    - 输出角色：返回结构化跳过结果，并同步写入 scheduler state 作为 doctor 证据。
+    """
+    now = _utc_now_iso()
+    scheduler_state = {
+        "updated_at": now,
+        "last_mode": "disabled",
+        "last_repair_focus": "operator_disabled",
+        "last_repair_mode": "service_disabled",
+        "loop_sleep_seconds": 0,
+        "discovery_interval_seconds": 0,
+        "matching_interval_seconds": 0,
+        "report_hour_new_york": REPORT_HOUR,
+        "last_allow_discovery": False,
+        "last_allow_match": False,
+        "last_allow_report": False,
+        "last_effective_discovery": False,
+        "last_effective_match": False,
+        "last_effective_report": False,
+        "service_disabled": True,
+        "disabled_service": disabled_state,
+        "skip_reason": "service_disabled_by_operator",
+    }
+    _write_scheduler_state(scheduler_state)
+    return {
+        "ran": False,
+        "reason": "service_disabled_by_operator",
+        "context": context,
+        "service_disabled": True,
+        "disabled_service": disabled_state,
+        "scheduler_state_after": scheduler_state,
+    }
+
+
 def _execution_flags_from_scheduler_policy(scheduler_policy: dict[str, Any] | None) -> dict[str, bool]:
     scheduler_policy = scheduler_policy or {}
     repair_mode = str(scheduler_policy.get("repair_mode", "")).strip()
     start_tasks = bool(scheduler_policy.get("start_tasks", True))
+    service_disabled = bool(scheduler_policy.get("service_disabled", False))
+    allow_report = bool(scheduler_policy.get("allow_report", start_tasks and not service_disabled))
     flags = {
         "allow_discovery": start_tasks,
         "allow_match": start_tasks,
-        "allow_report": True,
+        "allow_report": allow_report,
     }
-    if not start_tasks:
+    if service_disabled or not start_tasks:
         flags["allow_discovery"] = False
         flags["allow_match"] = False
+        flags["allow_report"] = False
         return flags
     if repair_mode == "crawler_hold":
         flags["allow_discovery"] = False
@@ -5382,6 +5433,10 @@ def _seconds_until_next_discovery() -> int:
 
 def run_daemon() -> int:
     while True:
+        disabled_state = _disabled_service_state()
+        if disabled_state.get("disabled"):
+            print(json.dumps(_disabled_run_payload("daemon_loop", disabled_state), ensure_ascii=False, indent=2))
+            return 0
         state = _load_state()
         scheduler_policy = _load_scheduler_policy()
         scheduler_state = _load_scheduler_state()
@@ -5443,6 +5498,10 @@ def main() -> int:
     parser.add_argument("--telegram-chat", default=DEFAULT_TELEGRAM_TARGET)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
+    disabled_state = _disabled_service_state()
+    if disabled_state.get("disabled"):
+        print(json.dumps(_disabled_run_payload(f"main:{args.mode}", disabled_state), ensure_ascii=False, indent=2))
+        return 0
     if args.mode == "daemon":
         return run_daemon()
     scheduler_policy = _load_scheduler_policy()

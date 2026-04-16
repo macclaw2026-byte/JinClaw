@@ -35,6 +35,7 @@ from generate_task_dashboard import build_task_dashboard
 from governance_runtime import _build_doctor_coverage_bundle
 from memory_writeback_runtime import summarize_project_memory_writebacks
 from project_scheduler_policy import build_project_scheduler_policy
+from service_disable_registry import build_disabled_services_summary, read_disabled_service
 from task_alias_registry import build_task_alias_registry
 from task_retention_runtime import load_archived_task_registry, run_task_retention
 from paths import (
@@ -255,13 +256,21 @@ def build_process_registry() -> Dict[str, Any]:
     """
     items = []
     for target in PROCESS_TARGETS:
+        disabled_state = read_disabled_service(target["label"])
         status = _launchctl_status(target["launchd_label"])
         status["label"] = target["label"]
+        status["expected_running"] = not bool(disabled_state.get("disabled"))
+        status["disabled"] = bool(disabled_state.get("disabled"))
+        status["disabled_service"] = disabled_state
+        status["unexpected_running"] = bool(disabled_state.get("disabled")) and str(status.get("state", "")).strip() == "running"
         items.append(status)
     registry = {
         "generated_at": _utc_now_iso(),
         "items": items,
-        "all_running": all(item.get("state") == "running" for item in items),
+        "all_running": all(
+            item.get("state") == "running" if item.get("expected_running", True) else item.get("state") != "running"
+            for item in items
+        ),
     }
     registry["path"] = _write_json(PROCESS_REGISTRY_PATH, registry)
     return registry
@@ -449,8 +458,16 @@ def build_runtime_jobs_registry() -> Dict[str, Any]:
             if category == "scheduled" and not any([start_interval, start_calendar, run_at_load]):
                 continue
             launch_status = _launchctl_status(label)
+            launch_is_running = bool(int(launch_status.get("pid", 0) or 0) > 0 or str(launch_status.get("state", "")).strip() == "running")
             trigger = _runtime_trigger_summary(payload, category)
             runtime = _runtime_status_summary(category, launch_status)
+            disabled_state = read_disabled_service(label)
+            if disabled_state.get("disabled"):
+                runtime = {
+                    **runtime,
+                    "state_family": "attention" if launch_is_running else "disabled",
+                    "status_text": "disabled service still running" if launch_is_running else "disabled by operator",
+                }
             doctor_attention = _runtime_job_doctor_attention(
                 {
                     "category": category,
@@ -460,6 +477,12 @@ def build_runtime_jobs_registry() -> Dict[str, Any]:
                     "state": launch_status.get("state", ""),
                 }
             )
+            if disabled_state.get("disabled"):
+                doctor_attention = (
+                    {"needs_attention": True, "severity": "high", "reason": "disabled_service_still_running"}
+                    if launch_is_running
+                    else {"needs_attention": False, "severity": "none", "reason": "service_disabled_by_operator"}
+                )
             arguments = [str(arg).strip() for arg in (payload.get("ProgramArguments", []) or []) if str(arg).strip()]
             items.append(
                 {
@@ -475,10 +498,13 @@ def build_runtime_jobs_registry() -> Dict[str, Any]:
                     "start_interval_seconds": start_interval,
                     "program_arguments": arguments,
                     "program_summary": _program_summary(arguments),
-                    "state": str(launch_status.get("state", "")).strip() or "unknown",
+                    "state": "disabled_by_operator" if disabled_state.get("disabled") else str(launch_status.get("state", "")).strip() or "unknown",
                     "state_family": runtime.get("state_family", "idle"),
                     "status_text": runtime.get("status_text", "unknown"),
-                    "is_running": bool(int(launch_status.get("pid", 0) or 0) > 0 or str(launch_status.get("state", "")).strip() == "running"),
+                    "is_running": launch_is_running,
+                    "expected_running": not bool(disabled_state.get("disabled")),
+                    "disabled": bool(disabled_state.get("disabled")),
+                    "disabled_service": disabled_state,
                     "pid": int(launch_status.get("pid", 0) or 0),
                     "runs": int(launch_status.get("runs", 0) or 0),
                     "last_exit_code": launch_status.get("last_exit_code"),
@@ -1392,6 +1418,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
     crawler_remediation_scheduler_state = _load_crawler_remediation_scheduler_state()
     seller_bulk_scheduler_state = _load_seller_bulk_scheduler_state()
     cross_market_arbitrage_scheduler_state = _load_cross_market_arbitrage_scheduler_state()
+    disabled_services = build_disabled_services_summary(["cross_market_arbitrage"])
     doctor_last_run = _load_doctor_last_run()
     doctor_incident_inbox = _build_doctor_incident_inbox(runtime_jobs_registry, doctor_last_run)
     project_result_feedback = _project_result_feedback_summary(
@@ -1492,6 +1519,11 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
             "crawler_remediation_last_mode": crawler_remediation_scheduler_state.get("last_mode", ""),
             "seller_bulk_last_mode": seller_bulk_scheduler_state.get("last_mode", ""),
             "cross_market_arbitrage_last_mode": cross_market_arbitrage_scheduler_state.get("last_mode", ""),
+            "disabled_services_total": disabled_services.get("disabled_total", 0),
+            "cross_market_arbitrage_disabled": any(
+                item.get("service") == "cross_market_arbitrage" and item.get("disabled")
+                for item in disabled_services.get("items", [])
+            ),
             "memory_writeback_tasks_total": memory_writeback_overview.get("tasks_total", 0),
             "project_result_feedback_status": project_result_feedback.get("status", "unknown"),
             "project_result_feedback_recent_total": project_result_feedback.get("recent_total", 0),
@@ -1547,6 +1579,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
     )
     project_repair_recommendations = _recommended_project_repair_actions(snapshot.get("summary", {}) or {})
     snapshot["project_scheduler_policy"] = project_scheduler_policy
+    snapshot["disabled_services"] = disabled_services
     snapshot["project_repair_recommendations"] = project_repair_recommendations
     snapshot["doctor_incident_inbox"] = doctor_incident_inbox
     snapshot["scheduler_states"] = {
@@ -1597,6 +1630,7 @@ def build_control_plane(*, stale_after_seconds: int = 300, escalation_after_seco
         "crawler_remediation_scheduler_state": crawler_remediation_scheduler_state,
         "seller_bulk_scheduler_state": seller_bulk_scheduler_state,
         "cross_market_arbitrage_scheduler_state": cross_market_arbitrage_scheduler_state,
+        "disabled_services": disabled_services,
         "doctor_last_run": doctor_last_run,
         "doctor_incident_inbox": doctor_incident_inbox,
         "project_scheduler_policy": project_scheduler_policy,

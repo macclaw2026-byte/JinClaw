@@ -11,6 +11,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
+from service_disable_registry import read_disabled_service
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -309,6 +311,31 @@ def _cross_market_arbitrage_policy(
     crawler_profile: Dict[str, Any],
     system_summary: Dict[str, Any],
 ) -> Dict[str, Any]:
+    disable_state = read_disabled_service("cross_market_arbitrage")
+    if disable_state.get("disabled"):
+        reason = str(disable_state.get("reason") or "disabled_service_sentinel_present").strip()
+        return {
+            "recommended_mode": "disabled",
+            "repair_focus": _derive_repair_focus(system_summary),
+            "repair_mode": "service_disabled",
+            "loop_sleep_seconds": 0,
+            "discovery_interval_seconds": 0,
+            "matching_interval_seconds": 0,
+            "report_hour_new_york": 18,
+            "start_tasks": False,
+            "allow_report": False,
+            "service_disabled": True,
+            "disabled_service": disable_state,
+            "reasons": ["service_disabled_by_operator", reason],
+            "summary": {
+                "feedback_coverage_status": "not_applicable",
+                "trend_direction": "not_applicable",
+                "attention_sites": 0,
+                "memory_writeback_tasks_total": system_summary.get("memory_writeback_tasks_total", 0),
+                "disabled_reason": reason,
+                "disabled_path": disable_state.get("path", ""),
+            },
+        }
     feedback = crawler_profile.get("feedback", {}) or {}
     trend = crawler_profile.get("trend", {}) or {}
     attention_sites = int((crawler_profile.get("summary", {}) or {}).get("sites_attention_required", 0) or 0)

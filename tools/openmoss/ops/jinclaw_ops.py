@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List
@@ -45,6 +46,20 @@ LAUNCH_AGENTS = {
     "crawler_remediation": "ai.jinclaw.crawler-remediation",
     "upstream_watch": "ai.jinclaw.upstream-watch",
 }
+CROSS_MARKET_DAEMON_SCRIPT = (
+    WORKSPACE_ROOT / "skills/cross-market-arbitrage-engine/scripts/run_cross_market_arbitrage_cycle.py"
+)
+DISABLED_SERVICE_PROCESS_CHECKS = {
+    "cross_market_arbitrage": {
+        "path_fragment": str(CROSS_MARKET_DAEMON_SCRIPT),
+        "required_fragments": ["--mode", "daemon"],
+    },
+}
+
+if str(CONTROL_CENTER_ROOT) not in sys.path:
+    sys.path.insert(0, str(CONTROL_CENTER_ROOT))
+
+from service_disable_registry import read_disabled_service  # noqa: E402
 
 DOCTOR_REFRESH_MAX_AGE_MINUTES = 30
 DOCTOR_REQUIRED_ACQUISITION_CONTRACTS = (
@@ -285,13 +300,51 @@ def launch_agent_summary() -> Dict[str, Any]:
     """
     agents: Dict[str, Any] = {}
     for key, label in LAUNCH_AGENTS.items():
+        disabled_state = read_disabled_service(key)
+        disabled_process = disabled_service_process_summary(key) if disabled_state.get("disabled") else {}
         result = run_cmd(["launchctl", "print", f"gui/{os_uid()}/{label}"], timeout=20)
         agents[key] = {
             "label": label,
             "loaded": result.get("ok", False),
+            "expected_loaded": not bool(disabled_state.get("disabled")),
+            "disabled": bool(disabled_state.get("disabled")),
+            "disabled_service": disabled_state,
+            "disabled_runtime_process": disabled_process,
             "returncode": result.get("returncode"),
         }
     return agents
+
+
+def disabled_service_process_summary(service_key: str) -> Dict[str, Any]:
+    """
+    中文注解：
+    - 输入角色：接收 doctor 正在检查的服务 key。
+    - 输出角色：返回被停用服务是否仍有孤儿进程在跑，专门覆盖“launchd 已停但 daemon 还活着”的事故模式。
+    """
+    check = DISABLED_SERVICE_PROCESS_CHECKS.get(service_key)
+    if not check:
+        return {"checked": False, "running": False, "items": []}
+    result = run_cmd(["ps", "ax", "-o", "pid=,ppid=,stat=,command="], timeout=10)
+    items: List[Dict[str, Any]] = []
+    if not result.get("ok"):
+        return {"checked": True, "running": False, "items": [], "error": result.get("stderr", "")}
+    path_fragment = str(check.get("path_fragment", "")).strip()
+    required_fragments = [str(item).strip() for item in check.get("required_fragments", []) if str(item).strip()]
+    for line in (result.get("stdout") or "").splitlines():
+        if path_fragment and path_fragment not in line:
+            continue
+        if any(fragment not in line for fragment in required_fragments):
+            continue
+        parts = line.strip().split(None, 3)
+        if len(parts) < 4:
+            continue
+        try:
+            pid = int(parts[0])
+            ppid = int(parts[1])
+        except ValueError:
+            continue
+        items.append({"pid": pid, "ppid": ppid, "stat": parts[2], "command": parts[3][:500]})
+    return {"checked": True, "running": bool(items), "items": items[:10]}
 
 
 def os_uid() -> str:
@@ -1036,8 +1089,12 @@ def doctor_payload(*, refresh_doctor: bool = True) -> Dict[str, Any]:
         issues.append("openclaw_gateway_rpc_unhealthy")
 
     for key, agent in payload["launch_agents"].items():
-        if not agent["loaded"]:
+        if not agent["loaded"] and agent.get("expected_loaded", True):
             issues.append(f"launch_agent_missing:{key}")
+        if agent.get("disabled") and agent.get("loaded"):
+            issues.append(f"launch_agent_loaded_while_disabled:{key}")
+        if agent.get("disabled") and ((agent.get("disabled_runtime_process", {}) or {}).get("running")):
+            issues.append(f"disabled_service_process_running:{key}")
 
     runtime = payload["runtime"]
     message_pipeline = payload["message_pipeline"]
