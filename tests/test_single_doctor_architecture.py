@@ -10,7 +10,7 @@ if str(CONTROL_CENTER) not in sys.path:
 
 from governance_runtime import _build_doctor_coverage_bundle  # noqa: E402
 from control_plane_builder import build_control_plane  # noqa: E402
-from system_doctor import _run_seo_geo_delivery_integration_checks, run_system_doctor  # noqa: E402
+from system_doctor import _run_neosgo_outreach_integration_checks, _run_seo_geo_delivery_integration_checks, run_system_doctor  # noqa: E402
 
 
 class SingleDoctorArchitectureTest(unittest.TestCase):
@@ -32,6 +32,7 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertIn('skill-action-plane-kernel', names)
         self.assertIn('transport-binding-kernel', names)
         self.assertIn('seo-geo-delivery-kernel', names)
+        self.assertIn('neosgo-outreach-kernel', names)
 
     def test_control_plane_exposes_doctor_coverage(self):
         plane = build_control_plane(stale_after_seconds=300, escalation_after_seconds=900)
@@ -47,6 +48,14 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertTrue(result.get('delivery_proof_contract'))
         self.assertTrue(result.get('continuous_schedule_contract'))
         self.assertTrue(result.get('doctor_visibility_contract'))
+
+    def test_neosgo_outreach_doctor_contract(self):
+        result = _run_neosgo_outreach_integration_checks()
+        self.assertTrue(result.get('required_files_checked'))
+        self.assertTrue(str(result.get('neosgo_outreach_chain', '')).strip())
+        self.assertTrue(result.get('schedule_contract'))
+        self.assertIn('progress_liveness_contract', result)
+        self.assertIn('stoppage_classification_contract', result)
 
     def test_system_doctor_reports_integration_health(self):
         result = run_system_doctor(idle_after_seconds=300, escalation_after_seconds=900)
@@ -134,6 +143,12 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertTrue((integration.get('seo_geo_delivery', {}) or {}).get('delivery_proof_contract'))
         self.assertTrue((integration.get('seo_geo_delivery', {}) or {}).get('continuous_schedule_contract'))
         self.assertTrue((integration.get('seo_geo_delivery', {}) or {}).get('doctor_visibility_contract'))
+        self.assertTrue(str(integration.get('neosgo_outreach_chain', '')).strip())
+        self.assertIn('ok', (integration.get('neosgo_outreach', {}) or {}))
+        self.assertIn('runtime_state_contract', (integration.get('neosgo_outreach', {}) or {}))
+        self.assertIn('schedule_contract', (integration.get('neosgo_outreach', {}) or {}))
+        self.assertIn('progress_liveness_contract', (integration.get('neosgo_outreach', {}) or {}))
+        self.assertIn('stoppage_classification_contract', (integration.get('neosgo_outreach', {}) or {}))
 
 
 if __name__ == '__main__':

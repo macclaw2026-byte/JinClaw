@@ -73,6 +73,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                     'conversation_event_chain': 'ok',
                     'execution_event_chain': 'ok',
                     'seo_geo_delivery_chain': 'ok',
+                    'neosgo_outreach_chain': 'ok',
                     'conversation_events': {
                         'ingress_event_contract': True,
                         'route_event_contract': True,
@@ -125,6 +126,20 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                         'doctor_visibility_contract': True,
                         'latest_state_observed': True,
                         'latest_goal_status': 'continuous_delivery_ready',
+                    },
+                    'neosgo_outreach': {
+                        'runtime_state_contract': True,
+                        'schedule_contract': True,
+                        'progress_liveness_contract': True,
+                        'stoppage_classification_contract': True,
+                        'latest_state_observed': True,
+                        'health_status': 'active_recent',
+                        'candidate_supply_status': 'ready',
+                        'approved_usable_remaining_total': 4,
+                        'pending_batch_total': 200,
+                        'summary_matches_runtime_state': True,
+                        'latest_summary_generated_at': '2026-04-13T18:10:00+00:00',
+                        'last_progress_at': '2026-04-13T18:09:00+00:00',
                     },
                     'reply_projection': {
                         'projection_contract_presence': True,
@@ -180,6 +195,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                 'skill_action_plane_chain': 'ok',
                 'transport_binding_chain': 'ok',
                 'seo_geo_delivery_chain': 'ok',
+                'neosgo_outreach_chain': 'ok',
                 'acquisition_hand': {
                     'field_synthesis_contract': True,
                     'delivery_requirements_contract': True,
@@ -257,6 +273,20 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                     'doctor_visibility_contract': True,
                     'latest_state_observed': True,
                     'latest_goal_status': 'continuous_delivery_ready',
+                },
+                'neosgo_outreach': {
+                    'runtime_state_contract': True,
+                    'schedule_contract': True,
+                    'progress_liveness_contract': True,
+                    'stoppage_classification_contract': True,
+                    'latest_state_observed': True,
+                    'health_status': 'active_recent',
+                    'candidate_supply_status': 'ready',
+                    'approved_usable_remaining_total': 4,
+                    'pending_batch_total': 200,
+                    'summary_matches_runtime_state': True,
+                    'latest_summary_generated_at': '2026-04-13T18:10:00+00:00',
+                    'last_progress_at': '2026-04-13T18:09:00+00:00',
                 },
                 'ok': True,
             },
@@ -399,6 +429,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
             self.assertEqual(summary['integration_health']['conversation_event_chain'], 'ok')
             self.assertEqual(summary['integration_health']['execution_event_chain'], 'ok')
             self.assertEqual(summary['integration_health']['seo_geo_delivery_chain'], 'ok')
+            self.assertEqual(summary['integration_health']['neosgo_outreach_chain'], 'ok')
             self.assertTrue(summary['acquisition_health']['field_synthesis_contract'])
             self.assertTrue(summary['acquisition_health']['response_handoff_contract'])
             self.assertTrue(summary['acquisition_health']['execution_truth_contract'])
@@ -419,6 +450,10 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
             self.assertTrue(summary['integration_health']['seo_geo_delivery']['delivery_proof_contract'])
             self.assertTrue(summary['integration_health']['seo_geo_delivery']['continuous_schedule_contract'])
             self.assertTrue(summary['integration_health']['seo_geo_delivery']['doctor_visibility_contract'])
+            self.assertTrue(summary['integration_health']['neosgo_outreach']['runtime_state_contract'])
+            self.assertTrue(summary['integration_health']['neosgo_outreach']['schedule_contract'])
+            self.assertTrue(summary['integration_health']['neosgo_outreach']['progress_liveness_contract'])
+            self.assertTrue(summary['integration_health']['neosgo_outreach']['stoppage_classification_contract'])
             self.assertEqual(summary['acquisition_health']['completion_status'], 'complete')
             self.assertTrue(summary['acquisition_health']['goal_reached'])
             self.assertTrue(summary['refresh']['attempted'])
