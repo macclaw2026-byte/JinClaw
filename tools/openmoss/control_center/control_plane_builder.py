@@ -424,6 +424,16 @@ def _runtime_job_doctor_attention(item: Dict[str, Any]) -> Dict[str, Any]:
     last_exit_code = item.get("last_exit_code")
     launchctl_ok = bool(item.get("launchctl_ok"))
     state = str(item.get("state", "")).strip()
+    disabled_service = item.get("disabled_service", {}) or {}
+    service_disabled = bool(disabled_service.get("disabled"))
+    requires_manual_reenable = bool(disabled_service.get("requires_manual_reenable"))
+    if service_disabled:
+        if bool(item.get("is_running")):
+            return {"needs_attention": True, "severity": "high", "reason": "disabled_service_still_running"}
+        reason = "service_disabled_by_operator"
+        if requires_manual_reenable:
+            reason = "service_disabled_requires_manual_reenable"
+        return {"needs_attention": False, "severity": "none", "reason": reason}
     if state_family == "running":
         return {"needs_attention": False, "severity": "none", "reason": ""}
     if not launchctl_ok:
@@ -440,6 +450,48 @@ def _runtime_job_doctor_attention(item: Dict[str, Any]) -> Dict[str, Any]:
         reason = "scheduled_job_last_run_failed" if category == "scheduled" else "continuous_process_crashed"
         return {"needs_attention": True, "severity": severity, "reason": reason}
     return {"needs_attention": False, "severity": "none", "reason": ""}
+
+
+def _test_runtime_job_doctor_attention_disabled_manual_reenable() -> None:
+    result = _runtime_job_doctor_attention(
+        {
+            "category": "continuous",
+            "state_family": "disabled",
+            "last_exit_code": 1,
+            "launchctl_ok": True,
+            "state": "disabled_by_operator",
+            "disabled_service": {
+                "disabled": True,
+                "requires_manual_reenable": True,
+            },
+            "is_running": False,
+        }
+    )
+    assert result == {
+        "needs_attention": False,
+        "severity": "none",
+        "reason": "service_disabled_requires_manual_reenable",
+    }
+
+    running_result = _runtime_job_doctor_attention(
+        {
+            "category": "continuous",
+            "state_family": "running",
+            "last_exit_code": 1,
+            "launchctl_ok": True,
+            "state": "running",
+            "disabled_service": {
+                "disabled": True,
+                "requires_manual_reenable": True,
+            },
+            "is_running": True,
+        }
+    )
+    assert running_result == {
+        "needs_attention": True,
+        "severity": "high",
+        "reason": "disabled_service_still_running",
+    }
 
 
 def build_runtime_jobs_registry() -> Dict[str, Any]:
@@ -475,6 +527,8 @@ def build_runtime_jobs_registry() -> Dict[str, Any]:
                     "last_exit_code": launch_status.get("last_exit_code"),
                     "launchctl_ok": launch_status.get("ok"),
                     "state": launch_status.get("state", ""),
+                    "disabled_service": disabled_state,
+                    "is_running": launch_is_running,
                 }
             )
             if disabled_state.get("disabled"):
@@ -595,13 +649,62 @@ def _load_task_contract(task_id: str) -> Dict[str, Any]:
     return _read_json(AUTONOMY_TASKS_ROOT / task_id / "contract.json", {})
 
 
-def _conversation_links_for_task(task_id: str, canonical_task_id: str) -> List[Dict[str, Any]]:
+def _build_conversation_link_index() -> Dict[str, List[Dict[str, Any]]]:
+    """
+    中文注解：
+    - 功能：一次性把 conversation link 目录整理成按 task/reference id 可检索的索引。
+    - 设计意图：control plane 在构建 task registry 时会遍历很多任务；
+      如果每个任务都重新全量扫描 links 目录，复杂度会被无谓放大。
+    """
+    index: Dict[str, List[Dict[str, Any]]] = {}
+    if not LINKS_ROOT.exists():
+        return index
+    for path in sorted(LINKS_ROOT.glob("*.json")):
+        payload = _read_json(path, {})
+        if not payload:
+            continue
+        row = {
+            "path": str(path),
+            "provider": payload.get("provider", ""),
+            "conversation_id": payload.get("conversation_id", ""),
+            "task_id": payload.get("task_id", ""),
+            "lineage_root_task_id": payload.get("lineage_root_task_id", ""),
+            "session_key": payload.get("session_key", ""),
+            "updated_at": payload.get("updated_at", ""),
+        }
+        refs = {
+            str(payload.get("task_id", "")).strip(),
+            str(payload.get("lineage_root_task_id", "")).strip(),
+            str(payload.get("predecessor_task_id", "")).strip(),
+        }
+        for ref in {item for item in refs if item}:
+            index.setdefault(ref, []).append(row)
+    return index
+
+
+def _conversation_links_for_task(
+    task_id: str,
+    canonical_task_id: str,
+    *,
+    link_index: Dict[str, List[Dict[str, Any]]] | None = None,
+) -> List[Dict[str, Any]]:
     """
     中文注解：
     - 功能：实现 `_conversation_links_for_task` 对应的处理逻辑。
     - 角色：属于本模块中的内部辅助逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
     """
+    if isinstance(link_index, dict):
+        rows: List[Dict[str, Any]] = []
+        seen_paths: set[str] = set()
+        for ref in [canonical_task_id, task_id]:
+            for row in (link_index.get(ref, []) or []):
+                path = str(row.get("path", "")).strip()
+                if path in seen_paths:
+                    continue
+                seen_paths.add(path)
+                rows.append(dict(row))
+        return rows
     rows: List[Dict[str, Any]] = []
     if not LINKS_ROOT.exists():
         return rows
@@ -715,6 +818,8 @@ def build_task_registry(*, stale_after_seconds: int = 300, escalation_after_seco
     doctor_queue: List[Dict[str, Any]] = []
     alerts: List[Dict[str, Any]] = []
     seen_canonical: set[str] = set()
+    evidence_cache: Dict[str, Dict[str, Any]] = {}
+    conversation_link_index = _build_conversation_link_index()
 
     if AUTONOMY_TASKS_ROOT.exists():
         for task_root in sorted(AUTONOMY_TASKS_ROOT.iterdir()):
@@ -725,8 +830,11 @@ def build_task_registry(*, stale_after_seconds: int = 300, escalation_after_seco
             contract = _load_task_contract(task_id)
             canonical = resolve_canonical_active_task(task_id)
             canonical_task_id = str(canonical.get("canonical_task_id", task_id)).strip() or task_id
-            evidence = build_progress_evidence(canonical_task_id, stale_after_seconds=stale_after_seconds)
-            links = _conversation_links_for_task(task_id, canonical_task_id)
+            evidence = evidence_cache.get(canonical_task_id)
+            if evidence is None:
+                evidence = build_progress_evidence(canonical_task_id, stale_after_seconds=stale_after_seconds)
+                evidence_cache[canonical_task_id] = evidence
+            links = _conversation_links_for_task(task_id, canonical_task_id, link_index=conversation_link_index)
             blocked_runtime_state = _normalized_blocked_runtime_state(state)
             entry = {
                 "task_id": task_id,
@@ -1007,9 +1115,11 @@ def _build_doctor_incident_inbox(
 ) -> Dict[str, Any]:
     doctor_root = DOCTOR_LAST_RUN_PATH.parent
     process_root = doctor_root / "process_incidents"
+    archived_process_root = doctor_root / "archived_process_incidents"
     task_root = doctor_root / "task_incidents"
     resolution_root = doctor_root / "resolutions"
     process_items: List[Dict[str, Any]] = []
+    archived_process_items: List[Dict[str, Any]] = []
     task_items: List[Dict[str, Any]] = []
     resolution_items: List[Dict[str, Any]] = []
 
@@ -1100,6 +1210,27 @@ def _build_doctor_incident_inbox(
                 continue
             _append_active_incident("task_incident", payload, path)
 
+    if archived_process_root.exists():
+        for path in sorted(archived_process_root.glob("*.json")):
+            payload = _read_json(path, {}) or {}
+            if not isinstance(payload, dict):
+                continue
+            archived_process_items.append(
+                {
+                    "scope": "process_incident",
+                    "subject_id": str(payload.get("label", "")).strip() or str(payload.get("subject_id", "")).strip(),
+                    "name": str(payload.get("name", "")).strip() or str(payload.get("label", "")).strip(),
+                    "reason": str(payload.get("doctor_attention_reason", "")).strip()
+                    or str(((payload.get("resolution", {}) or {}).get("resolution_reason", ""))).strip(),
+                    "severity": str(payload.get("doctor_attention_severity", "")).strip() or "unknown",
+                    "status": str(payload.get("status_text", "")).strip() or str(payload.get("state", "")).strip(),
+                    "resolved_at": str(payload.get("resolved_at", "")).strip(),
+                    "archived_at": str(payload.get("archived_at", "")).strip(),
+                    "archived_reason": str(payload.get("archived_reason", "")).strip(),
+                    "report_path": str(path),
+                }
+            )
+
     if resolution_root.exists():
         for path in sorted(resolution_root.glob("*.json")):
             payload = _read_json(path, {}) or {}
@@ -1120,6 +1251,7 @@ def _build_doctor_incident_inbox(
             )
 
     process_items.sort(key=lambda item: (str(item.get("severity", "")) != "critical", str(item.get("generated_at", ""))), reverse=False)
+    archived_process_items.sort(key=lambda item: str(item.get("archived_at", "")), reverse=True)
     task_items.sort(key=lambda item: (str(item.get("severity", "")) != "critical", str(item.get("generated_at", ""))), reverse=False)
     resolution_items.sort(key=lambda item: str(item.get("written_at", "")), reverse=True)
     active_items = sorted(
@@ -1134,12 +1266,14 @@ def _build_doctor_incident_inbox(
         "summary": {
             "active_total": len(active_items),
             "process_total": len(process_items),
+            "archived_process_total": len(archived_process_items),
             "task_total": len(task_items),
             "with_ai_takeover_total": sum(1 for item in active_items if str(item.get("watch_task_id", "")).strip()),
             "resolutions_total": len(resolution_items),
         },
         "active_items": active_items,
         "process_items": process_items,
+        "archived_process_items": archived_process_items[:20],
         "task_items": task_items,
         "resolution_items": resolution_items[:20],
     }
