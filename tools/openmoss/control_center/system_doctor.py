@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import json
+import plistlib
 import re
 import shutil
 import sys
@@ -163,6 +164,23 @@ SEO_GEO_DELIVERY_REQUIRED_FILES = [
     WORKSPACE_ROOT / 'tools/openmoss/control_center/generate_doctor_dashboard.py',
     WORKSPACE_ROOT / 'tools/openmoss/control_center/system_doctor.py',
 ]
+NEOSGO_OUTREACH_REQUIRED_FILES = [
+    WORKSPACE_ROOT / 'projects/neosgo-marketing-suite/scripts/run_outreach_cycle.py',
+    WORKSPACE_ROOT / 'projects/neosgo-marketing-suite/scripts/send_outreach_progress_telegram.py',
+    WORKSPACE_ROOT / 'tools/openmoss/ops/ai.jinclaw.neosgo-outreach-cycle-hourly.plist',
+    WORKSPACE_ROOT / 'tools/openmoss/ops/ai.jinclaw.neosgo-outreach-summary-3h.plist',
+    WORKSPACE_ROOT / 'tools/openmoss/control_center/system_doctor.py',
+]
+NEOSGO_OUTREACH_STATE_PATH = WORKSPACE_ROOT / 'projects/neosgo-marketing-suite/runtime/outreach/state.json'
+NEOSGO_OUTREACH_SUMMARY_PATH = WORKSPACE_ROOT / 'projects/neosgo-marketing-suite/runtime/outreach/latest-summary.json'
+NEOSGO_OUTREACH_EVENTS_PATH = WORKSPACE_ROOT / 'projects/neosgo-marketing-suite/runtime/outreach/events.jsonl'
+NEOSGO_OUTREACH_REFILL_STATE_PATH = WORKSPACE_ROOT / 'projects/neosgo-marketing-suite/runtime/outreach/lead-refill-state.json'
+NEOSGO_OUTREACH_TELEGRAM_STATE_PATH = WORKSPACE_ROOT / 'projects/neosgo-marketing-suite/runtime/outreach/telegram-summary-state.json'
+NEOSGO_OUTREACH_CYCLE_PLIST_PATH = WORKSPACE_ROOT / 'tools/openmoss/ops/ai.jinclaw.neosgo-outreach-cycle-hourly.plist'
+NEOSGO_OUTREACH_SUMMARY_PLIST_PATH = WORKSPACE_ROOT / 'tools/openmoss/ops/ai.jinclaw.neosgo-outreach-summary-3h.plist'
+NEOSGO_OUTREACH_EMAIL_HOLD_SECONDS = 20 * 60
+NEOSGO_OUTREACH_PROGRESS_STALL_SECONDS = 60 * 60
+NEOSGO_OUTREACH_REFILL_STALL_SECONDS = 2 * 60 * 60
 GSTACK_LIFECYCLE = ['think', 'plan', 'build', 'review', 'test', 'ship', 'reflect']
 DOCTOR_RESOLUTION_REQUIRED_FIELDS = [
     "scope",
@@ -209,6 +227,23 @@ def _read_json(path: Path, default: Dict[str, object] | list | None = None):
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {} if default is None else default
+
+
+def _read_plist(path: Path) -> Dict[str, object]:
+    if not path.exists():
+        return {}
+    try:
+        payload = plistlib.loads(path.read_bytes())
+    except (OSError, plistlib.InvalidFileException):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(WORKSPACE_ROOT))
+    except ValueError:
+        return str(path)
 
 
 def _seconds_since(iso_text: str) -> float:
@@ -263,6 +298,22 @@ def _read_jsonl_tail(path: Path, *, max_items: int = 20) -> List[Dict[str, objec
         if isinstance(payload, dict):
             items.append(payload)
     return items
+
+
+def _max_recent_iso(items: List[str]) -> str:
+    ranked: List[datetime] = []
+    for raw in items:
+        try:
+            ranked.append(datetime.fromisoformat(str(raw).replace("Z", "+00:00")))
+        except ValueError:
+            continue
+    if not ranked:
+        return ""
+    ranked.sort()
+    latest = ranked[-1]
+    if latest.tzinfo is None:
+        latest = latest.replace(tzinfo=timezone.utc)
+    return latest.astimezone(timezone.utc).isoformat()
 
 
 def _stage_snapshot(state) -> Dict[str, Dict[str, object]]:
@@ -3553,7 +3604,7 @@ def _run_delivery_plane_integration_checks() -> Dict[str, object]:
     errors: List[str] = []
     for path in DELIVERY_PLANE_REQUIRED_FILES:
         if not path.exists():
-            errors.append(f"missing_required_file:{path.relative_to(WORKSPACE_ROOT)}")
+            errors.append(f"missing_required_file:{_display_path(path)}")
 
     from unittest.mock import patch
 
@@ -3967,6 +4018,197 @@ def _run_seo_geo_delivery_integration_checks() -> Dict[str, object]:
     }
 
 
+def _run_neosgo_outreach_integration_checks() -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：验证 NEOSGO outreach 是否仍在持续推进，并把“真停机 / 候选池耗尽 / 补给阻塞 / 汇报落后”分类为 canonical doctor 可消费信号。
+    - 输入角色：读取 outreach runtime state、latest summary、候选池状态与 launch agent contract。
+    - 输出角色：供 system doctor 与 ops doctor 统一解释“为什么汇报数字没变，以及下一步该看哪里”。
+    """
+    errors: List[str] = []
+    for path in NEOSGO_OUTREACH_REQUIRED_FILES:
+        if not path.exists():
+            errors.append(f"missing_required_file:{path.relative_to(WORKSPACE_ROOT)}")
+
+    cycle_plist = _read_plist(NEOSGO_OUTREACH_CYCLE_PLIST_PATH)
+    summary_plist = _read_plist(NEOSGO_OUTREACH_SUMMARY_PLIST_PATH)
+    latest_summary = _read_json(NEOSGO_OUTREACH_SUMMARY_PATH) if NEOSGO_OUTREACH_SUMMARY_PATH.exists() else {}
+    runtime_state = _read_json(NEOSGO_OUTREACH_STATE_PATH) if NEOSGO_OUTREACH_STATE_PATH.exists() else {}
+    refill_state = _read_json(NEOSGO_OUTREACH_REFILL_STATE_PATH) if NEOSGO_OUTREACH_REFILL_STATE_PATH.exists() else {}
+    telegram_state = _read_json(NEOSGO_OUTREACH_TELEGRAM_STATE_PATH) if NEOSGO_OUTREACH_TELEGRAM_STATE_PATH.exists() else {}
+    recent_events = _read_jsonl_tail(NEOSGO_OUTREACH_EVENTS_PATH, max_items=400)
+
+    if not latest_summary:
+        errors.append('neosgo_outreach_summary_missing')
+    if not runtime_state:
+        errors.append('neosgo_outreach_runtime_state_missing')
+
+    candidate_supply = dict((latest_summary or {}).get('candidate_supply') or {})
+    if latest_summary and not candidate_supply:
+        errors.append('neosgo_outreach_candidate_supply_missing')
+
+    if not cycle_plist:
+        errors.append('neosgo_outreach_cycle_plist_missing_or_invalid')
+    else:
+        if str(cycle_plist.get('Label') or '').strip() != 'ai.jinclaw.neosgo-outreach-cycle-hourly':
+            errors.append('neosgo_outreach_cycle_plist_label_mismatch')
+        if int(cycle_plist.get('StartInterval') or 0) != 600:
+            errors.append('neosgo_outreach_cycle_plist_interval_mismatch')
+        cycle_args = ' '.join(str(item) for item in list(cycle_plist.get('ProgramArguments') or []))
+        if 'run_outreach_cycle.py' not in cycle_args:
+            errors.append('neosgo_outreach_cycle_plist_script_mismatch')
+
+    if not summary_plist:
+        errors.append('neosgo_outreach_summary_plist_missing_or_invalid')
+    else:
+        if str(summary_plist.get('Label') or '').strip() != 'ai.jinclaw.neosgo-outreach-summary-3h':
+            errors.append('neosgo_outreach_summary_plist_label_mismatch')
+        if int(summary_plist.get('StartInterval') or 0) != 10800:
+            errors.append('neosgo_outreach_summary_plist_interval_mismatch')
+        summary_args = ' '.join(str(item) for item in list(summary_plist.get('ProgramArguments') or []))
+        if 'send_outreach_progress_telegram.py' not in summary_args:
+            errors.append('neosgo_outreach_summary_plist_script_mismatch')
+
+    targets = dict((runtime_state or {}).get('targets') or {})
+    runtime_touched_total = len(targets)
+    summary_touched_total = int((latest_summary or {}).get('total_touched', 0) or 0)
+    if latest_summary and runtime_state and summary_touched_total != runtime_touched_total:
+        errors.append('neosgo_outreach_summary_lags_runtime_state')
+
+    target_updated_values = [
+        str((item or {}).get('updated_at') or '').strip()
+        for item in list(targets.values())
+        if str((item or {}).get('updated_at') or '').strip()
+    ]
+    touch_event_types = {
+        'email_sent_local_only',
+        'contact_form_submitted',
+        'contact_form_needs_review',
+        'contact_form_failed_email_deferred',
+        'contact_form_failed',
+        'email_failed',
+        'review_hold',
+        'captcha_pending_operator',
+    }
+    event_progress_values = [
+        str((item or {}).get('at') or '').strip()
+        for item in recent_events
+        if str((item or {}).get('type') or '').strip() in touch_event_types and str((item or {}).get('at') or '').strip()
+    ]
+    generated_at = str((latest_summary or {}).get('generated_at') or '').strip()
+    last_email_sent_at = str((runtime_state or {}).get('last_email_sent_at') or '').strip()
+    last_target_progress_at = _max_recent_iso(target_updated_values)
+    last_touch_event_at = _max_recent_iso(event_progress_values)
+    last_progress_at = _max_recent_iso([last_email_sent_at, last_target_progress_at, last_touch_event_at])
+
+    candidate_status = str(candidate_supply.get('status') or '').strip()
+    approved_usable_remaining_total = int(candidate_supply.get('approved_usable_remaining_total', 0) or 0)
+    pending_batch_total = int(candidate_supply.get('pending_batch_total', 0) or 0)
+    email_delivery_pending = bool((runtime_state or {}).get('email_delivery_pending'))
+    email_hold_active = email_delivery_pending and _seconds_since(last_email_sent_at) <= NEOSGO_OUTREACH_EMAIL_HOLD_SECONDS
+
+    refill_meta = dict(candidate_supply.get('last_replenishment') or {})
+    refill_attempted_at = str(refill_meta.get('attempted_at') or (refill_state or {}).get('attempted_at') or '').strip()
+    health_status = 'unknown'
+    stall_reason = ''
+    progress_age_seconds = _seconds_since(last_progress_at) if last_progress_at else 10**9
+    if latest_summary and runtime_state and candidate_supply:
+        if email_hold_active:
+            health_status = 'email_hold'
+            stall_reason = 'email_delivery_gate_hold_window_active'
+        elif progress_age_seconds <= NEOSGO_OUTREACH_PROGRESS_STALL_SECONDS:
+            health_status = 'active_recent'
+            stall_reason = 'recent_progress_detected'
+        elif candidate_status == 'ready' and approved_usable_remaining_total > 0:
+            health_status = 'stalled_ready_supply'
+            stall_reason = 'approved_supply_available_but_no_recent_touch_progress'
+            errors.append('neosgo_outreach_progress_stalled_with_ready_supply')
+        elif candidate_status == 'refill_pending' or (approved_usable_remaining_total <= 0 and pending_batch_total > 0):
+            refill_age_seconds = _seconds_since(refill_attempted_at) if refill_attempted_at else 10**9
+            if refill_attempted_at and refill_age_seconds <= NEOSGO_OUTREACH_REFILL_STALL_SECONDS:
+                health_status = 'refill_pending'
+                stall_reason = 'candidate_refill_in_progress'
+            else:
+                health_status = 'refill_stalled'
+                stall_reason = 'candidate_refill_pending_beyond_sla'
+                errors.append('neosgo_outreach_refill_pending_too_long')
+        elif candidate_status == 'exhausted' or (approved_usable_remaining_total <= 0 and pending_batch_total <= 0):
+            health_status = 'exhausted'
+            stall_reason = 'candidate_supply_exhausted'
+        else:
+            health_status = 'unknown_stall'
+            stall_reason = 'progress_missing_without_explained_supply_state'
+            errors.append('neosgo_outreach_progress_stalled_unclassified')
+
+    runtime_state_contract = not any(
+        item in {
+            'neosgo_outreach_summary_missing',
+            'neosgo_outreach_runtime_state_missing',
+            'neosgo_outreach_candidate_supply_missing',
+            'neosgo_outreach_summary_lags_runtime_state',
+        }
+        for item in errors
+    )
+    schedule_contract = not any(
+        item in {
+            'neosgo_outreach_cycle_plist_missing_or_invalid',
+            'neosgo_outreach_cycle_plist_label_mismatch',
+            'neosgo_outreach_cycle_plist_interval_mismatch',
+            'neosgo_outreach_cycle_plist_script_mismatch',
+            'neosgo_outreach_summary_plist_missing_or_invalid',
+            'neosgo_outreach_summary_plist_label_mismatch',
+            'neosgo_outreach_summary_plist_interval_mismatch',
+            'neosgo_outreach_summary_plist_script_mismatch',
+        }
+        for item in errors
+    )
+    progress_liveness_contract = not any(
+        item in {
+            'neosgo_outreach_progress_stalled_with_ready_supply',
+            'neosgo_outreach_refill_pending_too_long',
+            'neosgo_outreach_progress_stalled_unclassified',
+        }
+        for item in errors
+    )
+    stoppage_classification_contract = health_status not in {'unknown', 'unknown_stall'} and bool(candidate_supply or email_hold_active)
+    last_summary_delivery = dict((telegram_state or {}).get('delivery') or {})
+    latest_summary_reported = (
+        generated_at
+        and str((telegram_state or {}).get('last_generated_at') or '').strip() == generated_at
+        and int(last_summary_delivery.get('returncode', 1) or 1) == 0
+    )
+
+    return {
+        'required_files_checked': len(NEOSGO_OUTREACH_REQUIRED_FILES),
+        'required_files': [_display_path(path) for path in NEOSGO_OUTREACH_REQUIRED_FILES],
+        'runtime_state_contract': runtime_state_contract,
+        'schedule_contract': schedule_contract,
+        'progress_liveness_contract': progress_liveness_contract,
+        'stoppage_classification_contract': stoppage_classification_contract,
+        'latest_state_observed': bool(latest_summary) and bool(runtime_state),
+        'latest_summary_generated_at': generated_at,
+        'latest_summary_reported': latest_summary_reported,
+        'last_target_progress_at': last_target_progress_at,
+        'last_touch_event_at': last_touch_event_at,
+        'last_progress_at': last_progress_at,
+        'progress_age_seconds': int(progress_age_seconds if progress_age_seconds < 10**9 else 0),
+        'runtime_touched_total': runtime_touched_total,
+        'summary_touched_total': summary_touched_total,
+        'summary_matches_runtime_state': bool(latest_summary and runtime_state and summary_touched_total == runtime_touched_total),
+        'candidate_supply_status': candidate_status,
+        'approved_usable_remaining_total': approved_usable_remaining_total,
+        'pending_batch_total': pending_batch_total,
+        'email_delivery_pending': email_delivery_pending,
+        'email_hold_active': email_hold_active,
+        'health_status': health_status,
+        'stall_reason': stall_reason,
+        'refill_attempted_at': refill_attempted_at,
+        'neosgo_outreach_chain': 'ok' if not errors else 'error',
+        'errors': errors,
+        'ok': not errors,
+    }
+
+
 def _run_integration_health_checks() -> Dict[str, object]:
     """
     中文注解：
@@ -3987,6 +4229,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
     skill_action_plane = _run_skill_action_plane_integration_checks()
     transport_binding = _run_transport_binding_integration_checks()
     seo_geo_delivery = _run_seo_geo_delivery_integration_checks()
+    neosgo_outreach = _run_neosgo_outreach_integration_checks()
     errors = (
         list(gstack.get('errors', []) or [])
         + list(acquisition_hand.get('errors', []) or [])
@@ -4001,6 +4244,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         + list(skill_action_plane.get('errors', []) or [])
         + list(transport_binding.get('errors', []) or [])
         + list(seo_geo_delivery.get('errors', []) or [])
+        + list(neosgo_outreach.get('errors', []) or [])
     )
     return {
         'single_doctor_rule': True,
@@ -4018,7 +4262,8 @@ def _run_integration_health_checks() -> Dict[str, object]:
         + int(delivery_plane.get('required_files_checked', 0) or 0)
         + int(skill_action_plane.get('required_files_checked', 0) or 0)
         + int(transport_binding.get('required_files_checked', 0) or 0)
-        + int(seo_geo_delivery.get('required_files_checked', 0) or 0),
+        + int(seo_geo_delivery.get('required_files_checked', 0) or 0)
+        + int(neosgo_outreach.get('required_files_checked', 0) or 0),
         'lifecycle': GSTACK_LIFECYCLE,
         'gstack': gstack,
         'acquisition_hand': acquisition_hand,
@@ -4033,6 +4278,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         'skill_action_plane': skill_action_plane,
         'transport_binding': transport_binding,
         'seo_geo_delivery': seo_geo_delivery,
+        'neosgo_outreach': neosgo_outreach,
         'coding_chain': gstack.get('coding_chain', 'unknown'),
         'noncoding_chain': gstack.get('noncoding_chain', 'unknown'),
         'acquisition_chain': acquisition_hand.get('acquisition_chain', 'unknown'),
@@ -4047,6 +4293,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
         'skill_action_plane_chain': skill_action_plane.get('skill_action_plane_chain', 'unknown'),
         'transport_binding_chain': transport_binding.get('transport_binding_chain', 'unknown'),
         'seo_geo_delivery_chain': seo_geo_delivery.get('seo_geo_delivery_chain', 'unknown'),
+        'neosgo_outreach_chain': neosgo_outreach.get('neosgo_outreach_chain', 'unknown'),
         'errors': errors,
         'ok': (
             bool(gstack.get('ok'))
@@ -4062,6 +4309,7 @@ def _run_integration_health_checks() -> Dict[str, object]:
             and bool(skill_action_plane.get('ok'))
             and bool(transport_binding.get('ok'))
             and bool(seo_geo_delivery.get('ok'))
+            and bool(neosgo_outreach.get('ok'))
         ),
     }
 

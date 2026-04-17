@@ -44,6 +44,8 @@ LAUNCH_AGENTS = {
     "autonomy_runtime": "ai.jinclaw.autonomy-runtime",
     "cross_market_arbitrage": "ai.jinclaw.cross-market-arbitrage",
     "crawler_remediation": "ai.jinclaw.crawler-remediation",
+    "neosgo_outreach_cycle": "ai.jinclaw.neosgo-outreach-cycle-hourly",
+    "neosgo_outreach_summary": "ai.jinclaw.neosgo-outreach-summary-3h",
     "upstream_watch": "ai.jinclaw.upstream-watch",
 }
 CROSS_MARKET_DAEMON_SCRIPT = (
@@ -135,6 +137,12 @@ DOCTOR_REQUIRED_SEO_GEO_DELIVERY_CONTRACTS = (
     "delivery_proof_contract",
     "continuous_schedule_contract",
     "doctor_visibility_contract",
+)
+DOCTOR_REQUIRED_NEOSGO_OUTREACH_CONTRACTS = (
+    "runtime_state_contract",
+    "schedule_contract",
+    "progress_liveness_contract",
+    "stoppage_classification_contract",
 )
 
 
@@ -513,6 +521,7 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
     skill_action_plane = integration_health.get("skill_action_plane", {}) or {}
     transport_binding = integration_health.get("transport_binding", {}) or {}
     seo_geo_delivery = integration_health.get("seo_geo_delivery", {}) or {}
+    neosgo_outreach = integration_health.get("neosgo_outreach", {}) or {}
     checked_at = str(payload.get("checked_at", "")).strip()
     return {
         "last_run_exists": DOCTOR_LAST_RUN_PATH.exists(),
@@ -573,6 +582,7 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
             "skill_action_plane_chain": str(integration_health.get("skill_action_plane_chain", "")).strip(),
             "transport_binding_chain": str(integration_health.get("transport_binding_chain", "")).strip(),
             "seo_geo_delivery_chain": str(integration_health.get("seo_geo_delivery_chain", "")).strip(),
+            "neosgo_outreach_chain": str(integration_health.get("neosgo_outreach_chain", "")).strip(),
             "conversation_context": {
                 "instruction_envelope_contract": bool(conversation_context.get("instruction_envelope_contract")),
                 "focus_contract": bool(conversation_context.get("focus_contract")),
@@ -636,6 +646,20 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
                 "doctor_visibility_contract": bool(seo_geo_delivery.get("doctor_visibility_contract")),
                 "latest_state_observed": bool(seo_geo_delivery.get("latest_state_observed")),
                 "latest_goal_status": str(seo_geo_delivery.get("latest_goal_status", "")).strip(),
+            },
+            "neosgo_outreach": {
+                "runtime_state_contract": bool(neosgo_outreach.get("runtime_state_contract")),
+                "schedule_contract": bool(neosgo_outreach.get("schedule_contract")),
+                "progress_liveness_contract": bool(neosgo_outreach.get("progress_liveness_contract")),
+                "stoppage_classification_contract": bool(neosgo_outreach.get("stoppage_classification_contract")),
+                "latest_state_observed": bool(neosgo_outreach.get("latest_state_observed")),
+                "health_status": str(neosgo_outreach.get("health_status", "")).strip(),
+                "candidate_supply_status": str(neosgo_outreach.get("candidate_supply_status", "")).strip(),
+                "approved_usable_remaining_total": int(neosgo_outreach.get("approved_usable_remaining_total", 0) or 0),
+                "pending_batch_total": int(neosgo_outreach.get("pending_batch_total", 0) or 0),
+                "summary_matches_runtime_state": bool(neosgo_outreach.get("summary_matches_runtime_state")),
+                "latest_summary_generated_at": str(neosgo_outreach.get("latest_summary_generated_at", "")).strip(),
+                "last_progress_at": str(neosgo_outreach.get("last_progress_at", "")).strip(),
             },
         },
     }
@@ -705,6 +729,9 @@ def _doctor_runtime_payload_complete(payload: Dict[str, Any]) -> bool:
     seo_geo_delivery = integration.get("seo_geo_delivery", {}) or {}
     if not isinstance(seo_geo_delivery, dict) or not seo_geo_delivery:
         return False
+    neosgo_outreach = integration.get("neosgo_outreach", {}) or {}
+    if not isinstance(neosgo_outreach, dict) or not neosgo_outreach:
+        return False
     return all(name in acquisition_hand for name in DOCTOR_REQUIRED_ACQUISITION_CONTRACTS) and all(
         name in conversation_context for name in DOCTOR_REQUIRED_CONVERSATION_CONTEXT_CONTRACTS
     ) and all(
@@ -727,6 +754,8 @@ def _doctor_runtime_payload_complete(payload: Dict[str, Any]) -> bool:
         name in transport_binding for name in DOCTOR_REQUIRED_TRANSPORT_BINDING_CONTRACTS
     ) and all(
         name in seo_geo_delivery for name in DOCTOR_REQUIRED_SEO_GEO_DELIVERY_CONTRACTS
+    ) and all(
+        name in neosgo_outreach for name in DOCTOR_REQUIRED_NEOSGO_OUTREACH_CONTRACTS
     )
 
 
@@ -1146,6 +1175,20 @@ def doctor_payload(*, refresh_doctor: bool = True) -> Dict[str, Any]:
         issues.append("system_doctor_refresh_failed")
     if doctor_runtime.get("last_run_exists") and not ((doctor_runtime.get("integration_health", {}) or {}).get("ok")):
         warnings.append("system_doctor_integration_health_attention")
+    neosgo_outreach = ((doctor_runtime.get("integration_health", {}) or {}).get("neosgo_outreach", {}) or {})
+    outreach_health_status = str(neosgo_outreach.get("health_status", "")).strip()
+    if outreach_health_status == "stalled_ready_supply":
+        issues.append("neosgo_outreach_progress_stalled")
+    elif outreach_health_status == "refill_stalled":
+        issues.append("neosgo_outreach_refill_stalled")
+    elif outreach_health_status == "refill_pending":
+        warnings.append("neosgo_outreach_candidate_refill_pending")
+    elif outreach_health_status == "exhausted":
+        warnings.append("neosgo_outreach_candidate_supply_exhausted")
+    elif outreach_health_status == "email_hold":
+        warnings.append("neosgo_outreach_email_gate_active")
+    if neosgo_outreach and not bool(neosgo_outreach.get("summary_matches_runtime_state", True)):
+        issues.append("neosgo_outreach_summary_out_of_sync")
 
     payload["issues"] = issues
     payload["warnings"] = warnings

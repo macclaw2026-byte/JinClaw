@@ -607,6 +607,25 @@ def _build_doctor_coverage_bundle() -> Dict[str, Any]:
                 "primary_monitor": "system_doctor.integration_health.seo_geo_delivery",
                 "backstop_monitor": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.seo_geo_delivery",
                 "delayed_verification": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.seo_geo_delivery",
+            },
+            {
+                "name": "neosgo-outreach-kernel",
+                "required_files": [
+                    "projects/neosgo-marketing-suite/scripts/run_outreach_cycle.py",
+                    "projects/neosgo-marketing-suite/scripts/send_outreach_progress_telegram.py",
+                    "tools/openmoss/ops/ai.jinclaw.neosgo-outreach-cycle-hourly.plist",
+                    "tools/openmoss/ops/ai.jinclaw.neosgo-outreach-summary-3h.plist",
+                    "tools/openmoss/control_center/system_doctor.py",
+                ],
+                "doctor_checks": [
+                    "runtime_state_contract",
+                    "schedule_contract",
+                    "progress_liveness_contract",
+                    "stoppage_classification_contract",
+                ],
+                "primary_monitor": "system_doctor.integration_health.neosgo_outreach",
+                "backstop_monitor": "tools/openmoss/runtime/control_center/doctor/last_run.json#integration_health.neosgo_outreach",
+                "delayed_verification": "projects/neosgo-marketing-suite/runtime/outreach/latest-summary.json",
             }
         ],
     }
