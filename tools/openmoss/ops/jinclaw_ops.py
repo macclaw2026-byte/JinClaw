@@ -144,6 +144,13 @@ DOCTOR_REQUIRED_NEOSGO_OUTREACH_CONTRACTS = (
     "progress_liveness_contract",
     "stoppage_classification_contract",
 )
+DOCTOR_REQUIRED_PERFORMANCE_FIELDS = (
+    "total_seconds",
+    "phase_timings",
+    "captured_stdout_chars",
+    "stdout_leak_detected",
+    "regression",
+)
 
 
 def utc_now() -> datetime:
@@ -522,6 +529,8 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
     transport_binding = integration_health.get("transport_binding", {}) or {}
     seo_geo_delivery = integration_health.get("seo_geo_delivery", {}) or {}
     neosgo_outreach = integration_health.get("neosgo_outreach", {}) or {}
+    performance = payload.get("performance", {}) or {}
+    regression = performance.get("regression", {}) or {}
     checked_at = str(payload.get("checked_at", "")).strip()
     return {
         "last_run_exists": DOCTOR_LAST_RUN_PATH.exists(),
@@ -662,6 +671,18 @@ def _doctor_runtime_summary(*, refresh_policy: str = "if_needed") -> Dict[str, A
                 "last_progress_at": str(neosgo_outreach.get("last_progress_at", "")).strip(),
             },
         },
+        "performance": {
+            "total_seconds": float(performance.get("total_seconds", 0.0) or 0.0),
+            "phase_timings": list(performance.get("phase_timings", []) or []),
+            "captured_stdout_chars": int(performance.get("captured_stdout_chars", 0) or 0),
+            "stdout_leak_detected": bool(performance.get("stdout_leak_detected")),
+            "history_sample_size": int(((performance.get("history", {}) or {}).get("sample_size", 0)) or 0),
+            "status": str(regression.get("status", "")).strip(),
+            "degraded": bool(regression.get("degraded")),
+            "reasons": list(regression.get("reasons", []) or []),
+            "slow_phases": list(regression.get("slow_phases", []) or []),
+            "recommendations": list(regression.get("recommendations", []) or []),
+        },
     }
 
 
@@ -732,6 +753,9 @@ def _doctor_runtime_payload_complete(payload: Dict[str, Any]) -> bool:
     neosgo_outreach = integration.get("neosgo_outreach", {}) or {}
     if not isinstance(neosgo_outreach, dict) or not neosgo_outreach:
         return False
+    performance = payload.get("performance", {}) or {}
+    if not isinstance(performance, dict) or not performance:
+        return False
     return all(name in acquisition_hand for name in DOCTOR_REQUIRED_ACQUISITION_CONTRACTS) and all(
         name in conversation_context for name in DOCTOR_REQUIRED_CONVERSATION_CONTEXT_CONTRACTS
     ) and all(
@@ -756,6 +780,8 @@ def _doctor_runtime_payload_complete(payload: Dict[str, Any]) -> bool:
         name in seo_geo_delivery for name in DOCTOR_REQUIRED_SEO_GEO_DELIVERY_CONTRACTS
     ) and all(
         name in neosgo_outreach for name in DOCTOR_REQUIRED_NEOSGO_OUTREACH_CONTRACTS
+    ) and all(
+        name in performance for name in DOCTOR_REQUIRED_PERFORMANCE_FIELDS
     )
 
 
@@ -1175,6 +1201,14 @@ def doctor_payload(*, refresh_doctor: bool = True) -> Dict[str, Any]:
         issues.append("system_doctor_refresh_failed")
     if doctor_runtime.get("last_run_exists") and not ((doctor_runtime.get("integration_health", {}) or {}).get("ok")):
         warnings.append("system_doctor_integration_health_attention")
+    performance = doctor_runtime.get("performance", {}) or {}
+    performance_status = str(performance.get("status", "")).strip()
+    if bool(performance.get("stdout_leak_detected")):
+        issues.append("system_doctor_stdout_leak_detected")
+    elif performance_status == "degraded":
+        warnings.append("system_doctor_runtime_degraded")
+    elif performance_status == "watch":
+        warnings.append("system_doctor_runtime_watch")
     neosgo_outreach = ((doctor_runtime.get("integration_health", {}) or {}).get("neosgo_outreach", {}) or {})
     outreach_health_status = str(neosgo_outreach.get("health_status", "")).strip()
     if outreach_health_status == "stalled_ready_supply":
