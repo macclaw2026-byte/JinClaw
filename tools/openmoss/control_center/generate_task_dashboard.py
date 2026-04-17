@@ -322,6 +322,35 @@ def _render_resolution_rows(doctor_incident_inbox: Dict[str, Any], *, limit: int
     return "".join(rows)
 
 
+def _render_archived_incident_rows(doctor_incident_inbox: Dict[str, Any], *, limit: int = 50) -> str:
+    items = doctor_incident_inbox.get("archived_process_items", []) or []
+    if not items:
+        return '<tr><td colspan="6" class="empty-cell">No archived process incidents</td></tr>'
+    rows = []
+    for item in items[:limit]:
+        subject = str(item.get("subject_id", "")).strip() or "-"
+        name = str(item.get("name", "")).strip() or subject
+        severity = str(item.get("severity", "")).strip() or "unknown"
+        status = str(item.get("status", "")).strip() or "-"
+        reason = str(item.get("reason", "")).strip() or "-"
+        archived_at = str(item.get("archived_at", "")).strip() or "-"
+        resolved_at = str(item.get("resolved_at", "")).strip() or "-"
+        search = _search_blob(subject, name, severity, status, reason, archived_at, resolved_at)
+        rows.append(
+            f"""
+            <tr data-row="true" data-order="{len(rows)}" data-search="{_attr(search)}" data-archived-at="{_attr(archived_at)}" data-subject="{_attr(subject)}" data-severity="{_attr(severity)}">
+              <td>{html.escape(archived_at)}</td>
+              <td><code>{html.escape(subject)}</code><div class="cell-note">{html.escape(_clip(name, 80))}</div></td>
+              <td>{_badge(severity, _tone_for_incident_severity(severity))}</td>
+              <td>{html.escape(status)}</td>
+              <td title="{html.escape(reason)}">{html.escape(_clip(reason, 90))}</td>
+              <td>{html.escape(resolved_at)}</td>
+            </tr>
+            """
+        )
+    return "".join(rows)
+
+
 def _render_group_rows(task_alias_registry: Dict[str, Any], *, limit: int = 500) -> str:
     groups = task_alias_registry.get("items", []) or []
     if not groups:
@@ -947,11 +976,12 @@ def build_task_dashboard(
       <section class="stats">
         <div class="card stat"><div class="stat-label">Active Incidents</div><div class="stat-value">{int((doctor_incident_inbox.get("summary", {}) or {}).get("active_total", 0) or 0)}</div></div>
         <div class="card stat"><div class="stat-label">Process Incidents</div><div class="stat-value">{int((doctor_incident_inbox.get("summary", {}) or {}).get("process_total", 0) or 0)}</div></div>
+        <div class="card stat"><div class="stat-label">Archived Process Incidents</div><div class="stat-value">{int((doctor_incident_inbox.get("summary", {}) or {}).get("archived_process_total", 0) or 0)}</div></div>
         <div class="card stat"><div class="stat-label">Task Incidents</div><div class="stat-value">{int((doctor_incident_inbox.get("summary", {}) or {}).get("task_total", 0) or 0)}</div></div>
         <div class="card stat"><div class="stat-label">AI Takeovers</div><div class="stat-value">{int((doctor_incident_inbox.get("summary", {}) or {}).get("with_ai_takeover_total", 0) or 0)}</div></div>
         <div class="card stat"><div class="stat-label">Recent Resolutions</div><div class="stat-value">{int((doctor_incident_inbox.get("summary", {}) or {}).get("resolutions_total", 0) or 0)}</div></div>
       </section>
-      <div class="grid-2">
+      <div class="grid-3">
         <section>
           <div class="section-head">
             <div>
@@ -987,6 +1017,40 @@ def build_task_dashboard(
             </thead>
             <tbody>
               {_render_incident_rows(doctor_incident_inbox)}
+            </tbody>
+          </table>
+        </section>
+        <section>
+          <div class="section-head">
+            <div>
+              <h2>Archived Process Incidents</h2>
+              <p>已经解决且长期未重现的 process incident 会冷藏到这里，保留证据但不再混进 active inbox。</p>
+            </div>
+          </div>
+          {_render_table_controls(
+            "archived-process-incidents",
+            placeholder="搜索 subject、reason、status",
+            sort_options=[
+              ("archived-at:desc", "Newest Archived"),
+              ("archived-at:asc", "Oldest Archived"),
+              ("severity:asc", "Severity"),
+              ("subject:asc", "Subject"),
+            ],
+            default_sort="archived-at:desc",
+          )}
+          <table data-sort-table="archived-process-incidents">
+            <thead>
+              <tr>
+                <th>Archived At</th>
+                <th>Subject</th>
+                <th>Severity</th>
+                <th>Last Status</th>
+                <th>Original Reason</th>
+                <th>Resolved At</th>
+              </tr>
+            </thead>
+            <tbody>
+              {_render_archived_incident_rows(doctor_incident_inbox)}
             </tbody>
           </table>
         </section>

@@ -80,7 +80,7 @@ class UpstreamWatchRateLimitFallbackTest(unittest.TestCase):
 
             self.assertTrue(result['degraded'])
             self.assertEqual(result['fetch_mode'], 'cached_fallback')
-            self.assertEqual(result['degraded_sources'][0]['reason'], 'github_api_rate_limited')
+            self.assertEqual(result['degraded_sources'][0]['reason'], 'github_api_rate_limit')
 
             persisted = json.loads(state_path.read_text(encoding='utf-8'))
             snapshot = persisted['repos']['playwright']
@@ -89,7 +89,7 @@ class UpstreamWatchRateLimitFallbackTest(unittest.TestCase):
 
             report = (reports_root / 'latest-report.md').read_text(encoding='utf-8')
             self.assertIn('Fetch status: `cached_due_to_rate_limit`', report)
-            self.assertIn('Fetch warning: `github_api_rate_limited`', report)
+            self.assertIn('Fetch warning: `github_api_rate_limit`', report)
 
     def test_run_once_keeps_fail_closed_without_cache(self):
         with tempfile.TemporaryDirectory() as tmpdir:

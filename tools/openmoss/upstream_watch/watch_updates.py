@@ -121,7 +121,7 @@ def _fallback_reason_from_exception(exc: Exception) -> str | None:
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
     """
     if isinstance(exc, urllib.error.HTTPError) and _is_github_rate_limit_error(exc):
-        return "github_api_rate_limited"
+        return "github_api_rate_limit"
     if isinstance(exc, urllib.error.URLError):
         reason = exc.reason
         reason_text = str(reason).lower()
