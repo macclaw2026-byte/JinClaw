@@ -6,16 +6,43 @@ from unittest.mock import patch
 
 ROOT = Path('/Users/mac_claw/.openclaw/workspace')
 CONTROL_CENTER = ROOT / 'tools/openmoss/control_center'
+AUTONOMY = ROOT / 'tools/openmoss/autonomy'
 if str(CONTROL_CENTER) not in sys.path:
     sys.path.insert(0, str(CONTROL_CENTER))
+if str(AUTONOMY) not in sys.path:
+    sys.path.insert(0, str(AUTONOMY))
 
 import control_plane_builder  # noqa: E402
+import brain_router  # noqa: E402
+import manager  # noqa: E402
 import mission_supervisor  # noqa: E402
 import progress_evidence  # noqa: E402
+import task_status_snapshot  # noqa: E402
 import task_retention_runtime  # noqa: E402
 
 
 class ControlPlaneRuntimeOptimizationsTest(unittest.TestCase):
+    def test_create_task_payload_is_silent_library_helper(self):
+        args = manager.argparse.Namespace(
+            task_id='demo-task',
+            goal='修复 doctor stdout 噪音',
+            done_definition='done',
+            stage=[],
+            stage_json='[]',
+            hard_constraint=[],
+            soft_preference=[],
+            allowed_tool=[],
+            forbidden_action=[],
+            metadata_json='{}',
+        )
+        with patch.object(manager, 'create_task_from_contract', return_value={'ok': True}) as mocked_create, patch(
+            'builtins.print', side_effect=AssertionError('library helper should stay silent')
+        ):
+            result = manager.create_task_payload(args)
+
+        self.assertEqual(result, {'ok': True})
+        mocked_create.assert_called_once()
+
     def test_candidate_for_member_uses_state_timestamps_before_heavy_progress_probe(self):
         state = {
             'status': 'completed',
@@ -124,6 +151,24 @@ class ControlPlaneRuntimeOptimizationsTest(unittest.TestCase):
         self.assertEqual(len(first), 1)
         self.assertEqual(len(second), 1)
         self.assertEqual(mocked_read_json.call_count, 3)
+
+    def test_brain_router_build_task_uses_silent_create_helper(self):
+        package = {
+            'done_definition': 'done',
+            'stages': [],
+            'hard_constraints': [],
+            'allowed_tools': [],
+            'metadata': {},
+        }
+        with patch.object(brain_router, 'build_control_center_package', return_value=package), patch.object(
+            brain_router, 'create_task_payload', return_value={'ok': True}
+        ) as mocked_create, patch(
+            'builtins.print', side_effect=AssertionError('brain router should not print task payloads')
+        ):
+            result = brain_router._build_task('demo-task', '继续优化 transport binding kernel', 'system_doctor:test')
+
+        self.assertEqual(result, package)
+        mocked_create.assert_called_once()
 
     def test_run_mission_supervisor_reuses_supplied_control_plane(self):
         with tempfile.TemporaryDirectory() as temp_dir:

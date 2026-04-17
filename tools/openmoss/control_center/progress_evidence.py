@@ -93,6 +93,7 @@ _CONVERSATION_LINK_INDEX_CACHE: Dict[str, Any] = {
     "root_mtime_ns": None,
     "index": {},
 }
+_RECENT_EVENT_TAIL_BYTES = 256 * 1024
 
 
 def _read_json(path: Path, default: Any) -> Any:
@@ -179,7 +180,25 @@ def _recent_events(task_id: str, limit: int = 12) -> List[Dict[str, Any]]:
     if not events_path.exists():
         return []
     rows: List[Dict[str, Any]] = []
-    for line in events_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-limit:]:
+
+    def _tail_lines(path: Path, *, wanted: int) -> List[str]:
+        if wanted <= 0:
+            return []
+        try:
+            with path.open("rb") as fh:
+                fh.seek(0, 2)
+                position = fh.tell()
+                buffer = b""
+                while position > 0 and buffer.count(b"\n") <= wanted and len(buffer) < _RECENT_EVENT_TAIL_BYTES:
+                    read_size = min(8192, position, _RECENT_EVENT_TAIL_BYTES - len(buffer))
+                    position -= read_size
+                    fh.seek(position)
+                    buffer = fh.read(read_size) + buffer
+        except OSError:
+            return []
+        return buffer.decode("utf-8", errors="ignore").splitlines()[-wanted:]
+
+    for line in _tail_lines(events_path, wanted=limit):
         try:
             rows.append(json.loads(line))
         except json.JSONDecodeError:
@@ -623,6 +642,30 @@ def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> 
     )
     business_outcome = metadata.get("business_outcome", {}) or {}
     milestone_stats = metadata.get("milestone_stats", {}) or {}
+    business_goal_satisfied = business_outcome.get("goal_satisfied") is True
+    user_visible_result_confirmed = business_outcome.get("user_visible_result_confirmed") is True
+    if status in {"completed", "failed"}:
+        return {
+            "task_id": task_id,
+            "goal": contract.get("user_goal", ""),
+            "status": status,
+            "current_stage": current_stage,
+            "next_action": next_action,
+            "has_active_execution": has_active_execution,
+            "active_execution_run_id": str(active_execution.get("run_id", "")),
+            "idle_seconds": idle_seconds,
+            "stale_after_seconds": stale_after_seconds,
+            "recent_event_types": [],
+            "business_goal_satisfied": business_goal_satisfied,
+            "user_visible_result_confirmed": user_visible_result_confirmed,
+            "milestone_stats": milestone_stats,
+            "run_liveness": {},
+            "task_summary": {},
+            "goal_conformance": {"ok": True, "reason": "terminal_state"},
+            "progress_state": "terminal",
+            "needs_intervention": False,
+            "reason": status,
+        }
     events = _recent_events(task_id)
     event_types = [str(item.get("type", "")) for item in events if str(item.get("type", "")).strip()]
     run_liveness = build_run_liveness(task_id)
@@ -642,8 +685,6 @@ def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> 
         )
     )
     completion_guards = run_liveness.get("completion_guards", {}) or {}
-    business_goal_satisfied = business_outcome.get("goal_satisfied") is True
-    user_visible_result_confirmed = business_outcome.get("user_visible_result_confirmed") is True
     reanimated_completed = bool(
         summary_says_completed
         and int(completion_guards.get("present_count", 0) or 0) > 0
@@ -695,11 +736,6 @@ def build_progress_evidence(task_id: str, *, stale_after_seconds: int = 300) -> 
         "needs_intervention": False,
         "reason": "healthy",
     }
-
-    if status in {"completed", "failed"}:
-        evidence["progress_state"] = "terminal"
-        evidence["reason"] = status
-        return evidence
 
     if run_liveness.get("orphaned_completed") is True:
         evidence["progress_state"] = "orphaned_completed_task"
