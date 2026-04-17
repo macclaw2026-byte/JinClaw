@@ -20,14 +20,17 @@
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import plistlib
 import re
 import shutil
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
 from adaptive_fetch_router import build_fetch_route
 from acquisition_adapter_registry import build_acquisition_adapter_registry
@@ -64,7 +67,13 @@ DOCTOR_PROCESS_INCIDENTS_ROOT = DOCTOR_ROOT / "process_incidents"
 DOCTOR_ARCHIVED_PROCESS_INCIDENTS_ROOT = DOCTOR_ROOT / "archived_process_incidents"
 DOCTOR_TASK_INCIDENTS_ROOT = DOCTOR_ROOT / "task_incidents"
 DOCTOR_RESOLUTIONS_ROOT = DOCTOR_ROOT / "resolutions"
+DOCTOR_PERFORMANCE_ROOT = DOCTOR_ROOT / "performance"
+DOCTOR_PERFORMANCE_HISTORY_PATH = DOCTOR_PERFORMANCE_ROOT / "history.jsonl"
+DOCTOR_PERFORMANCE_LAST_RUN_PATH = DOCTOR_PERFORMANCE_ROOT / "last_run.json"
 PROCESS_INCIDENT_ARCHIVE_AFTER_SECONDS = 3 * 24 * 60 * 60
+DOCTOR_PERFORMANCE_HISTORY_LIMIT = 12
+DOCTOR_JSONL_TAIL_BYTES = 128 * 1024
+DOCTOR_STDOUT_HEAD_CHARS = 400
 WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
 CONTROL_CENTER_ROOT = WORKSPACE_ROOT / "tools/openmoss/control_center"
 GSTACK_REQUIRED_FILES = [
@@ -229,6 +238,244 @@ def _read_json(path: Path, default: Dict[str, object] | list | None = None):
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {} if default is None else default
+
+
+def _recent_jsonl_objects(path: Path, *, limit: int) -> List[Dict[str, object]]:
+    """
+    中文注解：
+    - 功能：从 jsonl 文件尾部读取最近几条对象，避免为了少量历史样本加载整份大文件。
+    - 输入角色：消费 doctor/performance 等 runtime 历史文件路径。
+    - 输出角色：返回最近的结构化记录，供退化基线与历史比较使用。
+    """
+    if limit <= 0 or not path.exists():
+        return []
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, 2)
+            position = fh.tell()
+            buffer = b""
+            while position > 0 and buffer.count(b"\n") <= limit and len(buffer) < DOCTOR_JSONL_TAIL_BYTES:
+                read_size = min(8192, position, DOCTOR_JSONL_TAIL_BYTES - len(buffer))
+                position -= read_size
+                fh.seek(position)
+                buffer = fh.read(read_size) + buffer
+    except OSError:
+        return []
+    records: List[Dict[str, object]] = []
+    for line in buffer.decode("utf-8", errors="ignore").splitlines()[-limit:]:
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            records.append(obj)
+    return records
+
+
+def _run_doctor_phase(phase_name: str, runner: Callable[[], Any]) -> tuple[Any, Dict[str, object]]:
+    """
+    中文注解：
+    - 功能：执行 doctor 的单个阶段，记录耗时与意外 stdout 输出，避免再次出现大 payload 静默泄漏。
+    - 输入角色：`phase_name` 标识阶段；`runner` 是实际执行逻辑。
+    - 输出角色：返回阶段结果与结构化 phase telemetry，供 doctor 总结与告警消费。
+    """
+    started_at = _utc_now_iso()
+    stdout_buffer = io.StringIO()
+    started_monotonic = time.perf_counter()
+    with contextlib.redirect_stdout(stdout_buffer):
+        result = runner()
+    captured_stdout = stdout_buffer.getvalue()
+    captured_nonempty = captured_stdout.strip()
+    return result, {
+        "phase": phase_name,
+        "started_at": started_at,
+        "finished_at": _utc_now_iso(),
+        "elapsed_seconds": round(time.perf_counter() - started_monotonic, 3),
+        "captured_stdout_chars": len(captured_stdout),
+        "stdout_line_count": captured_stdout.count("\n") + (1 if captured_nonempty else 0),
+        "stdout_leak_detected": bool(captured_nonempty),
+        "stdout_head": captured_stdout[:DOCTOR_STDOUT_HEAD_CHARS],
+    }
+
+
+def _median_float(values: List[float]) -> float:
+    """
+    中文注解：
+    - 功能：计算一组浮点数的中位数，给 doctor 性能基线做稳态比较。
+    - 输入角色：消费历史运行耗时样本。
+    - 输出角色：返回中位数，供退化判定使用。
+    """
+    cleaned = sorted(float(value) for value in values if float(value) > 0)
+    if not cleaned:
+        return 0.0
+    middle = len(cleaned) // 2
+    if len(cleaned) % 2 == 1:
+        return cleaned[middle]
+    return (cleaned[middle - 1] + cleaned[middle]) / 2.0
+
+
+def _load_doctor_performance_history(*, limit: int = DOCTOR_PERFORMANCE_HISTORY_LIMIT) -> List[Dict[str, object]]:
+    """
+    中文注解：
+    - 功能：读取 doctor 最近若干轮性能历史，为当前巡诊建立对比基线。
+    - 输入角色：消费 `doctor/performance/history.jsonl`。
+    - 输出角色：返回最近历史样本，供退化分析与趋势解释使用。
+    """
+    return _recent_jsonl_objects(DOCTOR_PERFORMANCE_HISTORY_PATH, limit=limit)
+
+
+def _derive_doctor_performance_summary(
+    checked_at: str,
+    *,
+    total_seconds: float,
+    phase_timings: List[Dict[str, object]],
+    history_entries: List[Dict[str, object]],
+) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：把当前 doctor 运行耗时、stdout 捕获结果和历史样本合成为可解释的性能总结。
+    - 输入角色：消费本轮 phase telemetry 与历史性能记录。
+    - 输出角色：返回给 `run_system_doctor` 与 `jinclaw_ops` 的性能/退化告警结构。
+    """
+    phase_elapsed_seconds = {
+        str(item.get("phase", "")).strip(): round(float(item.get("elapsed_seconds", 0.0) or 0.0), 3)
+        for item in phase_timings
+        if str(item.get("phase", "")).strip()
+    }
+    stdout_sources = [
+        {
+            "phase": str(item.get("phase", "")).strip(),
+            "captured_stdout_chars": int(item.get("captured_stdout_chars", 0) or 0),
+            "stdout_head": str(item.get("stdout_head", "")).strip(),
+        }
+        for item in phase_timings
+        if bool(item.get("stdout_leak_detected"))
+    ]
+    captured_stdout_chars = sum(int(item.get("captured_stdout_chars", 0) or 0) for item in phase_timings)
+    eligible_history: List[Dict[str, object]] = []
+    for entry in history_entries:
+        regression = entry.get("regression", {}) or {}
+        if bool(entry.get("stdout_leak_detected")):
+            continue
+        if str(regression.get("status", "")).strip() == "degraded":
+            continue
+        eligible_history.append(entry)
+    baseline_total = _median_float([float(item.get("total_seconds", 0.0) or 0.0) for item in eligible_history])
+    baseline_phase_values: Dict[str, List[float]] = {}
+    for entry in eligible_history:
+        for phase_name, seconds in (entry.get("phase_elapsed_seconds", {}) or {}).items():
+            name = str(phase_name).strip()
+            if not name:
+                continue
+            baseline_phase_values.setdefault(name, []).append(float(seconds or 0.0))
+    baseline_phase_seconds = {
+        phase_name: round(_median_float(values), 3)
+        for phase_name, values in baseline_phase_values.items()
+        if _median_float(values) > 0
+    }
+    slow_phases = []
+    for phase_name, elapsed in phase_elapsed_seconds.items():
+        baseline_seconds = float(baseline_phase_seconds.get(phase_name, 0.0) or 0.0)
+        if baseline_seconds <= 0:
+            continue
+        delta_seconds = round(float(elapsed) - baseline_seconds, 3)
+        ratio = round(float(elapsed) / baseline_seconds, 3) if baseline_seconds else 0.0
+        if ratio >= 1.35 and delta_seconds >= 6.0:
+            slow_phases.append(
+                {
+                    "phase": phase_name,
+                    "elapsed_seconds": round(float(elapsed), 3),
+                    "baseline_seconds": baseline_seconds,
+                    "delta_seconds": delta_seconds,
+                    "ratio": ratio,
+                }
+            )
+    regression_status = "ok"
+    regression_reasons: List[str] = []
+    recommendations: List[str] = []
+    if stdout_sources:
+        regression_status = "degraded"
+        regression_reasons.append("unexpected_stdout_output_detected")
+        recommendations.append("inspect the leaking phase and keep library callers on silent helpers instead of CLI print wrappers")
+    if baseline_total > 0:
+        total_delta = round(float(total_seconds) - baseline_total, 3)
+        total_ratio = round(float(total_seconds) / baseline_total, 3) if baseline_total else 0.0
+        if total_ratio >= 1.3 and total_delta >= 15.0:
+            regression_status = "degraded"
+            regression_reasons.append("doctor_total_runtime_regressed")
+        elif total_ratio >= 1.15 and total_delta >= 8.0 and regression_status == "ok":
+            regression_status = "watch"
+            regression_reasons.append("doctor_total_runtime_watch")
+        if slow_phases:
+            if regression_status == "ok":
+                regression_status = "watch"
+            regression_reasons.append("slow_doctor_phases_detected")
+    else:
+        total_delta = 0.0
+        total_ratio = 0.0
+        regression_reasons.append("performance_baseline_pending")
+    if len(slow_phases) >= 2 and regression_status != "degraded":
+        regression_status = "degraded"
+        regression_reasons.append("multiple_doctor_phases_regressed")
+    if any(item.get("phase") == "control_plane_build" for item in slow_phases):
+        recommendations.append("profile build_control_plane cache reuse and repeated index scans")
+    if any(item.get("phase") == "doctor_queue_processing" for item in slow_phases):
+        recommendations.append("profile doctor queue processing for repeated progress-evidence and receipt work")
+    if any(item.get("phase") == "integration_health_checks" for item in slow_phases):
+        recommendations.append("profile integration health probes for redundant routing or file scans")
+    if any(item.get("phase") == "dashboard_render" for item in slow_phases):
+        recommendations.append("defer or slim dashboard rendering if doctor latency is the priority path")
+    if not recommendations and regression_status == "ok":
+        recommendations.append("keep using this run as the new doctor performance baseline")
+    regression = {
+        "status": regression_status,
+        "degraded": regression_status == "degraded",
+        "reasons": list(dict.fromkeys(regression_reasons)),
+        "slow_phases": slow_phases,
+        "recommendations": list(dict.fromkeys(recommendations)),
+        "baseline_available": baseline_total > 0,
+        "total_runtime_delta_seconds": total_delta,
+        "total_runtime_ratio": total_ratio,
+    }
+    return {
+        "checked_at": checked_at,
+        "total_seconds": round(float(total_seconds), 3),
+        "phase_timings": phase_timings,
+        "phase_elapsed_seconds": phase_elapsed_seconds,
+        "captured_stdout_chars": captured_stdout_chars,
+        "stdout_leak_detected": bool(stdout_sources),
+        "stdout_sources": stdout_sources,
+        "history": {
+            "path": str(DOCTOR_PERFORMANCE_HISTORY_PATH),
+            "sample_size": len(eligible_history),
+            "baseline": {
+                "median_total_seconds": round(baseline_total, 3),
+                "median_phase_seconds": baseline_phase_seconds,
+            },
+        },
+        "regression": regression,
+    }
+
+
+def _persist_doctor_performance_summary(summary: Dict[str, object]) -> None:
+    """
+    中文注解：
+    - 功能：把 doctor 性能总结落盘成 last-run + history，两层都保持结构化可追踪。
+    - 输入角色：消费 `_derive_doctor_performance_summary` 生成的结构化 payload。
+    - 输出角色：供 ops doctor、后续对账和趋势分析直接读取。
+    """
+    _write_json(DOCTOR_PERFORMANCE_LAST_RUN_PATH, summary)
+    history_entry = {
+        "checked_at": str(summary.get("checked_at", "")).strip(),
+        "total_seconds": round(float(summary.get("total_seconds", 0.0) or 0.0), 3),
+        "captured_stdout_chars": int(summary.get("captured_stdout_chars", 0) or 0),
+        "stdout_leak_detected": bool(summary.get("stdout_leak_detected")),
+        "phase_elapsed_seconds": dict(summary.get("phase_elapsed_seconds", {}) or {}),
+        "regression": dict(summary.get("regression", {}) or {}),
+    }
+    DOCTOR_PERFORMANCE_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with DOCTOR_PERFORMANCE_HISTORY_PATH.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(history_entry, ensure_ascii=False) + "\n")
 
 
 def _read_plist(path: Path) -> Dict[str, object]:
@@ -4356,33 +4603,24 @@ def _run_integration_health_checks() -> Dict[str, object]:
     }
 
 
-def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds: int = 600) -> Dict[str, object]:
+def _process_doctor_queue(
+    doctor_items: List[Dict[str, object]],
+    *,
+    doctor_strategy: Dict[str, object],
+    idle_after_seconds: int,
+    escalation_after_seconds: int,
+) -> Dict[str, object]:
     """
     中文注解：
-    - 功能：执行一轮医生巡诊。
-    - 主步骤：
-      1. 先读取 control plane，拿到 doctor queue；
-      2. 对每个待处理任务做 diagnose + repair；
-      3. 超过升级阈值的任务，向聊天窗口发 doctor diagnostic receipt；
-      4. 同时运行 mission_supervisor，补充更高层的监督结果。
-    - 输出：会写 `doctor/last_run.json`，也会把结果返回给 runtime 或人工检查。
+    - 功能：处理 doctor_queue 里的任务诊断、修复、升级与 incident 候选收集。
+    - 输入角色：消费 control plane 已经排好序的 doctor items 与本轮 doctor 策略。
+    - 输出角色：把 reports / skipped / incident candidates 结构化返回给 `run_system_doctor`。
     """
-    control_plane = build_control_plane(
-        stale_after_seconds=max(120, idle_after_seconds),
-        escalation_after_seconds=max(300, escalation_after_seconds),
-    )
-    heartbeat_summary = _write_doctor_heartbeats(control_plane, idle_after_seconds=idle_after_seconds)
-    heartbeat_overview = _heartbeat_stability_overview(heartbeat_summary)
-    process_incidents = _reconcile_process_incidents(control_plane)
     reports = []
-    doctor_items = list(control_plane.get("doctor_queue", {}).get("items", []) or [])
-    doctor_strategy = _doctor_cycle_strategy(control_plane)
     task_incident_candidates: List[Dict[str, object]] = []
     seen_task_ids = set()
     processed_total = 0
     skipped_reports = []
-    # doctor_queue 是 control plane 给医生的统一待办清单；
-    # 医生不再自己到处翻日志，而是集中读这份汇总视图。
     for item in doctor_items:
         task_id = str(item.get("task_id", "")).strip()
         if not task_id or task_id in seen_task_ids:
@@ -4450,9 +4688,9 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
             if diagnosis.get("stuck"):
                 report["governance"] = (build_task_status_snapshot(task_id).get("governance", {}) or {})
             if diagnosis.get("stuck") and diagnosis.get("idle_seconds", 0) >= escalation_after_seconds:
-                for link_path in LINKS_ROOT.glob("*.json"):
+                for task_link_path in LINKS_ROOT.glob("*.json"):
                     try:
-                        payload = json.loads(link_path.read_text(encoding="utf-8"))
+                        payload = json.loads(task_link_path.read_text(encoding="utf-8"))
                     except (OSError, json.JSONDecodeError):
                         continue
                     if payload.get("task_id") != task_id:
@@ -4488,13 +4726,104 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
                     },
                 }
             )
-    supervisor = run_mission_supervisor(
-        stale_after_seconds=max(120, idle_after_seconds),
-        escalation_after_seconds=max(300, escalation_after_seconds),
-        control_plane=control_plane,
+    return {
+        "reports": reports,
+        "task_incident_candidates": task_incident_candidates,
+        "processed_total": processed_total,
+        "skipped_reports": skipped_reports,
+    }
+
+
+def _render_doctor_dashboard() -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：生成 doctor dashboard，并把成功/失败结果统一包装成结构化字典。
+    - 输入角色：无显式业务输入，直接消费 dashboard 生成器。
+    - 输出角色：返回给 `run_system_doctor` 写入结果，避免 dashboard 失败时黑箱化。
+    """
+    try:
+        from generate_doctor_dashboard import build_dashboard
+
+        dashboard_path = DOCTOR_ROOT / "dashboard.html"
+        dashboard_path.write_text(build_dashboard(), encoding="utf-8")
+        return {
+            "generated": True,
+            "path": str(dashboard_path),
+        }
+    except Exception as exc:
+        return {
+            "generated": False,
+            "error": str(exc),
+        }
+
+
+def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds: int = 600) -> Dict[str, object]:
+    """
+    中文注解：
+    - 功能：执行一轮医生巡诊。
+    - 主步骤：
+      1. 先读取 control plane，拿到 doctor queue；
+      2. 对每个待处理任务做 diagnose + repair；
+      3. 超过升级阈值的任务，向聊天窗口发 doctor diagnostic receipt；
+      4. 同时运行 mission_supervisor，补充更高层的监督结果。
+    - 输出：会写 `doctor/last_run.json`，也会把结果返回给 runtime 或人工检查。
+    """
+    started_monotonic = time.perf_counter()
+    phase_timings: List[Dict[str, object]] = []
+    control_plane, control_plane_phase = _run_doctor_phase(
+        "control_plane_build",
+        lambda: build_control_plane(
+            stale_after_seconds=max(120, idle_after_seconds),
+            escalation_after_seconds=max(300, escalation_after_seconds),
+        ),
     )
-    task_incidents = _reconcile_task_incidents(task_incident_candidates, idle_after_seconds=idle_after_seconds)
-    integration_health = _run_integration_health_checks()
+    phase_timings.append(control_plane_phase)
+    heartbeat_summary, heartbeat_phase = _run_doctor_phase(
+        "doctor_heartbeats",
+        lambda: _write_doctor_heartbeats(control_plane, idle_after_seconds=idle_after_seconds),
+    )
+    phase_timings.append(heartbeat_phase)
+    heartbeat_overview = _heartbeat_stability_overview(heartbeat_summary)
+    process_incidents, process_incidents_phase = _run_doctor_phase(
+        "process_incidents",
+        lambda: _reconcile_process_incidents(control_plane),
+    )
+    phase_timings.append(process_incidents_phase)
+    doctor_items = list(control_plane.get("doctor_queue", {}).get("items", []) or [])
+    doctor_strategy = _doctor_cycle_strategy(control_plane)
+    queue_result, queue_phase = _run_doctor_phase(
+        "doctor_queue_processing",
+        lambda: _process_doctor_queue(
+            doctor_items,
+            doctor_strategy=doctor_strategy,
+            idle_after_seconds=idle_after_seconds,
+            escalation_after_seconds=escalation_after_seconds,
+        ),
+    )
+    phase_timings.append(queue_phase)
+    reports = list(queue_result.get("reports", []) or [])
+    task_incident_candidates = list(queue_result.get("task_incident_candidates", []) or [])
+    processed_total = int(queue_result.get("processed_total", 0) or 0)
+    skipped_reports = list(queue_result.get("skipped_reports", []) or [])
+    supervisor, supervisor_phase = _run_doctor_phase(
+        "mission_supervisor",
+        lambda: run_mission_supervisor(
+            stale_after_seconds=max(120, idle_after_seconds),
+            escalation_after_seconds=max(300, escalation_after_seconds),
+            control_plane=control_plane,
+        ),
+    )
+    phase_timings.append(supervisor_phase)
+    task_incidents, task_incidents_phase = _run_doctor_phase(
+        "task_incidents",
+        lambda: _reconcile_task_incidents(task_incident_candidates, idle_after_seconds=idle_after_seconds),
+    )
+    phase_timings.append(task_incidents_phase)
+    integration_health, integration_phase = _run_doctor_phase(
+        "integration_health_checks",
+        _run_integration_health_checks,
+    )
+    phase_timings.append(integration_phase)
     crawler_profile = control_plane.get("crawler_capability_profile", {}) or {}
     crawler_summary = crawler_profile.get("summary", {}) or {}
     acquisition_market = build_acquisition_adapter_registry(build_capability_registry())
@@ -4535,8 +4864,9 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
         for site in (crawler_profile.get("sites", []) or [])
         if site.get("readiness") == "attention_required"
     ][:5]
+    checked_at = _utc_now_iso()
     result = {
-        "checked_at": _utc_now_iso(),
+        "checked_at": checked_at,
         "control_plane": {
             "system_snapshot": control_plane.get("system_snapshot", {}),
             "doctor_queue_count": len(control_plane.get("doctor_queue", {}).get("items", [])),
@@ -4615,19 +4945,16 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
         "reports": reports,
         "mission_supervisor": supervisor,
     }
-    try:
-        from generate_doctor_dashboard import build_dashboard
-
-        dashboard_path = DOCTOR_ROOT / "dashboard.html"
-        dashboard_path.write_text(build_dashboard(), encoding="utf-8")
-        result["dashboard"] = {
-            "generated": True,
-            "path": str(dashboard_path),
-        }
-    except Exception as exc:
-        result["dashboard"] = {
-            "generated": False,
-            "error": str(exc),
-        }
+    dashboard, dashboard_phase = _run_doctor_phase("dashboard_render", _render_doctor_dashboard)
+    phase_timings.append(dashboard_phase)
+    result["dashboard"] = dashboard
+    performance = _derive_doctor_performance_summary(
+        checked_at,
+        total_seconds=time.perf_counter() - started_monotonic,
+        phase_timings=phase_timings,
+        history_entries=_load_doctor_performance_history(),
+    )
+    _persist_doctor_performance_summary(performance)
+    result["performance"] = performance
     _write_json(DOCTOR_ROOT / "last_run.json", result)
     return result

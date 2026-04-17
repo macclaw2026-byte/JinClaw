@@ -60,6 +60,7 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
     def test_system_doctor_reports_integration_health(self):
         result = run_system_doctor(idle_after_seconds=300, escalation_after_seconds=900)
         integration = result.get('integration_health', {})
+        performance = result.get('performance', {}) or {}
         self.assertTrue(integration.get('single_doctor_rule'))
         self.assertEqual(integration.get('authoritative_doctor'), 'tools/openmoss/control_center/system_doctor.py')
         self.assertEqual(integration.get('coding_chain'), 'ok')
@@ -149,6 +150,10 @@ class SingleDoctorArchitectureTest(unittest.TestCase):
         self.assertIn('schedule_contract', (integration.get('neosgo_outreach', {}) or {}))
         self.assertIn('progress_liveness_contract', (integration.get('neosgo_outreach', {}) or {}))
         self.assertIn('stoppage_classification_contract', (integration.get('neosgo_outreach', {}) or {}))
+        self.assertIn('phase_timings', performance)
+        self.assertIn('regression', performance)
+        self.assertIn('stdout_leak_detected', performance)
+        self.assertFalse(performance.get('stdout_leak_detected'))
 
 
 if __name__ == '__main__':

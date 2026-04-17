@@ -63,6 +63,17 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
             'doctor_runtime': {
                 'last_run_exists': True,
                 'last_run_recent': True,
+                'performance': {
+                    'total_seconds': 44.2,
+                    'phase_timings': [],
+                    'captured_stdout_chars': 0,
+                    'stdout_leak_detected': False,
+                    'status': 'ok',
+                    'degraded': False,
+                    'reasons': [],
+                    'slow_phases': [],
+                    'recommendations': [],
+                },
                 'integration_health': {
                     'ok': True,
                     'coding_chain': 'ok',
@@ -290,6 +301,25 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
                 },
                 'ok': True,
             },
+            'performance': {
+                'total_seconds': 51.25,
+                'phase_timings': [
+                    {'phase': 'control_plane_build', 'elapsed_seconds': 12.1, 'captured_stdout_chars': 0, 'stdout_leak_detected': False},
+                    {'phase': 'integration_health_checks', 'elapsed_seconds': 6.3, 'captured_stdout_chars': 0, 'stdout_leak_detected': False},
+                ],
+                'captured_stdout_chars': 0,
+                'stdout_leak_detected': False,
+                'history': {
+                    'sample_size': 4,
+                },
+                'regression': {
+                    'status': 'ok',
+                    'degraded': False,
+                    'reasons': [],
+                    'slow_phases': [],
+                    'recommendations': ['keep using this run as the new doctor performance baseline'],
+                },
+            },
         }
 
     def test_message_pipeline_reconciles_telegram_user_with_main_reply(self):
@@ -456,6 +486,9 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
             self.assertTrue(summary['integration_health']['neosgo_outreach']['stoppage_classification_contract'])
             self.assertEqual(summary['acquisition_health']['completion_status'], 'complete')
             self.assertTrue(summary['acquisition_health']['goal_reached'])
+            self.assertEqual(summary['performance']['status'], 'ok')
+            self.assertFalse(summary['performance']['stdout_leak_detected'])
+            self.assertEqual(summary['performance']['history_sample_size'], 4)
             self.assertTrue(summary['refresh']['attempted'])
             self.assertTrue(summary['refresh']['ok'])
             self.assertEqual(summary['refresh']['reason'], 'incomplete')
@@ -478,6 +511,34 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
 
         mocked_status.assert_called_once_with(refresh_doctor=True)
         self.assertTrue(payload['ok'])
+
+    def test_doctor_payload_surfaces_doctor_runtime_regression_and_stdout_leak(self):
+        summary = {
+            'sessions_index_exists': True,
+            'telegram_session_count': 1,
+            'latest_user_at': '',
+            'user_wait_seconds': None,
+            'assistant_after_latest_user': False,
+            'assistant_substantive_after_latest_user': False,
+            'internal_flow_leak_detected': False,
+        }
+        mock_status = self._base_status_payload(summary)
+        mock_status['doctor_runtime']['performance'] = {
+            'total_seconds': 91.4,
+            'phase_timings': [{'phase': 'integration_health_checks', 'elapsed_seconds': 18.0}],
+            'captured_stdout_chars': 280,
+            'stdout_leak_detected': True,
+            'status': 'degraded',
+            'degraded': True,
+            'reasons': ['unexpected_stdout_output_detected', 'doctor_total_runtime_regressed'],
+            'slow_phases': [{'phase': 'integration_health_checks'}],
+            'recommendations': ['inspect the leaking phase and keep library callers on silent helpers instead of CLI print wrappers'],
+        }
+        with patch.object(jinclaw_ops, 'status_payload', return_value=mock_status):
+            payload = jinclaw_ops.doctor_payload(refresh_doctor=False)
+
+        self.assertIn('system_doctor_stdout_leak_detected', payload['issues'])
+        self.assertNotIn('system_doctor_runtime_degraded', payload['warnings'])
 
     def test_upgrade_check_requests_fresh_doctor_payload(self):
         watch_payload = {
