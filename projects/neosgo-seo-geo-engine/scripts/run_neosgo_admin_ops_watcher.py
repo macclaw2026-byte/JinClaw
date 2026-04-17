@@ -12,6 +12,7 @@ import argparse
 import base64
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -42,6 +43,10 @@ class OpsWatcherHttpError(OpsWatcherError):
         self.path = path
         self.status_code = status_code
         self.raw = raw
+
+
+class OpsWatcherTransientNetworkError(OpsWatcherError):
+    pass
 
 
 def _now_iso() -> str:
@@ -117,6 +122,23 @@ def _request_with_retries(
             return _safe_request(base_url, bearer_token, path)
         except OpsWatcherHttpError as exc:
             if exc.status_code not in retryable_status_codes or attempt >= retries:
+                raise
+            time.sleep(min(2**attempt, 4))
+            attempt += 1
+        except OpsWatcherError as exc:
+            message = str(exc).lower()
+            transient_markers = (
+                "network error",
+                "handshake operation timed out",
+                "timed out",
+                "temporary failure in name resolution",
+                "nodename nor servname provided",
+                "connection reset",
+                "connection refused",
+                "connection aborted",
+                "no route to host",
+            )
+            if not any(marker in message for marker in transient_markers) or attempt >= retries:
                 raise
             time.sleep(min(2**attempt, 4))
             attempt += 1
@@ -326,6 +348,27 @@ def _send_telegram(chat_id: str, text: str) -> dict[str, Any]:
     }
 
 
+def _host_from_base_url(base_url: str) -> str:
+    parsed = urllib.parse.urlparse(base_url)
+    return parsed.hostname or ""
+
+
+def _network_diagnostics(base_url: str) -> dict[str, Any]:
+    host = _host_from_base_url(base_url)
+    diag: dict[str, Any] = {"host": host}
+    if not host:
+        return diag
+    try:
+        infos = socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP)
+        addresses = sorted({info[4][0] for info in infos if info[4]})
+        diag["dns_ok"] = True
+        diag["resolved_addresses"] = addresses[:4]
+    except Exception as exc:
+        diag["dns_ok"] = False
+        diag["dns_error"] = str(exc)
+    return diag
+
+
 def _poll_once(env: dict[str, str]) -> dict[str, Any]:
     base_url = env.get("NEOSGO_ADMIN_BASE_URL") or DEFAULT_BASE_URL
     token = env.get("NEOSGO_ADMIN_AUTOMATION_KEY", "").strip()
@@ -337,7 +380,33 @@ def _poll_once(env: dict[str, str]) -> dict[str, Any]:
     if not CURSOR_PATH.exists():
         CURSOR_PATH.write_text("", encoding="utf-8")
     saved_cursor = _read_cursor(CURSOR_PATH)
-    path, payload, cursor_recovered = _poll_events(base_url, token, saved_cursor)
+    try:
+        path, payload, cursor_recovered = _poll_events(base_url, token, saved_cursor)
+    except OpsWatcherError as exc:
+        message = str(exc).lower()
+        transient_markers = (
+            "network error",
+            "handshake operation timed out",
+            "timed out",
+            "temporary failure in name resolution",
+            "nodename nor servname provided",
+            "connection reset",
+            "connection refused",
+            "connection aborted",
+            "no route to host",
+        )
+        if any(marker in message for marker in transient_markers):
+            return {
+                "ok": True,
+                "degraded": True,
+                "error": str(exc),
+                "saved_cursor_present": bool(saved_cursor),
+                "cursor_updated": False,
+                "cursor_recovered": False,
+                "telegram_sent": False,
+                "network_diagnostics": _network_diagnostics(base_url),
+            }
+        raise
     items = _items_from_payload(payload)
     next_cursor = _next_cursor_from_payload(payload)
     if cursor_recovered:

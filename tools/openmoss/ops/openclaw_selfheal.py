@@ -24,6 +24,24 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, tuple):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, set):
+        return [_json_safe(v) for v in sorted(value, key=repr)]
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
 RUNTIME_ROOT = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/selfheal")
 SNAPSHOT_ROOT = RUNTIME_ROOT / "snapshots"
 STATE_PATH = RUNTIME_ROOT / "state.json"
@@ -51,17 +69,20 @@ def run_cmd(command: List[str], timeout: int = 20) -> Dict[str, Any]:
     try:
         proc = subprocess.run(command, capture_output=True, text=True, check=False, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
+        stdout = _json_safe(exc.stdout or "")
         return {
             "ok": False,
             "returncode": None,
-            "stdout": (exc.stdout or "")[-2000:],
+            "stdout": str(stdout)[-2000:],
             "stderr": f"timeout after {timeout}s",
         }
+    stdout = _json_safe(proc.stdout or "")
+    stderr = _json_safe(proc.stderr or "")
     return {
         "ok": proc.returncode == 0,
         "returncode": proc.returncode,
-        "stdout": (proc.stdout or "")[-20000:],
-        "stderr": (proc.stderr or "")[-5000:],
+        "stdout": str(stdout)[-20000:],
+        "stderr": str(stderr)[-5000:],
     }
 
 
@@ -85,7 +106,11 @@ def write_json(path: Path, payload: Any) -> None:
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    safe_payload = _json_safe(payload)
+    path.write_text(
+        json.dumps(safe_payload, ensure_ascii=False, indent=2, default=_json_safe),
+        encoding="utf-8",
+    )
 
 
 def parse_json_output(result: Dict[str, Any]) -> Dict[str, Any]:
@@ -262,7 +287,7 @@ def main() -> int:
         state["consecutive_failures"] = 0
 
     write_json(STATE_PATH, state)
-    print(json.dumps({"snapshot": snapshot, "state": state}, ensure_ascii=False, indent=2))
+    print(json.dumps(_json_safe({"snapshot": snapshot, "state": state}), ensure_ascii=False, indent=2))
     return 0
 
 

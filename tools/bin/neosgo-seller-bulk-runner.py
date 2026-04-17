@@ -291,6 +291,37 @@ def is_new_import_candidate(candidate):
     return 'new import' in normalized or 'new_import' in normalized
 
 
+def collect_candidate_status_snapshot(candidate):
+    return {
+        'uploadStatus': candidate.get('uploadStatus'),
+        'importStatus': candidate.get('importStatus'),
+        'candidateStatus': candidate.get('candidateStatus'),
+        'status': candidate.get('status'),
+    }
+
+
+def evaluate_candidate_guards(candidate, draft_listing_skus):
+    sku = str(candidate.get('sku') or '').strip()
+    status_snapshot = collect_candidate_status_snapshot(candidate)
+    is_new_import = is_new_import_candidate(candidate)
+    draft_listing_exists = bool(sku) and sku in draft_listing_skus
+    reasons = []
+    if not candidate.get('canImport'):
+        reasons.append('canImport=false')
+    if not is_new_import:
+        reasons.append('not-new-import')
+    if draft_listing_exists:
+        reasons.append('draft-listing-sku-exists')
+    return {
+        'sku': sku or None,
+        'canImport': bool(candidate.get('canImport')),
+        'isNewImport': is_new_import,
+        'draftListingSkuExists': draft_listing_exists,
+        'statusSnapshot': status_snapshot,
+        'reasons': reasons,
+    }
+
+
 def fetch_draft_listing_skus(base, token, page_size=100, max_pages=20):
     skus = set()
     page = 1
@@ -416,57 +447,70 @@ def main():
     candidates = fetch_candidates(base, token, args.page_size, args.max_pages, target_skus=args.skus or [])
     draft_listing_skus = fetch_draft_listing_skus(base, token, page_size=args.page_size, max_pages=args.max_pages)
 
-    todo = [
-        c for c in candidates
-        if c.get('canImport') and is_new_import_candidate(c) and str(c.get('sku') or '').strip() not in draft_listing_skus
-    ]
+    evaluated_candidates = [evaluate_candidate_guards(c, draft_listing_skus) for c in candidates]
+    eligible_skus = {item['sku'] for item in evaluated_candidates if item['sku'] and not item['reasons']}
+    todo = [c for c in candidates if str(c.get('sku') or '').strip() in eligible_skus]
     if args.skus:
-        requested = set(args.skus)
-        todo = [c for c in todo if c.get('sku') in requested]
+        requested = {str(s).strip() for s in args.skus if str(s).strip()}
+        todo = [c for c in todo if str(c.get('sku') or '').strip() in requested]
+        evaluated_candidates = [item for item in evaluated_candidates if item['sku'] in requested]
     else:
         todo = sorted(todo, key=lambda candidate: _candidate_priority_key(candidate, args.batch_bias))
 
-    skipped = []
-    for c in candidates:
-        sku = str(c.get('sku') or '').strip()
-        reasons = []
-        if not c.get('canImport'):
-            reasons.append('canImport=false')
-        if not is_new_import_candidate(c):
-            reasons.append('not-new-import')
-        if sku and sku in draft_listing_skus:
-            reasons.append('draft-listing-sku-exists')
-        if reasons:
-            skipped.append({
-                'sku': sku or None,
-                'candidateStatus': c.get('candidateStatus'),
-                'uploadStatus': c.get('uploadStatus'),
-                'importStatus': c.get('importStatus'),
-                'reasons': reasons,
-            })
+    skipped = [
+        {
+            'sku': item['sku'],
+            'canImport': item['canImport'],
+            'candidateStatus': item['statusSnapshot'].get('candidateStatus'),
+            'uploadStatus': item['statusSnapshot'].get('uploadStatus'),
+            'importStatus': item['statusSnapshot'].get('importStatus'),
+            'status': item['statusSnapshot'].get('status'),
+            'reasons': item['reasons'],
+        }
+        for item in evaluated_candidates
+        if item['reasons']
+    ]
 
     state['draftListingSkuCount'] = len(draft_listing_skus)
     state['eligibleCount'] = len(todo)
     state['skipped'] = skipped
+    state['selectionAudit'] = {
+        'candidateCount': len(evaluated_candidates),
+        'eligibleSkuCount': len(eligible_skus),
+        'newImportEligibleCount': sum(1 for item in evaluated_candidates if item['isNewImport'] and not item['draftListingSkuExists'] and item['canImport']),
+        'blockedNotNewImportCount': sum(1 for item in evaluated_candidates if 'not-new-import' in item['reasons']),
+        'blockedDraftSkuCount': sum(1 for item in evaluated_candidates if 'draft-listing-sku-exists' in item['reasons']),
+        'requestedSkuFilterApplied': bool(args.skus),
+    }
     write_state(state)
 
     for c in todo[:args.limit]:
         sku = c['sku']
         row = {'sku': sku, 'candidateStatus': c.get('candidateStatus')}
         try:
+            initial_guard = evaluate_candidate_guards(c, draft_listing_skus)
             row['guardChecks'] = {
-                'isNewImport': is_new_import_candidate(c),
-                'draftListingSkuExists': sku in draft_listing_skus,
+                'isNewImport': initial_guard['isNewImport'],
+                'draftListingSkuExists': initial_guard['draftListingSkuExists'],
+                'canImport': initial_guard['canImport'],
+                'statusSnapshot': initial_guard['statusSnapshot'],
             }
-            if not row['guardChecks']['isNewImport']:
+            if initial_guard['reasons']:
                 row['skipped'] = True
-                row['skipReason'] = 'not-new-import'
+                row['skipReason'] = ','.join(initial_guard['reasons'])
                 state['processed'].append(row)
                 write_state(state)
                 continue
-            if row['guardChecks']['draftListingSkuExists']:
+
+            latest_draft_listing = fetch_listing_by_sku(base, token, sku, page_size=args.page_size, max_pages=args.max_pages, status='DRAFT')
+            if latest_draft_listing and latest_draft_listing.get('id'):
+                row['preImportDuplicateDraftListing'] = {
+                    'id': latest_draft_listing.get('id'),
+                    'status': latest_draft_listing.get('status'),
+                    'sku': latest_draft_listing.get('sku'),
+                }
                 row['skipped'] = True
-                row['skipReason'] = 'draft-listing-sku-exists'
+                row['skipReason'] = 'draft-listing-sku-exists-preimport-recheck'
                 state['processed'].append(row)
                 write_state(state)
                 continue

@@ -46,7 +46,13 @@ with base as (
       else regexp_replace(website, '/.*$', '')
     end as website_host,
     case when strpos(email, '@') > 0 then split_part(email, '@', 2) else '' end as email_domain,
-    case when email ~ '^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$' then 1 else 0 end as has_valid_email,
+    case
+      when email <> ''
+        and strpos(email, '@') > 1
+        and strpos(split_part(email, '@', 2), '.') > 1
+        and email not like '% %'
+      then 1 else 0
+    end as has_valid_email,
     case when website <> '' then 1 else 0 end as has_website,
     case when length(phone_digits) between 10 and 11 or length(direct_phone_digits) between 10 and 11 then 1 else 0 end as has_phone,
     case when coalesce(contact_full, '') <> '' or coalesce(contact_first, '') <> '' or coalesce(contact_last, '') <> '' then 1 else 0 end as has_named_contact,

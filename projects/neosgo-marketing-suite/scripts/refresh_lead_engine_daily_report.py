@@ -29,6 +29,9 @@ DEFAULT_REPORT_PATH = PROJECT_ROOT / "output" / "prospect-data-engine" / "lead-e
 DEFAULT_METRICS_PATH = PROJECT_ROOT / "runtime" / "prospect-data-engine" / "lead-engine-metrics-latest.json"
 DEFAULT_PROBE_TIMEOUT_SECONDS = 30
 DEFAULT_REFRESH_TIMEOUT_SECONDS = 1800
+DEFAULT_REFRESH_THREADS = 4
+DEFAULT_REFRESH_MEMORY_LIMIT = "8GB"
+DEFAULT_REFRESH_PRESERVE_INSERTION_ORDER = False
 
 
 def _candidate_pythons(explicit: str | None) -> list[Path]:
@@ -101,7 +104,14 @@ def _assert_db_accessible(duckdb_python: Path, db_path: Path) -> None:
         raise SystemExit(_format_duckdb_error(proc.stdout, proc.stderr, db_path, "database probe failed"))
 
 
-def _refresh_views(duckdb_python: Path, db_path: Path, sql_path: Path) -> None:
+def _refresh_views(
+    duckdb_python: Path,
+    db_path: Path,
+    sql_path: Path,
+    threads: int,
+    memory_limit: str,
+    preserve_insertion_order: bool,
+) -> None:
     if not db_path.exists():
         raise SystemExit(f"missing lead-engine database: {db_path}")
     if not sql_path.exists():
@@ -115,14 +125,29 @@ def _refresh_views(duckdb_python: Path, db_path: Path, sql_path: Path) -> None:
 
         db_path = Path(sys.argv[1])
         sql_path = Path(sys.argv[2])
+        threads = int(sys.argv[3])
+        memory_limit = sys.argv[4]
+        preserve_insertion_order = sys.argv[5].lower() == "true"
         con = duckdb.connect(str(db_path))
+        con.execute(f"SET threads={threads}")
+        con.execute(f"SET memory_limit='{memory_limit}'")
+        con.execute(f"SET preserve_insertion_order={'true' if preserve_insertion_order else 'false'}")
         con.execute(sql_path.read_text(encoding="utf-8"))
         con.close()
         """
     )
     try:
         proc = subprocess.run(
-            [str(duckdb_python), "-c", program, str(db_path), str(sql_path)],
+            [
+                str(duckdb_python),
+                "-c",
+                program,
+                str(db_path),
+                str(sql_path),
+                str(threads),
+                memory_limit,
+                "true" if preserve_insertion_order else "false",
+            ],
             capture_output=True,
             text=True,
             check=False,
@@ -188,6 +213,14 @@ def main() -> int:
     parser.add_argument("--python", dest="python_path", help="DuckDB-capable Python interpreter")
     parser.add_argument("--report-out", default=str(DEFAULT_REPORT_PATH), help="Markdown report output path")
     parser.add_argument("--metrics-out", default=str(DEFAULT_METRICS_PATH), help="JSON metrics output path")
+    parser.add_argument("--refresh-threads", type=int, default=DEFAULT_REFRESH_THREADS, help="DuckDB threads for heavy refresh")
+    parser.add_argument("--refresh-memory-limit", default=DEFAULT_REFRESH_MEMORY_LIMIT, help="DuckDB memory_limit for heavy refresh")
+    parser.add_argument(
+        "--preserve-insertion-order",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_REFRESH_PRESERVE_INSERTION_ORDER,
+        help="DuckDB preserve_insertion_order setting during heavy refresh",
+    )
     args = parser.parse_args()
 
     db_path = Path(args.db).expanduser()
@@ -196,7 +229,14 @@ def main() -> int:
     duckdb_python = _choose_duckdb_python(args.python_path)
 
     _assert_db_accessible(duckdb_python, db_path)
-    _refresh_views(duckdb_python, db_path, BUILD_SQL_PATH)
+    _refresh_views(
+        duckdb_python,
+        db_path,
+        BUILD_SQL_PATH,
+        threads=args.refresh_threads,
+        memory_limit=args.refresh_memory_limit,
+        preserve_insertion_order=args.preserve_insertion_order,
+    )
     _run_daily_report(duckdb_python, db_path, report_path)
     metrics = _read_metrics(db_path, duckdb_python)
 
@@ -206,6 +246,9 @@ def main() -> int:
         "db_path": str(db_path),
         "view_sql_path": str(BUILD_SQL_PATH),
         "report_path": str(report_path),
+        "refresh_threads": args.refresh_threads,
+        "refresh_memory_limit": args.refresh_memory_limit,
+        "preserve_insertion_order": args.preserve_insertion_order,
         "metrics": metrics,
     }
     metrics_path.parent.mkdir(parents=True, exist_ok=True)
