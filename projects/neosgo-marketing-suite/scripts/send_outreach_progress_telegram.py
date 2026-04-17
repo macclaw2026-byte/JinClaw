@@ -115,6 +115,14 @@ def _policy_label(value: str) -> str:
     }.get(value or "unclassified", value or "未分类")
 
 
+def _supply_status_label(value: str) -> str:
+    return {
+        "ready": "仍有可继续触达的 approved 候选",
+        "refill_pending": "当前 approved 触达池已耗尽，系统正在从待富化线索里补给下一批",
+        "exhausted": "当前待触达池与待富化池都已耗尽，需要新增采集或放宽策略后才会继续增长",
+    }.get(value or "", value or "未知")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Send periodic NEOSGO outreach summary to Telegram.")
     parser.add_argument("--chat-id", default=os.environ.get("NEOSGO_OUTREACH_CHAT", DEFAULT_CHAT))
@@ -172,6 +180,24 @@ def main() -> int:
         adapter_lines.append(
             f"- {domain}：共 {int(outcome.get('total', 0))} 次，成功 {int(outcome.get('success', 0))}，人工处理 {int(outcome.get('manual', 0))}，失败 {int(outcome.get('failed', 0))}"
         )
+    candidate_supply = dict(latest.get("candidate_supply") or {})
+    refill = dict(candidate_supply.get("last_replenishment") or {})
+    supply_status = str(candidate_supply.get("status") or "")
+    supply_lines = []
+    if candidate_supply:
+        supply_lines.append(f"- 状态：{_supply_status_label(supply_status)}")
+        supply_lines.append(f"- 当前仍可继续触达：{int(candidate_supply.get('approved_usable_remaining_total', 0) or 0)} 家")
+        supply_lines.append(f"- 当前已批准可触达总量：{int(candidate_supply.get('approved_usable_total', 0) or 0)} 家")
+        supply_lines.append(f"- 待网站富化补给：{int(candidate_supply.get('pending_batch_total', 0) or 0)} 家")
+        if refill.get("attempted_at"):
+            refill_line = (
+                f"- 最近补给：{refill.get('attempted_at')} / {refill.get('status') or 'unknown'}"
+                f" / 新增可触达 {int(refill.get('newly_available_to_outreach', 0) or 0)} 家"
+                f" / 本次检查 {int(refill.get('checked_sites', 0) or 0)} 个站点"
+            )
+            supply_lines.append(refill_line)
+        if refill.get("stderr_excerpt") and str(refill.get("status") or "") == "failed":
+            supply_lines.append(f"- 最近补给异常：{str(refill.get('stderr_excerpt') or '')[:160]}")
     text = (
         "NEOSGO 触达任务进度汇报\n"
         f"生成时间：{generated_at}\n"
@@ -185,6 +211,8 @@ def main() -> int:
     if failure_reason_counts:
         reasons_text = "；".join(f"{reason} x{count}" for reason, count in failure_reason_counts.items())
         text += f"新增失败原因：{reasons_text}\n"
+    if supply_lines:
+        text += "候选池状态：\n" + "\n".join(supply_lines) + "\n"
     if lane_lines:
         text += "车道效果统计：\n" + "\n".join(lane_lines) + "\n"
     if adapter_lines:

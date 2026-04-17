@@ -26,6 +26,7 @@ from typing import Any
 
 WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
 PROJECT_ROOT = WORKSPACE_ROOT / "projects" / "neosgo-marketing-suite"
+PROJECT_CONFIG_PATH = PROJECT_ROOT / "config" / "project-config.json"
 OPENCLAW_BIN = "/opt/homebrew/bin/openclaw"
 DEFAULT_CHAT = "8528973600"
 DEFAULT_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -33,6 +34,8 @@ CONTACTS_PATH = PROJECT_ROOT / "data" / "raw-imports" / "discovered-google-maps-
 STATE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "state.json"
 EVENTS_PATH = PROJECT_ROOT / "runtime" / "outreach" / "events.jsonl"
 LATEST_SUMMARY_PATH = PROJECT_ROOT / "runtime" / "outreach" / "latest-summary.json"
+CONTENT_CACHE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "campaign-content-cache.json"
+LEAD_REFILL_STATE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "lead-refill-state.json"
 REVIEW_QUEUE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "review-queue.json"
 REVIEW_TEMPLATE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "review-decisions.template.json"
 CAPTCHA_QUEUE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "captcha-queue.json"
@@ -42,11 +45,13 @@ CONTENT_PATH = PROJECT_ROOT / "config" / "outreach-campaign-content.yaml"
 OUTREACH_ENV_PATH = PROJECT_ROOT / ".env.outreach"
 FORM_ADAPTERS_PATH = PROJECT_ROOT / "config" / "outreach-form-adapters.json"
 MAIL_BATCH_SCRIPT = WORKSPACE_ROOT / "skills" / "neosgo-lead-engine" / "scripts" / "send_outreach_mail_batch.py"
+ENRICHMENT_SCRIPT = WORKSPACE_ROOT / "skills" / "prospect-data-engine" / "scripts" / "enrich_google_maps_website_contacts.py"
 PLAYWRIGHT_PYTHON = WORKSPACE_ROOT / "tools" / "matrix-venv" / "bin" / "python"
 TELEGRAM_INGRESS_PATH = WORKSPACE_ROOT / "tools" / "openmoss" / "runtime" / "autonomy" / "ingress" / "telegram.jsonl"
 PLAYWRIGHT_PROFILE_DIR = PROJECT_ROOT / "runtime" / "outreach" / "playwright-profile"
 STATE_PRIORITY = ["RI", "MA", "CT", "NH", "ME", "VT"]
 GRAY_RETRY_COOLDOWN_HOURS = 24
+LEAD_REFILL_COOLDOWN_MINUTES = 30
 SUCCESS_TEXT_RE = re.compile(
     r"(thank you|thanks for reaching out|message sent|we('|\u2019)?ll be in touch|we will be in touch|successfully submitted|request has been sent)",
     re.I,
@@ -96,7 +101,41 @@ def _append_event(event: dict[str, Any]) -> None:
         fh.write(json.dumps(event, ensure_ascii=False) + "\n")
 
 
+def _file_signature(path: Path) -> dict[str, Any]:
+    try:
+        stat = path.stat()
+    except OSError:
+        return {}
+    return {
+        "path": str(path),
+        "size": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+
+
+def _read_cached_content(signature: dict[str, Any]) -> dict[str, Any] | None:
+    cached = _read_json(CONTENT_CACHE_PATH, {})
+    if dict(cached.get("source") or {}) != signature:
+        return None
+    payload = cached.get("payload")
+    if isinstance(payload, dict):
+        return payload
+    return None
+
+
+def _write_cached_content(signature: dict[str, Any], payload: dict[str, Any]) -> None:
+    _write_json(
+        CONTENT_CACHE_PATH,
+        {
+            "cached_at": _now_iso(),
+            "source": signature,
+            "payload": payload,
+        },
+    )
+
+
 def _yaml_to_json(path: Path) -> dict[str, Any]:
+    signature = _file_signature(path)
     ruby = textwrap.dedent(
         """
         require 'yaml'
@@ -105,17 +144,34 @@ def _yaml_to_json(path: Path) -> dict[str, Any]:
         puts JSON.generate(data)
         """
     )
-    proc = subprocess.run(
-        ["/usr/bin/ruby", "-e", ruby, str(path)],
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-        env=_subprocess_env(),
-    )
+    try:
+        proc = subprocess.run(
+            ["/usr/bin/ruby", "-e", ruby, str(path)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+            env=_subprocess_env(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        cached = _read_cached_content(signature)
+        if cached is not None:
+            return cached
+        raise RuntimeError(f"yaml parse timed out after {int(exc.timeout or 30)}s") from exc
     if proc.returncode != 0:
+        cached = _read_cached_content(signature)
+        if cached is not None:
+            return cached
         raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "yaml parse failed")
-    return json.loads(proc.stdout)
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        cached = _read_cached_content(signature)
+        if cached is not None:
+            return cached
+        raise RuntimeError("yaml parse returned invalid json") from exc
+    _write_cached_content(signature, payload)
+    return payload
 
 
 def _load_content() -> dict[str, Any]:
@@ -165,6 +221,21 @@ def _load_outreach_env() -> dict[str, str]:
 def _load_form_adapters() -> dict[str, Any]:
     payload = _read_json(FORM_ADAPTERS_PATH, {"domains": {}})
     return dict(payload or {"domains": {}})
+
+
+def _load_project_config() -> dict[str, Any]:
+    return _read_json(PROJECT_CONFIG_PATH, {})
+
+
+def _priority_regions() -> list[str]:
+    config = _load_project_config()
+    project = dict(config.get("project") or {})
+    regions: list[str] = []
+    for item in list(project.get("priority_regions", []) or []):
+        region = str(item).strip().upper()
+        if region and region not in regions:
+            regions.append(region)
+    return regions or list(STATE_PRIORITY)
 
 
 def _normalized_domain(value: str) -> str:
@@ -392,10 +463,11 @@ def _compute_domain_policies(state: dict[str, Any]) -> dict[str, str]:
 def _load_candidates() -> list[dict[str, Any]]:
     payload = _read_json(CONTACTS_PATH, {"items": []})
     adapters = _load_form_adapters()
+    priority_regions = _priority_regions()
     candidates: list[dict[str, Any]] = []
     for item in payload.get("items", []) or []:
         state = str(item.get("geo", "")).split("/", 1)[0].strip().upper()
-        if state not in STATE_PRIORITY:
+        if state not in priority_regions:
             continue
         if str(item.get("website_fit_status") or "").strip() != "approved":
             continue
@@ -419,11 +491,213 @@ def _load_candidates() -> list[dict[str, Any]]:
 
     def sort_key(item: dict[str, Any]) -> tuple[int, int, int, str]:
         state = str(item.get("geo", "")).split("/", 1)[0].strip().upper()
-        state_rank = STATE_PRIORITY.index(state) if state in STATE_PRIORITY else 999
+        state_rank = priority_regions.index(state) if state in priority_regions else 999
         lane_rank = lane_order.get(str(item.get("outreach_lane") or "other"), 9)
         return (state_rank, lane_rank, 0 if _email_is_usable(item) else 1, str(item.get("company_name") or ""))
 
     return sorted(candidates, key=sort_key)
+
+
+def _candidate_supply_summary(
+    state: dict[str, Any],
+    *,
+    contacts_payload: dict[str, Any] | None = None,
+    priority_regions: list[str] | None = None,
+) -> dict[str, Any]:
+    payload = contacts_payload if contacts_payload is not None else _read_json(CONTACTS_PATH, {"items": []})
+    items = list(payload.get("items", []) or [])
+    active_regions = [str(item).strip().upper() for item in list(priority_regions or _priority_regions()) if str(item).strip()]
+    targets = dict(state.get("targets") or {})
+    terminal_statuses = {
+        "contact_form_submitted",
+        "contact_form_needs_review",
+        "contact_form_failed_email_deferred",
+        "email_sent_pending_confirmation",
+        "email_sent_local_only",
+        "email_failed",
+        "contact_form_failed",
+        "captcha_pending_operator",
+        "waiting_reply",
+        "review_hold",
+        "stopped",
+    }
+    summary = {
+        "priority_regions": active_regions,
+        "approved_total": 0,
+        "approved_usable_total": 0,
+        "approved_usable_remaining_total": 0,
+        "pending_batch_total": 0,
+        "review_total": 0,
+        "reject_total": 0,
+        "unknown_total": 0,
+    }
+    for item in items:
+        state_code = str(item.get("geo", "")).split("/", 1)[0].strip().upper()
+        if active_regions and state_code not in active_regions:
+            continue
+        fit_status = str(item.get("website_fit_status") or "unknown").strip()
+        if fit_status == "approved":
+            summary["approved_total"] += 1
+            if item.get("website") and (_is_form_candidate(item) or _email_is_usable(item)):
+                summary["approved_usable_total"] += 1
+                target_state = dict(targets.get(_target_key(item)) or {})
+                if str(target_state.get("status") or "") not in terminal_statuses:
+                    summary["approved_usable_remaining_total"] += 1
+        elif fit_status == "pending_batch":
+            summary["pending_batch_total"] += 1
+        elif fit_status == "review":
+            summary["review_total"] += 1
+        elif fit_status == "reject":
+            summary["reject_total"] += 1
+        else:
+            summary["unknown_total"] += 1
+
+    refill_state = _read_json(LEAD_REFILL_STATE_PATH, {})
+    summary["last_replenishment"] = {
+        "attempted_at": str(refill_state.get("attempted_at") or ""),
+        "status": str(refill_state.get("status") or ""),
+        "checked_sites": int(refill_state.get("checked_sites") or 0),
+        "newly_approved_total": int(refill_state.get("newly_approved_total") or 0),
+        "newly_available_to_outreach": int(refill_state.get("newly_available_to_outreach") or 0),
+        "deferred_remaining": int(refill_state.get("deferred_remaining") or 0),
+        "returncode": refill_state.get("returncode"),
+        "stderr_excerpt": str(refill_state.get("stderr_excerpt") or ""),
+    }
+    if int(summary["approved_usable_remaining_total"]) > 0:
+        summary["status"] = "ready"
+    elif int(summary["pending_batch_total"]) > 0:
+        summary["status"] = "refill_pending"
+    else:
+        summary["status"] = "exhausted"
+    return summary
+
+
+def _run_json_subprocess(command: list[str], *, timeout: int) -> dict[str, Any]:
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env=_subprocess_env(),
+        )
+    except subprocess.TimeoutExpired as exc:
+        stderr = (_subprocess_output_text(exc.stderr) or _subprocess_output_text(exc.stdout)).strip()
+        return {
+            "ok": False,
+            "returncode": 124,
+            "stdout": "",
+            "stderr": stderr or f"timeout_after_{timeout}s",
+            "payload": {},
+        }
+    stdout = proc.stdout.strip()
+    try:
+        payload = json.loads(stdout) if stdout else {}
+    except json.JSONDecodeError:
+        payload = {"stdout": stdout}
+    return {
+        "ok": proc.returncode == 0,
+        "returncode": proc.returncode,
+        "stdout": stdout,
+        "stderr": proc.stderr.strip(),
+        "payload": payload,
+    }
+
+
+def _maybe_replenish_candidate_supply(state: dict[str, Any]) -> dict[str, Any] | None:
+    supply_before = _candidate_supply_summary(state)
+    if int(supply_before.get("approved_usable_remaining_total", 0) or 0) > 0:
+        return None
+    pending_batch_total = int(supply_before.get("pending_batch_total", 0) or 0)
+    if pending_batch_total <= 0:
+        _write_json(
+            LEAD_REFILL_STATE_PATH,
+            {
+                "attempted_at": _now_iso(),
+                "status": "exhausted",
+                "reason": "no_pending_batch_available",
+                "approved_usable_remaining_total": int(supply_before.get("approved_usable_remaining_total", 0) or 0),
+                "pending_batch_total": pending_batch_total,
+            },
+        )
+        return None
+
+    refill_state = _read_json(LEAD_REFILL_STATE_PATH, {})
+    last_attempt = _parse_iso(str(refill_state.get("attempted_at") or ""))
+    if last_attempt is not None:
+        elapsed_seconds = (datetime.now(timezone.utc) - last_attempt).total_seconds()
+        if elapsed_seconds < LEAD_REFILL_COOLDOWN_MINUTES * 60:
+            return None
+
+    attempted_at = _now_iso()
+    if not ENRICHMENT_SCRIPT.exists():
+        event = {
+            "type": "lead_supply_replenishment_failed",
+            "at": attempted_at,
+            "reason": "enrichment_script_missing",
+            "pending_batch_before": pending_batch_total,
+        }
+        _write_json(
+            LEAD_REFILL_STATE_PATH,
+            {
+                "attempted_at": attempted_at,
+                "status": "failed",
+                "reason": "enrichment_script_missing",
+                "pending_batch_total": pending_batch_total,
+            },
+        )
+        return event
+
+    result = _run_json_subprocess(
+        [sys.executable, str(ENRICHMENT_SCRIPT), "--project-root", str(PROJECT_ROOT)],
+        timeout=1800,
+    )
+    supply_after = _candidate_supply_summary(state)
+    newly_approved_total = max(
+        0,
+        int(supply_after.get("approved_usable_total", 0) or 0) - int(supply_before.get("approved_usable_total", 0) or 0),
+    )
+    newly_available_to_outreach = max(
+        0,
+        int(supply_after.get("approved_usable_remaining_total", 0) or 0)
+        - int(supply_before.get("approved_usable_remaining_total", 0) or 0),
+    )
+    checked_sites = int((result.get("payload") or {}).get("checked_site_count", 0) or 0)
+    deferred_remaining = int((result.get("payload") or {}).get("deferred_count", supply_after.get("pending_batch_total", 0)) or 0)
+    refill_record = {
+        "attempted_at": attempted_at,
+        "status": "ok" if result.get("ok") else "failed",
+        "returncode": result.get("returncode"),
+        "checked_sites": checked_sites,
+        "pending_batch_before": pending_batch_total,
+        "pending_batch_after": int(supply_after.get("pending_batch_total", 0) or 0),
+        "newly_approved_total": newly_approved_total,
+        "newly_available_to_outreach": newly_available_to_outreach,
+        "approved_usable_remaining_after": int(supply_after.get("approved_usable_remaining_total", 0) or 0),
+        "deferred_remaining": deferred_remaining,
+        "stderr_excerpt": str(result.get("stderr") or "")[:500],
+    }
+    _write_json(LEAD_REFILL_STATE_PATH, refill_record)
+    event_type = (
+        "lead_supply_replenished"
+        if newly_available_to_outreach > 0
+        else "lead_supply_replenishment_attempted"
+        if result.get("ok")
+        else "lead_supply_replenishment_failed"
+    )
+    return {
+        "type": event_type,
+        "at": attempted_at,
+        "checked_sites": checked_sites,
+        "pending_batch_before": pending_batch_total,
+        "pending_batch_after": int(supply_after.get("pending_batch_total", 0) or 0),
+        "newly_approved_total": newly_approved_total,
+        "newly_available_to_outreach": newly_available_to_outreach,
+        "approved_usable_remaining_after": int(supply_after.get("approved_usable_remaining_total", 0) or 0),
+        "returncode": result.get("returncode"),
+        "reason": str(result.get("stderr") or "")[:200] if not result.get("ok") else "pending_batch_processed",
+    }
 
 
 def _select_next_candidate(state: dict[str, Any]) -> dict[str, Any] | None:
@@ -1705,6 +1979,7 @@ def _build_summary(state: dict[str, Any]) -> dict[str, Any]:
         "domain_policy_counts": domain_policy_counts,
         "total_touched": len(targets),
         "last_email_sent_at": state.get("last_email_sent_at", ""),
+        "candidate_supply": _candidate_supply_summary(state),
     }
 
 
@@ -1721,13 +1996,16 @@ def _notify_failure(chat_id: str, item: dict[str, Any], channel: str, result: di
     return _send_telegram(chat_id, text)
 
 
-def _notify_success(chat_id: str, item: dict[str, Any], channel: str, result: dict[str, Any]) -> dict[str, Any]:
+def _notify_success(chat_id: str, item: dict[str, Any], channel: str, result: dict[str, Any]) -> dict[str, Any] | None:
+    reason = str(result.get('reason', 'submitted') or 'submitted').strip()
+    if channel == 'email' or reason in {'email_sent_local_only', 'email_sent_local_only_after_form_failure'}:
+        return None
     text = (
         "NEOSGO 触达进展。\n"
         f"公司：{item.get('company_name')}\n"
         f"州：{str(item.get('geo', '')).split('/',1)[0].strip().upper()}\n"
         f"方式：{'网站表单' if channel == 'contact_form' else '邮件'}\n"
-        f"结果：{result.get('reason', 'submitted')}"
+        f"结果：{reason}"
     )
     return _send_telegram(chat_id, text)
 
@@ -1749,13 +2027,17 @@ def _notify_captcha_required(chat_id: str, item: dict[str, Any], ticket_id: str,
     return _send_telegram(chat_id, text)
 
 
-def _notify_manual_review_required(chat_id: str, item: dict[str, Any], status: str, result: dict[str, Any]) -> dict[str, Any]:
+def _notify_manual_review_required(chat_id: str, item: dict[str, Any], status: str, result: dict[str, Any]) -> dict[str, Any] | None:
     website = item.get("contact_form_url") or item.get("website") or ""
     reason = str(result.get("reason") or item.get("reason") or "unknown")
     errors = [str(error).strip() for error in list(result.get("errors") or []) if str(error).strip()]
     detail = reason
     if errors:
         detail = f"{detail} ({'; '.join(errors[:3])})" if detail else "; ".join(errors[:3])
+    # User preference: do not notify on form-only uncertainty/failure when the system should auto-reroute;
+    # only notify when both form and email paths are exhausted and human intervention is actually required.
+    if reason in {"retryable_form_result_without_email_fallback", "form_failed_no_usable_email_fallback", "form_failed_without_email_fallback"}:
+        return None
     action_text = {
         "contact_form_needs_review": "网站表单结果不够明确，需要你人工看一下是否算成功，或是否应改走邮件。",
         "review_hold": "系统已保守暂停，避免重复打扰；需要你判断是继续重试、改走邮件，还是停止。",
@@ -1829,6 +2111,11 @@ def _backfill_manual_alerts(state: dict[str, Any], chat_id: str, *, no_telegram:
                 status,
                 dict(target.get("contact_form_result") or target.get("result") or {}),
             )
+        if delivery is None:
+            target["manual_alert_status"] = status
+            target["manual_alert_signature"] = signature
+            state["targets"][key] = target
+            continue
         now = _now_iso()
         target["manual_alert_sent_at"] = now
         target["manual_alert_last_notified_at"] = now
@@ -2076,7 +2363,13 @@ def main() -> int:
     for _ in range(attempt_limit):
         item = _select_next_candidate(state)
         if not item:
-            break
+            refill_event = _maybe_replenish_candidate_supply(state)
+            if refill_event:
+                _append_event(refill_event)
+                attempts.append(refill_event)
+                item = _select_next_candidate(state)
+            if not item:
+                break
         channel = _channel_for(item, state)
         if channel == "none":
             break
