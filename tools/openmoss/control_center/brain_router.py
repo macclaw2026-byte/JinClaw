@@ -46,7 +46,7 @@ import sys
 if str(AUTONOMY_DIR) not in sys.path:
     sys.path.insert(0, str(AUTONOMY_DIR))
 
-from manager import TASKS_ROOT, build_args, contract_path, create_task, load_contract, load_state, log_event, read_link, save_state, state_path, utc_now_iso, write_link
+from manager import TASKS_ROOT, build_args, contract_path, create_task_payload, load_contract, load_state, log_event, read_link, save_state, state_path, utc_now_iso, write_link
 from task_ingress import slugify
 
 
@@ -598,7 +598,7 @@ def _build_task(
             **package["metadata"],
             **metadata_extra,
         }
-    create_task(
+    create_task_payload(
         build_args(
             task_id=task_id,
             goal=goal,

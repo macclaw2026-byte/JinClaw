@@ -62,6 +62,7 @@ INTERNAL_ARTIFACT_NAMES = {
     "state.json",
     "events.jsonl",
 }
+_RECENT_EVENT_TAIL_BYTES = 256 * 1024
 
 
 def _read_json(path: Path, default: Any) -> Any:
@@ -132,7 +133,25 @@ def _recent_events(task_id: str, limit: int = 8) -> List[Dict[str, Any]]:
     if not events_path.exists():
         return []
     rows: List[Dict[str, Any]] = []
-    for line in events_path.read_text(encoding="utf-8", errors="ignore").splitlines()[-limit:]:
+
+    def _tail_lines(path: Path, *, wanted: int) -> List[str]:
+        if wanted <= 0:
+            return []
+        try:
+            with path.open("rb") as fh:
+                fh.seek(0, 2)
+                position = fh.tell()
+                buffer = b""
+                while position > 0 and buffer.count(b"\n") <= wanted and len(buffer) < _RECENT_EVENT_TAIL_BYTES:
+                    read_size = min(8192, position, _RECENT_EVENT_TAIL_BYTES - len(buffer))
+                    position -= read_size
+                    fh.seek(position)
+                    buffer = fh.read(read_size) + buffer
+        except OSError:
+            return []
+        return buffer.decode("utf-8", errors="ignore").splitlines()[-wanted:]
+
+    for line in _tail_lines(events_path, wanted=limit):
         try:
             rows.append(json.loads(line))
         except json.JSONDecodeError:

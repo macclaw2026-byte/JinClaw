@@ -15,8 +15,6 @@
 """
 from __future__ import annotations
 
-import contextlib
-import io
 import json
 import re
 from pathlib import Path
@@ -32,7 +30,7 @@ for entry in (str(AUTONOMY_DIR), str(CONTROL_CENTER_DIR)):
     if entry not in sys.path:
         sys.path.insert(0, entry)
 
-from manager import TASKS_ROOT, build_args, create_task, read_json as manager_read_json, run_once
+from manager import TASKS_ROOT, build_args, create_task_payload, read_json as manager_read_json, run_once
 from crawler_execution_truth_reconciler import reconcile_execution_truth_batch
 from orchestrator import build_control_center_package
 
@@ -173,21 +171,20 @@ def execute_crawler_remediation_plan(
                 **(package.get("metadata", {}) or {}),
                 **metadata,
             }
-            with contextlib.redirect_stdout(io.StringIO()):
-                create_task(
-                    build_args(
-                        task_id=task_id,
-                        goal=goal,
-                        done_definition=package["done_definition"],
-                        stage=[],
-                        stage_json=json.dumps(package["stages"], ensure_ascii=False),
-                        hard_constraint=package["hard_constraints"],
-                        soft_preference=[],
-                        allowed_tool=package["allowed_tools"],
-                        forbidden_action=[],
-                        metadata_json=json.dumps(package["metadata"], ensure_ascii=False),
-                    )
+            create_task_payload(
+                build_args(
+                    task_id=task_id,
+                    goal=goal,
+                    done_definition=package["done_definition"],
+                    stage=[],
+                    stage_json=json.dumps(package["stages"], ensure_ascii=False),
+                    hard_constraint=package["hard_constraints"],
+                    soft_preference=[],
+                    allowed_tool=package["allowed_tools"],
+                    forbidden_action=[],
+                    metadata_json=json.dumps(package["metadata"], ensure_ascii=False),
                 )
+            )
             record["status"] = "created"
         state = manager_read_json(TASKS_ROOT / task_id / "state.json", {})
         task_status = str(state.get("status", "")).strip().lower()

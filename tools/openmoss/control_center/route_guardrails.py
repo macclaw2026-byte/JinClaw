@@ -32,7 +32,7 @@ AUTONOMY_DIR = Path("/Users/mac_claw/.openclaw/workspace/tools/openmoss/autonomy
 if str(AUTONOMY_DIR) not in sys.path:
     sys.path.insert(0, str(AUTONOMY_DIR))
 
-from manager import build_args, contract_path, create_task, load_contract, load_state, log_event, save_state, utc_now_iso, write_link
+from manager import build_args, contract_path, create_task_payload, load_contract, load_state, log_event, save_state, utc_now_iso, write_link
 from task_ingress import slugify
 
 
@@ -218,7 +218,7 @@ def _build_task(task_id: str, goal: str, source: str, metadata_extra: Dict[str, 
     metadata = dict(package["metadata"])
     if metadata_extra:
         metadata.update(metadata_extra)
-    create_task(
+    create_task_payload(
         build_args(
             task_id=task_id,
             goal=clean_goal,

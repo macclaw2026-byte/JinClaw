@@ -732,14 +732,14 @@ def create_task_from_contract(contract: TaskContract) -> Dict[str, Dict]:
     return {"contract": contract.to_dict(), "state": state.to_dict()}
 
 
-def create_task(args: argparse.Namespace) -> int:
+def create_task_payload(args: argparse.Namespace) -> Dict[str, Dict]:
     """
     中文注解：
-    - 功能：实现 `create_task` 对应的处理逻辑。
-    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
-    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    - 功能：把 create-task 参数解析成静默的任务创建 payload。
+    - 设计意图：runtime / control center 在库内调用时需要“落任务但不向 stdout 打印大包对象”，
+      因此这里抽出纯业务 helper，由 CLI 包装层决定是否打印。
     """
-    args.goal = sanitize_goal_text(str(getattr(args, "goal", "") or ""))
+    goal = sanitize_goal_text(str(getattr(args, "goal", "") or ""))
     if getattr(args, "stage_json", ""):
         stages = parse_stage_payloads(json.loads(args.stage_json))
     else:
@@ -747,14 +747,14 @@ def create_task(args: argparse.Namespace) -> int:
     allowed_tools = args.allowed_tool or []
     for stage in stages:
         stage.execution_policy = merge_execution_policy(
-            args.goal,
+            goal,
             stage.name,
             stage.execution_policy,
             allowed_tools=allowed_tools,
         )
     contract = TaskContract(
         task_id=args.task_id,
-        user_goal=args.goal,
+        user_goal=goal,
         done_definition=args.done_definition,
         hard_constraints=args.hard_constraint or [],
         soft_preferences=args.soft_preference or [],
@@ -766,7 +766,17 @@ def create_task(args: argparse.Namespace) -> int:
             **json.loads(getattr(args, "metadata_json", "") or "{}"),
         },
     )
-    payload = create_task_from_contract(contract)
+    return create_task_from_contract(contract)
+
+
+def create_task(args: argparse.Namespace) -> int:
+    """
+    中文注解：
+    - 功能：实现 `create_task` 对应的 CLI 输出包装逻辑。
+    - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
+    - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    """
+    payload = create_task_payload(args)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
