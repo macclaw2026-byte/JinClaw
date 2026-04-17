@@ -145,12 +145,18 @@ def supervise_task(task_id: str, *, stale_after_seconds: int = 300, escalation_a
     return report
 
 
-def run_mission_supervisor(*, stale_after_seconds: int = 300, escalation_after_seconds: int = 900) -> Dict[str, Any]:
+def run_mission_supervisor(
+    *,
+    stale_after_seconds: int = 300,
+    escalation_after_seconds: int = 900,
+    control_plane: Dict[str, Any] | None = None,
+) -> Dict[str, Any]:
     """
     中文注解：
     - 功能：实现 `run_mission_supervisor` 对应的处理逻辑。
     - 角色：属于本模块中的对外可见逻辑；私有函数通常服务同文件主流程，公共函数通常作为跨模块入口或能力接口。
     - 调用关系：建议结合本文件的模块说明、调用方以及同名相关辅助函数一起阅读。
+    - 兼容说明：若调用方已经拿到了新鲜 control plane，可直接传入复用，避免完整 doctor 周期里重复构建同一份快照。
     """
     reports: List[Dict[str, Any]] = []
     if not TASKS_ROOT.exists():
@@ -166,21 +172,21 @@ def run_mission_supervisor(*, stale_after_seconds: int = 300, escalation_after_s
                 escalation_after_seconds=escalation_after_seconds,
             )
         )
-    control_plane = build_control_plane(
+    control_plane_payload = control_plane if isinstance(control_plane, dict) else build_control_plane(
         stale_after_seconds=stale_after_seconds,
         escalation_after_seconds=escalation_after_seconds,
     )
     result = {
         "checked_at": _utc_now_iso(),
-        "crawler_feedback": (control_plane.get("crawler_capability_profile", {}) or {}).get("feedback", {}) or {},
-        "crawler_remediation_queue": (control_plane.get("crawler_remediation_queue", {}) or {}),
-        "crawler_remediation_plan": (control_plane.get("crawler_remediation_plan", {}) or {}),
-        "project_repair_value": control_plane.get("project_repair_value", {}) or {},
-        "project_repair_recommendations": (control_plane.get("project_repair_recommendations", []) or [])[:6],
+        "crawler_feedback": (control_plane_payload.get("crawler_capability_profile", {}) or {}).get("feedback", {}) or {},
+        "crawler_remediation_queue": (control_plane_payload.get("crawler_remediation_queue", {}) or {}),
+        "crawler_remediation_plan": (control_plane_payload.get("crawler_remediation_plan", {}) or {}),
+        "project_repair_value": control_plane_payload.get("project_repair_value", {}) or {},
+        "project_repair_recommendations": (control_plane_payload.get("project_repair_recommendations", []) or [])[:6],
         "blocked_summary": {
-            "total": ((control_plane.get("system_snapshot", {}) or {}).get("summary", {}) or {}).get("blocked_total", 0),
-            "project_crawler_remediation": ((control_plane.get("system_snapshot", {}) or {}).get("summary", {}) or {}).get("blocked_project_crawler_remediation_total", 0),
-            "approval_or_contract": ((control_plane.get("system_snapshot", {}) or {}).get("summary", {}) or {}).get("blocked_approval_or_contract_total", 0),
+            "total": ((control_plane_payload.get("system_snapshot", {}) or {}).get("summary", {}) or {}).get("blocked_total", 0),
+            "project_crawler_remediation": ((control_plane_payload.get("system_snapshot", {}) or {}).get("summary", {}) or {}).get("blocked_project_crawler_remediation_total", 0),
+            "approval_or_contract": ((control_plane_payload.get("system_snapshot", {}) or {}).get("summary", {}) or {}).get("blocked_approval_or_contract_total", 0),
         },
         "reports": reports,
     }

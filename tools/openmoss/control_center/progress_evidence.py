@@ -89,6 +89,10 @@ ACTION_PATTERNS = (
     "continue",
     "fix",
 )
+_CONVERSATION_LINK_INDEX_CACHE: Dict[str, Any] = {
+    "root_mtime_ns": None,
+    "index": {},
+}
 
 
 def _read_json(path: Path, default: Any) -> Any:
@@ -197,6 +201,29 @@ def _normalize_goal(text: str) -> str:
     - 功能：把 goal 压平做轻量文本比对；这里只用于辅助判断，不直接替代真正的意图分析。
     """
     return re.sub(r"\s+", "", str(text or "").strip().lower())
+
+
+def _goal_conformance_analysis_text(text: str, *, max_chars: int = 1200) -> str:
+    """
+    中文注解：
+    - 功能：把超长 contract/user goal 压缩成更适合做 conformance 判断的短文本。
+    - 设计意图：很多 runtime task 会把系统纪律、阶段说明、verification guidance 一并塞进 goal；
+      这些内容对“用户方向有没有变”几乎没帮助，却会显著放大意图分析成本。
+      这里优先提取显式 `Goal:` / `目标:` 行，提取不到时再回退到裁剪后的正文。
+    """
+    normalized = sanitize_goal_text(str(text or ""))
+    if len(normalized) <= max_chars:
+        return normalized
+    lines = [line.strip() for line in normalized.splitlines() if line.strip()]
+    goal_lines = [
+        line
+        for line in lines
+        if re.match(r"^(goal|目标|user_goal)\s*[:：]", line, flags=re.IGNORECASE)
+    ]
+    compact = "\n".join(dict.fromkeys(goal_lines))
+    if compact:
+        return compact[:max_chars]
+    return normalized[:max_chars]
 
 
 def _goal_word_tokens(text: str) -> set[str]:
@@ -326,12 +353,12 @@ def _extract_reply_context_goal(text: str) -> Dict[str, str]:
     }
 
 
-def _session_file_for_key(session_key: str) -> Path | None:
+def _session_file_for_key(session_key: str, *, session_registry: Dict[str, Any] | None = None) -> Path | None:
     """
     中文注解：
     - 功能：根据 session_key 找到 transcript 文件，供医生读取“这条会话最近到底来了什么用户消息”。
     """
-    registry = _read_json(SESSIONS_INDEX_PATH, {})
+    registry = session_registry if isinstance(session_registry, dict) else _read_json(SESSIONS_INDEX_PATH, {})
     session_info = registry.get(session_key, {}) if isinstance(registry, dict) else {}
     session_file = str(session_info.get("sessionFile") or "").strip()
     if not session_file:
@@ -371,12 +398,17 @@ def _is_internal_heartbeat_prompt(text: str) -> bool:
     ) or ("current time:" in lowered and "heartbeat.md" in lowered)
 
 
-def _latest_external_user_message(session_key: str, *, limit: int = 80) -> Dict[str, str]:
+def _latest_external_user_message(
+    session_key: str,
+    *,
+    limit: int = 80,
+    session_registry: Dict[str, Any] | None = None,
+) -> Dict[str, str]:
     """
     中文注解：
     - 功能：读取某条会话最新的外部用户消息，并做 goal 清洗。
     """
-    session_file = _session_file_for_key(session_key)
+    session_file = _session_file_for_key(session_key, session_registry=session_registry)
     if not session_file:
         return {}
     try:
@@ -415,6 +447,30 @@ def _conversation_links_for_task(task_id: str) -> List[Dict[str, Any]]:
     - 功能：找到当前 task 绑定过的会话 link。
     - 设计意图：医生需要知道“哪条会话把这个 task 当成当前任务”，才能把最新用户目标和当前执行对象做一致性比对。
     """
+    cache_root_mtime_ns: int | None = None
+    if LINKS_ROOT.exists():
+        try:
+            cache_root_mtime_ns = LINKS_ROOT.stat().st_mtime_ns
+        except OSError:
+            cache_root_mtime_ns = None
+    if _CONVERSATION_LINK_INDEX_CACHE.get("root_mtime_ns") != cache_root_mtime_ns:
+        rows_by_task: Dict[str, List[Dict[str, Any]]] = {}
+        if LINKS_ROOT.exists():
+            for path in sorted(LINKS_ROOT.glob("*.json")):
+                payload = _read_json(path, {})
+                if not payload:
+                    continue
+                row = dict(payload)
+                refs = {
+                    str(payload.get("task_id", "")).strip(),
+                    str(payload.get("lineage_root_task_id", "")).strip(),
+                    str(payload.get("predecessor_task_id", "")).strip(),
+                }
+                for ref in {item for item in refs if item}:
+                    rows_by_task.setdefault(ref, []).append(row)
+        _CONVERSATION_LINK_INDEX_CACHE["root_mtime_ns"] = cache_root_mtime_ns
+        _CONVERSATION_LINK_INDEX_CACHE["index"] = rows_by_task
+
     rows: List[Dict[str, Any]] = []
     contract = _read_json(AUTONOMY_TASKS_ROOT / task_id / "contract.json", {})
     metadata = contract.get("metadata", {}) or {}
@@ -426,19 +482,19 @@ def _conversation_links_for_task(task_id: str) -> List[Dict[str, Any]]:
     related_ids = {item for item in related_ids if item}
     if not LINKS_ROOT.exists():
         return rows
-    for path in sorted(LINKS_ROOT.glob("*.json")):
-        payload = _read_json(path, {})
-        if not payload:
-            continue
-        payload_ids = {
-            str(payload.get("task_id", "")).strip(),
-            str(payload.get("lineage_root_task_id", "")).strip(),
-            str(payload.get("predecessor_task_id", "")).strip(),
-        }
-        payload_ids = {item for item in payload_ids if item}
-        if not (related_ids & payload_ids):
-            continue
-        rows.append(dict(payload))
+    seen_rows: set[tuple[str, str, str]] = set()
+    index = _CONVERSATION_LINK_INDEX_CACHE.get("index", {}) if isinstance(_CONVERSATION_LINK_INDEX_CACHE.get("index", {}), dict) else {}
+    for related_id in related_ids:
+        for payload in (index.get(related_id, []) or []):
+            signature = (
+                str(payload.get("provider", "")).strip(),
+                str(payload.get("conversation_id", "")).strip(),
+                str(payload.get("task_id", "")).strip(),
+            )
+            if signature in seen_rows:
+                continue
+            seen_rows.add(signature)
+            rows.append(dict(payload))
     return rows
 
 
@@ -454,15 +510,24 @@ def _goal_conformance_signal(task_id: str, contract: Dict[str, Any]) -> Dict[str
     contract_goal = sanitize_goal_text(str(contract.get("user_goal", "") or ""))
     if not contract_goal:
         return {"ok": True, "reason": "contract_goal_missing"}
-    current_intent = analyze_intent(contract_goal, source="progress_evidence:contract_goal")
+    contract_goal_for_analysis = _goal_conformance_analysis_text(contract_goal)
+    current_intent = analyze_intent(contract_goal_for_analysis, source="progress_evidence:contract_goal")
     links = _conversation_links_for_task(task_id)
     best_mismatch: Dict[str, Any] = {}
+    session_latest_cache: Dict[str, Dict[str, str]] = {}
+    candidate_analysis_cache: Dict[str, Dict[str, Any]] = {}
+    session_registry = _read_json(SESSIONS_INDEX_PATH, {})
     for link in links:
         conversation_type = str(link.get("conversation_type", "")).strip().lower()
         if conversation_type == "service" or str(link.get("link_kind", "")).strip() == "root_mission_autonomy":
             continue
         session_key = str(link.get("session_key", "")).strip()
-        latest_from_session = _latest_external_user_message(session_key) if session_key else {}
+        if session_key:
+            if session_key not in session_latest_cache:
+                session_latest_cache[session_key] = _latest_external_user_message(session_key, session_registry=session_registry)
+            latest_from_session = session_latest_cache.get(session_key, {})
+        else:
+            latest_from_session = {}
         candidates: List[Dict[str, Any]] = []
         last_goal = sanitize_goal_text(str(link.get("last_goal", "") or ""))
         if last_goal:
@@ -497,10 +562,23 @@ def _goal_conformance_signal(task_id: str, contract: Dict[str, Any]) -> Dict[str
             text = str(candidate.get("text", "")).strip()
             if not text:
                 continue
-            intent = analyze_intent(text, source=f"progress_evidence:{candidate.get('source', 'candidate')}")
-            if not _looks_actionable(text, intent):
+            analysis_text = _goal_conformance_analysis_text(text)
+            if not analysis_text:
                 continue
-            if not _topic_diverged(current_intent, intent, contract_goal, text):
+            cached_analysis = candidate_analysis_cache.get(analysis_text)
+            if cached_analysis is None:
+                intent = analyze_intent(analysis_text, source=f"progress_evidence:{candidate.get('source', 'candidate')}")
+                actionable = _looks_actionable(text, intent)
+                diverged = actionable and _topic_diverged(current_intent, intent, contract_goal_for_analysis, analysis_text)
+                cached_analysis = {
+                    "intent": intent,
+                    "actionable": actionable,
+                    "diverged": diverged,
+                }
+                candidate_analysis_cache[analysis_text] = cached_analysis
+            if not cached_analysis.get("actionable"):
+                continue
+            if not cached_analysis.get("diverged"):
                 continue
             mismatch = {
                 "ok": False,

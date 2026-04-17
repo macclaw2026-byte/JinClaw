@@ -61,8 +61,10 @@ from memory_writeback_runtime import load_memory_writeback
 DOCTOR_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "doctor"
 DOCTOR_HEARTBEATS_ROOT = DOCTOR_ROOT / "heartbeats"
 DOCTOR_PROCESS_INCIDENTS_ROOT = DOCTOR_ROOT / "process_incidents"
+DOCTOR_ARCHIVED_PROCESS_INCIDENTS_ROOT = DOCTOR_ROOT / "archived_process_incidents"
 DOCTOR_TASK_INCIDENTS_ROOT = DOCTOR_ROOT / "task_incidents"
 DOCTOR_RESOLUTIONS_ROOT = DOCTOR_ROOT / "resolutions"
+PROCESS_INCIDENT_ARCHIVE_AFTER_SECONDS = 3 * 24 * 60 * 60
 WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
 CONTROL_CENTER_ROOT = WORKSPACE_ROOT / "tools/openmoss/control_center"
 GSTACK_REQUIRED_FILES = [
@@ -354,6 +356,40 @@ def _process_incident_signature(incident: Dict[str, object]) -> str:
         str(incident.get("runs", "")).strip(),
     ]
     return "|".join(parts)
+
+
+def _archive_process_incident_if_cold(path: Path, payload: Dict[str, object], *, now_iso: str) -> bool:
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("active"):
+        return False
+    def _parse_local_iso(value: str) -> datetime | None:
+        raw = str(value or "").strip()
+        if not raw:
+            return None
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    resolved_at = _parse_local_iso(str(payload.get("resolved_at", "")).strip())
+    last_seen_at = _parse_local_iso(str(payload.get("last_seen_at", "")).strip())
+    reference_dt = resolved_at or last_seen_at
+    if reference_dt is None:
+        return False
+    age_seconds = (datetime.now(timezone.utc) - reference_dt).total_seconds()
+    if age_seconds < PROCESS_INCIDENT_ARCHIVE_AFTER_SECONDS:
+        return False
+    archived_payload = dict(payload)
+    archived_payload["archived_at"] = now_iso
+    archived_payload["archived_reason"] = "resolved_process_incident_cold_storage"
+    archived_payload["archived_from"] = str(path)
+    archived_path = DOCTOR_ARCHIVED_PROCESS_INCIDENTS_ROOT / path.name
+    _write_json(archived_path, archived_payload)
+    try:
+        path.unlink()
+    except OSError:
+        return False
+    return True
 
 
 def _process_incident_task_id(label: str) -> str:
@@ -1007,6 +1043,7 @@ def _reconcile_process_incidents(control_plane: Dict[str, object]) -> Dict[str, 
     now = _utc_now_iso()
     reports: list[Dict[str, object]] = []
     resolved_reports: list[Dict[str, object]] = []
+    archived_reports: list[Dict[str, object]] = []
     active_labels = {str(item.get("label", "")).strip() for item in incident_items if str(item.get("label", "")).strip()}
 
     if DOCTOR_PROCESS_INCIDENTS_ROOT.exists():
@@ -1029,6 +1066,9 @@ def _reconcile_process_incidents(control_plane: Dict[str, object]) -> Dict[str, 
                 )
                 _write_json(path, payload)
                 resolved_reports.append(payload)
+                continue
+            if _archive_process_incident_if_cold(path, payload, now_iso=now):
+                archived_reports.append({**payload, "archived_at": now})
 
     for incident in incident_items:
         label = str(incident.get("label", "")).strip()
@@ -1098,8 +1138,10 @@ def _reconcile_process_incidents(control_plane: Dict[str, object]) -> Dict[str, 
         "incident_total": len(incident_items),
         "dispatched_total": len(reports),
         "resolved_total": len(resolved_reports),
+        "archived_total": len(archived_reports),
         "items": reports,
         "resolved": resolved_reports[:20],
+        "archived": archived_reports[:20],
     }
 
 
@@ -4449,6 +4491,7 @@ def run_system_doctor(*, idle_after_seconds: int = 180, escalation_after_seconds
     supervisor = run_mission_supervisor(
         stale_after_seconds=max(120, idle_after_seconds),
         escalation_after_seconds=max(300, escalation_after_seconds),
+        control_plane=control_plane,
     )
     task_incidents = _reconcile_task_incidents(task_incident_candidates, idle_after_seconds=idle_after_seconds)
     integration_health = _run_integration_health_checks()

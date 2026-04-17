@@ -207,6 +207,25 @@ def _retention_idle_seconds(state: Dict[str, Any], evidence: Dict[str, Any]) -> 
     return float(evidence.get("idle_seconds", 0) or 0)
 
 
+def _state_idle_seconds(state: Dict[str, Any]) -> float | None:
+    """
+    中文注解：
+    - 功能：优先只用 runtime state 里的时间戳估算空闲时长。
+    - 设计意图：task retention 大多数时候只是判断“够不够老”，没必要为每个任务都跑完整的 progress evidence。
+      只有当 state 里连最基本的时间戳都缺失时，才降级去读更重的证据链。
+    """
+    last_progress_at = str(state.get("last_progress_at", "")).strip()
+    last_success_at = str(state.get("last_success_at", "")).strip()
+    last_update_at = str(state.get("last_update_at", "")).strip()
+    if last_progress_at:
+        return _seconds_since(last_progress_at)
+    if last_success_at:
+        return _seconds_since(last_success_at)
+    if last_update_at:
+        return _seconds_since(last_update_at)
+    return None
+
+
 def _is_ephemeral_task(task_id: str, contract: Dict[str, Any]) -> bool:
     lowered_task_id = str(task_id or "").strip().lower()
     goal = str((contract or {}).get("user_goal", "")).strip().lower()
@@ -221,8 +240,12 @@ def _is_ephemeral_task(task_id: str, contract: Dict[str, Any]) -> bool:
 
 def _candidate_for_member(task_id: str, state: Dict[str, Any], contract: Dict[str, Any], *, terminal_idle_seconds: int, zombie_idle_seconds: int) -> Dict[str, Any]:
     status = str(state.get("status", "unknown")).strip() or "unknown"
-    evidence = build_progress_evidence(task_id, stale_after_seconds=max(300, min(terminal_idle_seconds, zombie_idle_seconds)))
-    idle_seconds = _retention_idle_seconds(state, evidence)
+    state_idle_seconds = _state_idle_seconds(state)
+    if state_idle_seconds is None:
+        evidence = build_progress_evidence(task_id, stale_after_seconds=max(300, min(terminal_idle_seconds, zombie_idle_seconds)))
+        idle_seconds = _retention_idle_seconds(state, evidence)
+    else:
+        idle_seconds = state_idle_seconds
     if status in TERMINAL_TASK_STATUSES and idle_seconds >= terminal_idle_seconds:
         return {"archivable": True, "classification": "terminal", "idle_seconds": idle_seconds}
     if _archive_flag(state) and idle_seconds >= min(terminal_idle_seconds, zombie_idle_seconds):
@@ -431,7 +454,9 @@ def run_task_retention(
 
     for root_task_id, members in sorted(groups.items(), key=lambda item: item[0]):
         task_ids = [str(member.get("task_id", "")).strip() for member in members if str(member.get("task_id", "")).strip()]
-        links = _task_links(task_ids, root_task_id)
+        if any(_has_active_execution(member.get("state", {}) or {}) for member in members):
+            skipped.append({"lineage_root_task_id": root_task_id, "reason": "active_execution_present"})
+            continue
         member_results = [
             _candidate_for_member(
                 str(member.get("task_id", "")).strip(),
@@ -442,12 +467,10 @@ def run_task_retention(
             )
             for member in members
         ]
-        if any(_has_active_execution(member.get("state", {}) or {}) for member in members):
-            skipped.append({"lineage_root_task_id": root_task_id, "reason": "active_execution_present"})
-            continue
         if not all(result.get("archivable") for result in member_results):
             skipped.append({"lineage_root_task_id": root_task_id, "reason": "lineage_not_fully_archivable"})
             continue
+        links = _task_links(task_ids, root_task_id)
         latest_result = member_results[-1]
         classification = str(latest_result.get("classification", "")).strip() or "terminal"
         if links and classification == "terminal":
