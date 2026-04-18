@@ -70,6 +70,38 @@ class GoogleMapsMissingFieldBackfillTest(unittest.TestCase):
         self.assertEqual(merged["phone"], "(401) 555-1234")
         self.assertIn("google_maps_targeted_place_backfill", merged["signals"])
 
+    def test_merge_search_website_records_source_and_evidence(self) -> None:
+        item = {
+            "company_name": "Abbott & Son Construction",
+            "website": "",
+            "website_root_domain": "",
+            "signals": ["google_maps_search", "google_maps_prompt_add_website"],
+        }
+        merged, changed = MODULE._merge_search_website(
+            item,
+            {
+                "website": "https://www.abbottandsonconstruction.com/",
+                "provider": "duckduckgo",
+                "query": "\"Abbott & Son Construction\" NH official website",
+                "score": 8.4,
+                "evidence": ["phone_match", "full_name_match", "host_overlap:abbott"],
+            },
+        )
+        self.assertEqual(changed, ["website"])
+        self.assertEqual(merged["website"], "https://www.abbottandsonconstruction.com/")
+        self.assertEqual(merged["website_root_domain"], "abbottandsonconstruction.com")
+        self.assertEqual(merged["website_source"], "external_search_fallback")
+        self.assertEqual(merged["website_source_provider"], "duckduckgo")
+        self.assertAlmostEqual(float(merged["website_search_confidence"]), 8.4)
+        self.assertIn("external_search_website_backfill", merged["signals"])
+        self.assertIn("external_search_provider_duckduckgo", merged["signals"])
+
+    def test_search_match_confidence_requires_strong_evidence(self) -> None:
+        self.assertTrue(MODULE._is_search_match_confident(6.2, ["full_name_match", "token_hits:abbott"]))
+        self.assertTrue(MODULE._is_search_match_confident(6.1, ["host_overlap:abbott", "token_hits:abbott,son"]))
+        self.assertFalse(MODULE._is_search_match_confident(4.9, ["token_hits:design"]))
+        self.assertFalse(MODULE._is_search_match_confident(6.0, ["account_type_match"]))
+
 
 if __name__ == "__main__":
     unittest.main()
