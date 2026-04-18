@@ -58,6 +58,45 @@ REJECT_WEBSITE_TERMS = (
     "organized home",
     "home organizing",
 )
+APPROVED_WEBSITE_TERMS_BY_ACCOUNT_TYPE = {
+    "designer": APPROVED_WEBSITE_TERMS,
+    "contractor": (
+        "general contractor",
+        "general contracting",
+        "design build",
+        "design-build",
+        "construction company",
+        "home builder",
+        "custom home builder",
+        "remodeling",
+        "renovation",
+        "residential construction",
+        "commercial construction",
+    ),
+}
+REVIEW_WEBSITE_TERMS_BY_ACCOUNT_TYPE = {
+    "designer": REVIEW_WEBSITE_TERMS,
+    "contractor": (
+        "kitchen remodel",
+        "bath remodel",
+        "construction management",
+        "custom homes",
+        "builder",
+        "contractor",
+    ),
+}
+REJECT_WEBSITE_TERMS_BY_ACCOUNT_TYPE = {
+    "designer": REJECT_WEBSITE_TERMS,
+    "contractor": (
+        "landscape contractor",
+        "roofing contractor",
+        "painting contractor",
+        "paving contractor",
+        "hvac contractor",
+        "plumbing contractor",
+        "electrical contractor",
+    ),
+}
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -88,6 +127,138 @@ def _website_root_domain(url: str) -> str:
     return root_domain(url)
 
 
+def _record_key(item: dict[str, Any]) -> str:
+    return str(item.get("source_url") or item.get("place_url") or item.get("website") or item.get("company_name") or "").strip()
+
+
+def _lane_key(item: dict[str, Any]) -> str:
+    return str(item.get("query_family") or item.get("account_type") or item.get("source_family") or "unknown").strip() or "unknown"
+
+
+def _lane_label(item: dict[str, Any]) -> str:
+    query_family = str(item.get("query_family") or "").strip()
+    if query_family == "google_maps_interior_designer":
+        return "interior designer"
+    if query_family == "google_maps_general_contractor":
+        return "general contractor"
+    return query_family or str(item.get("account_type") or item.get("source_family") or "unknown")
+
+
+def _fetch_required(previous: dict[str, Any], website: str) -> bool:
+    if not website:
+        return False
+    validation_reason = str(previous.get("email_validation_reason", "") or "").strip()
+    if validation_reason in {"domain_match", "domain_resolves"}:
+        return False
+    if bool(previous.get("contact_form_detected", False)):
+        return False
+    return True
+
+
+def _select_enrichment_batch(
+    ordered_items: list[dict[str, Any]],
+    previous_output: dict[str, dict[str, Any]],
+    runtime_state: dict[str, Any],
+    *,
+    max_sites_per_run: int,
+) -> tuple[set[str], dict[str, int], dict[str, Any]]:
+    """按 lane 轮转挑选本轮要抓的网站，避免 pending_batch 长期卡在同一批。"""
+    if max_sites_per_run <= 0:
+        return set(), dict(runtime_state.get("lane_cursors") or {}), {"selected_count": 0, "lane_stats": {}}
+
+    ordered_by_lane: dict[str, list[dict[str, Any]]] = {}
+    lane_order: list[str] = []
+    for item in ordered_items:
+        website = str(item.get("website", "")).strip()
+        key = _record_key(item)
+        previous = dict(previous_output.get(key, {}) or {})
+        if not _fetch_required(previous, website):
+            continue
+        lane = _lane_key(item)
+        if lane not in ordered_by_lane:
+            ordered_by_lane[lane] = []
+            lane_order.append(lane)
+        ordered_by_lane[lane].append(item)
+
+    lane_cursors = {str(key): int(value or 0) for key, value in dict(runtime_state.get("lane_cursors") or {}).items()}
+    next_lane_cursors = dict(lane_cursors)
+    selected_keys: set[str] = set()
+    selected_websites: set[str] = set()
+    lane_selected: dict[str, int] = {}
+    active_lanes = [lane for lane in lane_order if ordered_by_lane.get(lane)]
+
+    while active_lanes and len(selected_keys) < max_sites_per_run:
+        made_progress = False
+        for lane in list(active_lanes):
+            items = ordered_by_lane.get(lane, [])
+            if not items:
+                active_lanes.remove(lane)
+                continue
+            cursor = next_lane_cursors.get(lane, 0) % len(items)
+            chosen_index = None
+            for offset in range(len(items)):
+                index = (cursor + offset) % len(items)
+                item = items[index]
+                key = _record_key(item)
+                website = str(item.get("website", "")).strip()
+                if key in selected_keys or (website and website in selected_websites):
+                    continue
+                chosen_index = index
+                break
+            if chosen_index is None:
+                active_lanes.remove(lane)
+                continue
+            item = items[chosen_index]
+            key = _record_key(item)
+            website = str(item.get("website", "")).strip()
+            selected_keys.add(key)
+            if website:
+                selected_websites.add(website)
+            next_lane_cursors[lane] = (chosen_index + 1) % len(items)
+            lane_selected[lane] = lane_selected.get(lane, 0) + 1
+            made_progress = True
+            if len(selected_keys) >= max_sites_per_run:
+                break
+        if not made_progress:
+            break
+
+    return selected_keys, next_lane_cursors, {"selected_count": len(selected_keys), "lane_stats": lane_selected}
+
+
+def _lane_quality_snapshot(items: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    lane_stats: dict[str, dict[str, Any]] = {}
+    for item in items:
+        lane_key = str(item.get("query_family") or item.get("lead_source_key") or item.get("source_family") or "unknown").strip() or "unknown"
+        bucket = lane_stats.setdefault(
+            lane_key,
+            {
+                "lane_key": lane_key,
+                "record_count": 0,
+                "approved_count": 0,
+                "pending_batch_count": 0,
+                "review_count": 0,
+                "reject_count": 0,
+                "validated_email_count": 0,
+                "contact_form_detected_count": 0,
+            },
+        )
+        bucket["record_count"] += 1
+        fit_status = str(item.get("website_fit_status") or "").strip()
+        if fit_status == "approved":
+            bucket["approved_count"] += 1
+        elif fit_status == "pending_batch":
+            bucket["pending_batch_count"] += 1
+        elif fit_status == "review":
+            bucket["review_count"] += 1
+        elif fit_status == "reject":
+            bucket["reject_count"] += 1
+        if str(item.get("email") or "").strip():
+            bucket["validated_email_count"] += 1
+        if bool(item.get("contact_form_detected")):
+            bucket["contact_form_detected_count"] += 1
+    return lane_stats
+
+
 def _email_is_realish(email: str, website_domain: str) -> tuple[bool, str]:
     email = email.strip().lower()
     if not EMAIL_RE.fullmatch(email):
@@ -106,11 +277,17 @@ def _email_is_realish(email: str, website_domain: str) -> tuple[bool, str]:
     return True, "domain_resolves"
 
 
-def _website_fit_assessment(page_html_map: dict[str, str]) -> tuple[str, list[str]]:
+def _website_fit_assessment(page_html_map: dict[str, str], *, account_type: str = "", query_family: str = "") -> tuple[str, list[str]]:
     corpus = "\n".join(page_html_map.values()).lower()
-    approved_hits = [term for term in APPROVED_WEBSITE_TERMS if term in corpus]
-    reject_hits = [term for term in REJECT_WEBSITE_TERMS if term in corpus]
-    review_hits = [term for term in REVIEW_WEBSITE_TERMS if term in corpus]
+    normalized_account_type = str(account_type or "").strip().lower()
+    if not normalized_account_type and "contractor" in str(query_family or "").lower():
+        normalized_account_type = "contractor"
+    approved_terms = APPROVED_WEBSITE_TERMS_BY_ACCOUNT_TYPE.get(normalized_account_type, APPROVED_WEBSITE_TERMS)
+    review_terms = REVIEW_WEBSITE_TERMS_BY_ACCOUNT_TYPE.get(normalized_account_type, REVIEW_WEBSITE_TERMS)
+    reject_terms = REJECT_WEBSITE_TERMS_BY_ACCOUNT_TYPE.get(normalized_account_type, REJECT_WEBSITE_TERMS)
+    approved_hits = [term for term in approved_terms if term in corpus]
+    reject_hits = [term for term in reject_terms if term in corpus]
+    review_hits = [term for term in review_terms if term in corpus]
     if approved_hits and not reject_hits:
         return "approved", approved_hits[:5]
     if reject_hits and not approved_hits:
@@ -224,7 +401,7 @@ def main() -> int:
         return 0
 
     items = list(_read_json(source_path).get("items", []) or [])
-    previous_output = {str(item.get("source_url", "")).strip(): item for item in list(_read_json(output_path).get("items", []) or [])}
+    previous_output = {_record_key(item): item for item in list(_read_json(output_path).get("items", []) or [])}
     runtime_state = _read_json(runtime_state_path) if runtime_state_path.exists() else {}
     enriched = []
     validated_email_count = 0
@@ -236,21 +413,27 @@ def main() -> int:
 
     def sort_key(item: dict[str, Any]) -> tuple[int, int, int, str]:
         state = str(item.get("geo", "")).split("/", 1)[0].strip().upper()
-        source_url = str(item.get("source_url", "")).strip()
+        source_url = _record_key(item)
         previous = dict(previous_output.get(source_url, {}) or {})
         previous_reason = str(previous.get("email_validation_reason", "") or "")
         website = str(item.get("website", "")).strip()
         priority_bucket = 0 if state in priority_regions else 1
-        unresolved_bucket = 0 if website and previous_reason in {"", "pending_batch", "no_website", "fetch_failed"} else 1
+        unresolved_bucket = 0 if website and (previous_reason in {"", "pending_batch", "no_website"} or previous_reason.startswith("fetch_failed")) else 1
         cursor_bucket = 0
         return (priority_bucket, unresolved_bucket, cursor_bucket, str(item.get("company_name", "")))
 
     ordered_items = sorted(items, key=sort_key)
+    selected_batch_keys, next_lane_cursors, selection_meta = _select_enrichment_batch(
+        ordered_items,
+        previous_output,
+        runtime_state,
+        max_sites_per_run=max_sites_per_run,
+    )
 
     for item in ordered_items:
         website = str(item.get("website", "")).strip()
         website_domain = str(item.get("website_root_domain", "")).strip()
-        source_url = str(item.get("source_url", "")).strip()
+        source_url = _record_key(item)
         previous = dict(previous_output.get(source_url, {}) or {})
         email = ""
         validation_reason = "no_website"
@@ -285,7 +468,7 @@ def main() -> int:
                 contact_form_detected = bool(cached.get("contact_form_detected", False))
                 contact_form_url = str(cached.get("contact_form_url", ""))
                 contact_form_signals = list(cached.get("contact_form_signals", []) or [])
-            elif checked_sites >= max_sites_per_run:
+            elif source_url not in selected_batch_keys:
                 validation_reason = "pending_batch"
                 deferred_count += 1
                 website_fit_status = "pending_batch"
@@ -342,7 +525,11 @@ def main() -> int:
                             break
                     if not email and deduped:
                         validation_reason = "no_valid_email_after_validation"
-                    website_fit_status, website_fit_reasons = _website_fit_assessment(page_html_map)
+                    website_fit_status, website_fit_reasons = _website_fit_assessment(
+                        page_html_map,
+                        account_type=str(item.get("account_type") or ""),
+                        query_family=str(item.get("query_family") or ""),
+                    )
                     contact_form_detected, contact_form_url, contact_form_signals = _detect_contact_form(page_html_map)
                 except Exception as exc:  # noqa: BLE001
                     validation_reason = f"fetch_failed:{exc}"
@@ -373,6 +560,9 @@ def main() -> int:
             {
                 **previous,
                 **item,
+                "source_url": source_url,
+                "lead_source_key": _lane_key(item),
+                "lead_source_label": _lane_label(item),
                 "email": email,
                 "email_validation_status": "valid" if email else "invalid_or_missing",
                 "email_validation_reason": validation_reason,
@@ -409,9 +599,13 @@ def main() -> int:
             "max_pages_per_site": max_pages_per_site,
             "contact_link_limit": contact_link_limit,
             "page_fetch_failures": page_fetch_failures,
+            "lane_cursors": next_lane_cursors,
+            "selected_batch_size": int(selection_meta.get("selected_count") or 0),
+            "selected_batch_lane_stats": dict(selection_meta.get("lane_stats") or {}),
         },
     )
     summary = enrichment_quality_summary(enriched, checked_sites, deferred_count)
+    summary["lane_quality"] = _lane_quality_snapshot(enriched)
     report = {
         "status": "ok",
         "checked_site_count": checked_sites,

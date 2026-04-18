@@ -112,6 +112,36 @@ def _approved_counts() -> dict[str, int]:
     return counts
 
 
+def _lane_label(value: str) -> str:
+    mapping = {
+        "google_maps_interior_designer": "interior designer",
+        "google_maps_general_contractor": "general contractor",
+    }
+    return mapping.get(value or "", value or "unknown")
+
+
+def _raw_counts_by_lane() -> dict[str, int]:
+    payload = _read_json(RAW_IMPORT_PATH, {"items": []})
+    counts: dict[str, int] = {}
+    for item in payload.get("items", []) or []:
+        lane = str(item.get("query_family") or item.get("source_family") or "unknown").strip() or "unknown"
+        counts[lane] = counts.get(lane, 0) + 1
+    return counts
+
+
+def _approved_counts_by_lane() -> dict[str, int]:
+    payload = _read_json(STRATEGY_READY_PATH, {"items": []})
+    counts: dict[str, int] = {}
+    for item in payload.get("items", []) or []:
+        if str(item.get("source_family") or "") != "google_maps_places":
+            continue
+        if str(item.get("fit_precheck_status") or "") != "approved":
+            continue
+        lane = str(item.get("query_family") or item.get("source_family") or "unknown").strip() or "unknown"
+        counts[lane] = counts.get(lane, 0) + 1
+    return counts
+
+
 def _phase_lines() -> tuple[str, list[str]]:
     crawl_state = _read_json(CRAWL_STATE_PATH, {})
     active_phase = str(crawl_state.get("active_phase") or "unknown")
@@ -199,12 +229,21 @@ def _build_text() -> tuple[str, dict]:
 
     phase_text, state_lines = _phase_lines()
     failure_lines = _today_failure_lines(now_ny)
+    raw_lane_counts = _raw_counts_by_lane()
+    approved_lane_counts = _approved_counts_by_lane()
+    lane_lines = [
+        f"- {_lane_label(lane)}：Google Maps 累计抓到 {raw_lane_counts.get(lane, 0)} 家，符合当前标准 {approved_lane_counts.get(lane, 0)} 家"
+        for lane in sorted(set(raw_lane_counts) | set(approved_lane_counts))
+    ]
     text = (
         "NEOSGO 潜在客户采集日报\n"
         f"生成时间（纽约）：{now_ny.strftime('%Y-%m-%d %H:%M:%S')}\n"
         f"Google Maps 累计抓到的潜在客户：{latest_count} 家\n"
         f"比昨天新增：{delta} 家\n"
         f"{phase_text}\n"
+        "Google Maps 当前分线路径：\n"
+        + "\n".join(lane_lines or ["- 暂无 lane 数据"])
+        + "\n"
         "新英格兰 6 州当前进度：\n"
         + "\n".join(state_lines)
     )
