@@ -105,6 +105,8 @@ REJECT_WEBSITE_TERMS_BY_ACCOUNT_TYPE = {
         "electrical contractor",
     ),
 }
+MAX_HTML_BYTES = 1024 * 1024
+READ_CHUNK_BYTES = 64 * 1024
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -128,7 +130,21 @@ def _priority_regions(config: dict[str, Any]) -> list[str]:
 def _fetch_html(url: str) -> str:
     request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urlopen(request, timeout=8) as response:
-        return response.read().decode("utf-8", "ignore")
+        content_type = str(response.headers.get("Content-Type", "") or "").lower()
+        if content_type and "html" not in content_type and "text" not in content_type:
+            return ""
+        chunks: list[bytes] = []
+        total = 0
+        while total < MAX_HTML_BYTES:
+            try:
+                chunk = response.read(min(READ_CHUNK_BYTES, MAX_HTML_BYTES - total))
+            except socket.timeout as exc:
+                raise TimeoutError(f"read_timeout:{urlparse(url).netloc}") from exc
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+        return b"".join(chunks).decode("utf-8", "ignore")
 
 
 def _website_root_domain(url: str) -> str:
