@@ -173,6 +173,143 @@ class NeosgoOutreachRuntimeTests(unittest.TestCase):
         self.assertEqual(state["checked_sites"], 40)
         self.assertEqual(state["newly_available_to_outreach"], 3)
 
+    def test_load_candidates_interleaves_sources(self) -> None:
+        contacts_path = self.tmp_path / "contacts.json"
+        contacts_path.write_text(
+            json.dumps(
+                {
+                    "items": [
+                        {
+                            "company_name": "Designer One",
+                            "source_url": "designer-1",
+                            "geo": "MA / new_england",
+                            "website": "https://designer1.example.com",
+                            "email": "hi@designer1.example.com",
+                            "email_validation_reason": "domain_match",
+                            "website_fit_status": "approved",
+                            "contact_form_detected": False,
+                            "contact_form_signals": [],
+                            "query_family": "google_maps_interior_designer",
+                            "account_type": "designer",
+                            "source_family": "google_maps_places",
+                        },
+                        {
+                            "company_name": "Designer Two",
+                            "source_url": "designer-2",
+                            "geo": "MA / new_england",
+                            "website": "https://designer2.example.com",
+                            "email": "hi@designer2.example.com",
+                            "email_validation_reason": "domain_match",
+                            "website_fit_status": "approved",
+                            "contact_form_detected": False,
+                            "contact_form_signals": [],
+                            "query_family": "google_maps_interior_designer",
+                            "account_type": "designer",
+                            "source_family": "google_maps_places",
+                        },
+                        {
+                            "company_name": "Contractor One",
+                            "source_url": "contractor-1",
+                            "geo": "MA / new_england",
+                            "website": "https://contractor1.example.com",
+                            "email": "hi@contractor1.example.com",
+                            "email_validation_reason": "domain_match",
+                            "website_fit_status": "approved",
+                            "contact_form_detected": False,
+                            "contact_form_signals": [],
+                            "query_family": "google_maps_general_contractor",
+                            "account_type": "contractor",
+                            "source_family": "google_maps_places",
+                        },
+                        {
+                            "company_name": "Contractor Two",
+                            "source_url": "contractor-2",
+                            "geo": "MA / new_england",
+                            "website": "https://contractor2.example.com",
+                            "email": "hi@contractor2.example.com",
+                            "email_validation_reason": "domain_match",
+                            "website_fit_status": "approved",
+                            "contact_form_detected": False,
+                            "contact_form_signals": [],
+                            "query_family": "google_maps_general_contractor",
+                            "account_type": "contractor",
+                            "source_family": "google_maps_places",
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        config_path = self.tmp_path / "project-config.json"
+        config_path.write_text(
+            json.dumps(
+                {
+                    "project": {"priority_regions": ["MA"]},
+                    "prospect_data_engine": {
+                        "google_maps_capture": {
+                            "lanes": [
+                                {"query_family": "google_maps_interior_designer"},
+                                {"query_family": "google_maps_general_contractor"},
+                            ]
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with patch.object(self.module, "CONTACTS_PATH", contacts_path), patch.object(self.module, "PROJECT_CONFIG_PATH", config_path):
+            candidates = self.module._load_candidates()
+
+        self.assertEqual(
+            [item["company_name"] for item in candidates[:4]],
+            ["Designer One", "Contractor One", "Designer Two", "Contractor Two"],
+        )
+
+    def test_candidate_supply_summary_includes_source_summaries(self) -> None:
+        contacts_payload = {
+            "items": [
+                {
+                    "company_name": "Designer Fresh",
+                    "source_url": "designer-fresh",
+                    "geo": "MA / new_england",
+                    "website": "https://designer.example.com",
+                    "email": "hello@designer.example.com",
+                    "email_validation_reason": "domain_match",
+                    "website_fit_status": "approved",
+                    "contact_form_detected": False,
+                    "contact_form_signals": [],
+                    "query_family": "google_maps_interior_designer",
+                    "account_type": "designer",
+                },
+                {
+                    "company_name": "Contractor Pending",
+                    "source_url": "contractor-pending",
+                    "geo": "MA / new_england",
+                    "website": "https://contractor.example.com",
+                    "email": "",
+                    "email_validation_reason": "pending_batch",
+                    "website_fit_status": "pending_batch",
+                    "contact_form_detected": False,
+                    "contact_form_signals": [],
+                    "query_family": "google_maps_general_contractor",
+                    "account_type": "contractor",
+                },
+            ]
+        }
+
+        with patch.object(self.module, "LEAD_REFILL_STATE_PATH", self.tmp_path / "lead-refill-state.json"):
+            summary = self.module._candidate_supply_summary(
+                {"targets": {}},
+                contacts_payload=contacts_payload,
+                priority_regions=["MA"],
+            )
+
+        self.assertIn("google_maps_interior_designer", summary["source_summaries"])
+        self.assertIn("google_maps_general_contractor", summary["source_summaries"])
+        self.assertEqual(summary["source_summaries"]["google_maps_interior_designer"]["approved_total"], 1)
+        self.assertEqual(summary["source_summaries"]["google_maps_general_contractor"]["pending_batch_total"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

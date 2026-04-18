@@ -70,6 +70,22 @@
     ],
     "google_maps_capture": {
       "enabled": true,
+      "lanes": [
+        {
+          "lane_key": "interior_designer",
+          "keyword": "interior designer",
+          "query_family": "google_maps_interior_designer",
+          "account_type": "designer",
+          "persona_type": "founder"
+        },
+        {
+          "lane_key": "general_contractor",
+          "keyword": "general contractor",
+          "query_family": "google_maps_general_contractor",
+          "account_type": "contractor",
+          "persona_type": "founder"
+        }
+      ],
       "keyword": "interior designer",
       "query_family": "google_maps_interior_designer",
       "account_type": "designer",

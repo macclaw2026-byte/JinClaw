@@ -238,6 +238,40 @@ def _priority_regions() -> list[str]:
     return regions or list(STATE_PRIORITY)
 
 
+def _source_key(item: dict[str, Any]) -> str:
+    query_family = str(item.get("query_family") or item.get("lead_source_key") or "").strip()
+    if query_family:
+        return query_family
+    account_type = str(item.get("account_type") or "").strip()
+    if account_type:
+        return f"account_type:{account_type}"
+    source_family = str(item.get("source_family") or "").strip()
+    return source_family or "unknown"
+
+
+def _source_label(item: dict[str, Any]) -> str:
+    explicit = str(item.get("lead_source_label") or "").strip()
+    if explicit:
+        return explicit
+    source_key = _source_key(item)
+    if source_key == "google_maps_interior_designer":
+        return "interior designer"
+    if source_key == "google_maps_general_contractor":
+        return "general contractor"
+    return source_key
+
+
+def _preferred_source_order() -> list[str]:
+    capture = ((_load_project_config().get("prospect_data_engine", {}) or {}).get("google_maps_capture", {}) or {})
+    ordered: list[str] = []
+    for lane in list(capture.get("lanes", []) or []):
+        lane = dict(lane or {})
+        query_family = str(lane.get("query_family") or "").strip()
+        if query_family and query_family not in ordered:
+            ordered.append(query_family)
+    return ordered
+
+
 def _normalized_domain(value: str) -> str:
     raw = str(value or "").strip()
     if not raw:
@@ -478,6 +512,8 @@ def _load_candidates() -> list[dict[str, Any]]:
         enriched = dict(item)
         enriched["outreach_lane"] = _outreach_lane(enriched, adapters)
         enriched["adapter_domain"] = _normalized_domain(str(enriched.get("contact_form_url") or enriched.get("website") or ""))
+        enriched["lead_source_key"] = _source_key(enriched)
+        enriched["lead_source_label"] = _source_label(enriched)
         candidates.append(enriched)
 
     lane_order = {
@@ -495,7 +531,35 @@ def _load_candidates() -> list[dict[str, Any]]:
         lane_rank = lane_order.get(str(item.get("outreach_lane") or "other"), 9)
         return (state_rank, lane_rank, 0 if _email_is_usable(item) else 1, str(item.get("company_name") or ""))
 
-    return sorted(candidates, key=sort_key)
+    ordered_candidates = sorted(candidates, key=sort_key)
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    seen_sources: list[str] = []
+    for item in ordered_candidates:
+        source_key = str(item.get("lead_source_key") or "unknown")
+        grouped.setdefault(source_key, []).append(item)
+        if source_key not in seen_sources:
+            seen_sources.append(source_key)
+
+    preferred_sources = _preferred_source_order()
+
+    def source_rank(source_key: str) -> tuple[int, str]:
+        if source_key in preferred_sources:
+            return (preferred_sources.index(source_key), source_key)
+        return (len(preferred_sources), source_key)
+
+    queue_order = sorted(seen_sources, key=source_rank)
+    interleaved: list[dict[str, Any]] = []
+    while queue_order:
+        next_queue: list[str] = []
+        for source_key in queue_order:
+            bucket = grouped.get(source_key, [])
+            if not bucket:
+                continue
+            interleaved.append(bucket.pop(0))
+            if bucket:
+                next_queue.append(source_key)
+        queue_order = next_queue
+    return interleaved
 
 
 def _candidate_supply_summary(
@@ -530,27 +594,50 @@ def _candidate_supply_summary(
         "review_total": 0,
         "reject_total": 0,
         "unknown_total": 0,
+        "source_summaries": {},
     }
     for item in items:
         state_code = str(item.get("geo", "")).split("/", 1)[0].strip().upper()
         if active_regions and state_code not in active_regions:
             continue
+        source_key = _source_key(item)
+        source_bucket = summary["source_summaries"].setdefault(
+            source_key,
+            {
+                "source_key": source_key,
+                "source_label": _source_label(item),
+                "approved_total": 0,
+                "approved_usable_total": 0,
+                "approved_usable_remaining_total": 0,
+                "pending_batch_total": 0,
+                "review_total": 0,
+                "reject_total": 0,
+                "unknown_total": 0,
+            },
+        )
         fit_status = str(item.get("website_fit_status") or "unknown").strip()
         if fit_status == "approved":
             summary["approved_total"] += 1
+            source_bucket["approved_total"] += 1
             if item.get("website") and (_is_form_candidate(item) or _email_is_usable(item)):
                 summary["approved_usable_total"] += 1
+                source_bucket["approved_usable_total"] += 1
                 target_state = dict(targets.get(_target_key(item)) or {})
                 if str(target_state.get("status") or "") not in terminal_statuses:
                     summary["approved_usable_remaining_total"] += 1
+                    source_bucket["approved_usable_remaining_total"] += 1
         elif fit_status == "pending_batch":
             summary["pending_batch_total"] += 1
+            source_bucket["pending_batch_total"] += 1
         elif fit_status == "review":
             summary["review_total"] += 1
+            source_bucket["review_total"] += 1
         elif fit_status == "reject":
             summary["reject_total"] += 1
+            source_bucket["reject_total"] += 1
         else:
             summary["unknown_total"] += 1
+            source_bucket["unknown_total"] += 1
 
     refill_state = _read_json(LEAD_REFILL_STATE_PATH, {})
     summary["last_replenishment"] = {
@@ -796,6 +883,11 @@ def _target_status_update(item: dict[str, Any], channel: str, status: str, extra
         "state": str(item.get("geo", "")).split("/", 1)[0].strip().upper(),
         "website": item.get("website"),
         "source_url": item.get("source_url"),
+        "query_family": item.get("query_family"),
+        "source_family": item.get("source_family"),
+        "account_type": item.get("account_type"),
+        "lead_source_key": _source_key(item),
+        "lead_source_label": _source_label(item),
         "channel": channel,
         "status": status,
         "updated_at": _now_iso(),
@@ -1047,11 +1139,18 @@ def _backfill_target_metadata(state: dict[str, Any], adapters: dict[str, Any]) -
         if candidate:
             target.setdefault("outreach_lane", candidate.get("outreach_lane") or _outreach_lane(candidate, adapters))
             target.setdefault("adapter_domain", candidate.get("adapter_domain") or _normalized_domain(str(candidate.get("contact_form_url") or candidate.get("website") or "")))
+            target.setdefault("query_family", candidate.get("query_family"))
+            target.setdefault("source_family", candidate.get("source_family"))
+            target.setdefault("account_type", candidate.get("account_type"))
+            target.setdefault("lead_source_key", _source_key(candidate))
+            target.setdefault("lead_source_label", _source_label(candidate))
         else:
             if "outreach_lane" not in target:
                 target["outreach_lane"] = "unknown"
             if "adapter_domain" not in target:
                 target["adapter_domain"] = _normalized_domain(str(target.get("contact_form_url") or target.get("website") or ""))
+            target.setdefault("lead_source_key", _source_key(target))
+            target.setdefault("lead_source_label", _source_label(target))
         state["targets"][key] = target
 
 
@@ -1888,6 +1987,7 @@ def _send_one_email(item: dict[str, Any], content: dict[str, Any]) -> dict[str, 
             fieldnames=["queue_id", "file_id", "recipient_email", "subject", "body", "segment_primary", "template_version", "sender_display", "sender_email"],
         )
         writer.writeheader()
+        segment_primary = "general_contractor" if str(item.get("account_type") or "").strip().lower() == "contractor" else "interior_designer"
         writer.writerow(
             {
                 "queue_id": _target_key(item),
@@ -1895,7 +1995,7 @@ def _send_one_email(item: dict[str, Any], content: dict[str, Any]) -> dict[str, 
                 "recipient_email": item.get("email") or "",
                 "subject": email_defaults.get("subject") or "",
                 "body": email_defaults.get("body_text") or "",
-                "segment_primary": "interior_designer",
+                "segment_primary": segment_primary,
                 "template_version": "neosgo_initial_v1",
                 "sender_display": f"{email_defaults.get('from_name') or sender.get('display_name') or 'Neosgo Lighting'} <{email_defaults.get('from_email') or sender.get('sender_email') or ''}>",
                 "sender_email": email_defaults.get("from_email") or sender.get("sender_email") or "",
@@ -1942,6 +2042,8 @@ def _build_summary(state: dict[str, Any]) -> dict[str, Any]:
     counts: dict[str, int] = {}
     lane_counts: dict[str, int] = {}
     lane_outcomes: dict[str, dict[str, int]] = {}
+    source_counts: dict[str, dict[str, Any]] = {}
+    source_outcomes: dict[str, dict[str, int]] = {}
     adapter_domains: dict[str, dict[str, int]] = {}
     domain_policy_counts: dict[str, int] = {}
     domain_form_policies = dict(state.get("domain_form_policies") or {})
@@ -1957,6 +2059,18 @@ def _build_summary(state: dict[str, Any]) -> dict[str, Any]:
             outcome_bucket = "failed"
         elif status in {"review_hold", "contact_form_needs_review", "captcha_pending_operator"}:
             outcome_bucket = "manual"
+        source_key = str(item.get("lead_source_key") or _source_key(item))
+        source_counts.setdefault(
+            source_key,
+            {
+                "source_key": source_key,
+                "source_label": _source_label(item),
+                "total": 0,
+            },
+        )
+        source_counts[source_key]["total"] += 1
+        source_outcomes.setdefault(source_key, {"success": 0, "failed": 0, "manual": 0, "other": 0})
+        source_outcomes[source_key][outcome_bucket] += 1
         lane_outcomes.setdefault(lane, {"success": 0, "failed": 0, "manual": 0, "other": 0})
         lane_outcomes[lane][outcome_bucket] += 1
         adapter_domain = str(item.get("adapter_domain") or "").strip()
@@ -1974,6 +2088,8 @@ def _build_summary(state: dict[str, Any]) -> dict[str, Any]:
         "counts": counts,
         "lane_counts": lane_counts,
         "lane_outcomes": lane_outcomes,
+        "source_counts": source_counts,
+        "source_outcomes": source_outcomes,
         "adapter_domain_outcomes": adapter_domains,
         "domain_form_policies": domain_form_policies,
         "domain_policy_counts": domain_policy_counts,

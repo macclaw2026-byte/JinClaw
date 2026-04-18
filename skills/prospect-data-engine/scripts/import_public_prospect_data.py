@@ -27,11 +27,28 @@ NEOSGO_FIT_APPROVED_CATEGORY_KEYWORDS = {
     "interior decorator",
     "architectural interiors",
 }
+NEOSGO_FIT_APPROVED_CONTRACTOR_CATEGORY_KEYWORDS = {
+    "general contractor",
+    "general contracting",
+    "construction company",
+    "design-build",
+    "design build",
+    "remodeler",
+    "custom home builder",
+    "home builder",
+}
 NEOSGO_FIT_REVIEW_CATEGORY_KEYWORDS = {
     "home staging",
     "lighting consultant",
     "lighting store",
     "architect",
+}
+NEOSGO_FIT_REVIEW_CONTRACTOR_CATEGORY_KEYWORDS = {
+    "kitchen remodeler",
+    "bathroom remodeler",
+    "builder",
+    "contractor",
+    "construction management",
 }
 NEOSGO_FIT_REJECT_CATEGORY_KEYWORDS = {
     "business center",
@@ -44,6 +61,15 @@ NEOSGO_FIT_REJECT_CATEGORY_KEYWORDS = {
     "publisher",
     "magazine",
     "media company",
+}
+NEOSGO_FIT_REJECT_CONTRACTOR_CATEGORY_KEYWORDS = {
+    "roofing contractor",
+    "painting contractor",
+    "paving contractor",
+    "hvac contractor",
+    "plumbing contractor",
+    "electrical contractor",
+    "landscape contractor",
 }
 NEOSGO_FIT_REJECT_NAME_KEYWORDS = {
     "paint",
@@ -264,23 +290,45 @@ def _assess_neosgo_fit(seed: dict) -> tuple[str, list[str]]:
     reasons: list[str] = []
 
     if source_family == "google_maps_places":
+        account_type = (seed.get("account_type") or "").strip().lower()
         if website_fit_status == "approved":
             return "approved", ["approved_website_fit", *website_fit_reasons[:4]]
         if website_fit_status == "reject":
             return "reject", ["rejected_website_fit", *website_fit_reasons[:4]]
         if website_fit_status == "review":
             return "review", ["review_website_fit", *website_fit_reasons[:4]]
-        if any(keyword in category for keyword in NEOSGO_FIT_REJECT_CATEGORY_KEYWORDS):
+        reject_keywords = (
+            NEOSGO_FIT_REJECT_CONTRACTOR_CATEGORY_KEYWORDS
+            if account_type == "contractor"
+            else NEOSGO_FIT_REJECT_CATEGORY_KEYWORDS
+        )
+        approved_keywords = (
+            NEOSGO_FIT_APPROVED_CONTRACTOR_CATEGORY_KEYWORDS
+            if account_type == "contractor"
+            else NEOSGO_FIT_APPROVED_CATEGORY_KEYWORDS
+        )
+        review_keywords = (
+            NEOSGO_FIT_REVIEW_CONTRACTOR_CATEGORY_KEYWORDS
+            if account_type == "contractor"
+            else NEOSGO_FIT_REVIEW_CATEGORY_KEYWORDS
+        )
+        if any(keyword in category for keyword in reject_keywords):
             return "reject", [f"reject_category:{category or 'unknown'}"]
         if any(keyword in company_name for keyword in NEOSGO_FIT_REJECT_NAME_KEYWORDS):
             return "reject", [f"reject_name_keyword:{company_name}"]
-        if any(keyword in category for keyword in NEOSGO_FIT_APPROVED_CATEGORY_KEYWORDS):
+        if any(keyword in category for keyword in approved_keywords):
             reasons.append("approved_google_maps_category")
+            return "approved", reasons
+        if account_type == "contractor" and any(
+            keyword in company_name
+            for keyword in ("contractor", "contracting", "construction", "builders", "builder", "remodel")
+        ):
+            reasons.append("approved_contractor_company_name_match")
             return "approved", reasons
         if "interior" in company_name or "design" in company_name or "interiors" in company_name:
             reasons.append("approved_company_name_match")
             return "approved", reasons
-        if any(keyword in category for keyword in NEOSGO_FIT_REVIEW_CATEGORY_KEYWORDS):
+        if any(keyword in category for keyword in review_keywords):
             return "review", [f"review_category:{category or 'unknown'}"]
         return "review", ["google_maps_uncertain_fit"]
 

@@ -123,6 +123,14 @@ def _supply_status_label(value: str) -> str:
     }.get(value or "", value or "未知")
 
 
+def _format_source_label(value: str) -> str:
+    mapping = {
+        "google_maps_interior_designer": "interior designer",
+        "google_maps_general_contractor": "general contractor",
+    }
+    return mapping.get(value or "", value or "未知来源")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Send periodic NEOSGO outreach summary to Telegram.")
     parser.add_argument("--chat-id", default=os.environ.get("NEOSGO_OUTREACH_CHAT", DEFAULT_CHAT))
@@ -153,15 +161,23 @@ def main() -> int:
     new_email_count = sum(1 for item in new_targets if str(item.get("channel") or "") == "email")
     failed_new_targets = [item for item in new_targets if _is_failure_status(str(item.get("status") or ""))]
     failure_reason_counts: dict[str, int] = {}
+    new_source_counts: dict[str, int] = {}
     for item in failed_new_targets:
         reason = _failure_reason(item)
         failure_reason_counts[reason] = failure_reason_counts.get(reason, 0) + 1
+    for item in new_targets:
+        source_key = str(item.get("lead_source_label") or item.get("lead_source_key") or item.get("query_family") or item.get("source_family") or "unknown")
+        source_label = _format_source_label(source_key)
+        new_source_counts[source_label] = new_source_counts.get(source_label, 0) + 1
     recent_lines = []
     for item in targets[:8]:
         company = str(item.get("company_name") or "未知公司")
         channel = _format_channel(str(item.get("channel") or ""))
         status = _format_status(str(item.get("status") or ""))
-        recent_lines.append(f"- {company}：通过{channel}触达，当前结果：{status}")
+        source_label = _format_source_label(
+            str(item.get("lead_source_label") or item.get("lead_source_key") or item.get("query_family") or "unknown")
+        )
+        recent_lines.append(f"- {company}：来源 {source_label}，通过{channel}触达，当前结果：{status}")
 
     counts_text = "，".join(f"{key}={value}" for key, value in counts.items()) or "暂无"
     lane_outcomes = dict(latest.get("lane_outcomes") or {})
@@ -169,6 +185,15 @@ def main() -> int:
     for lane, outcome in sorted(lane_outcomes.items()):
         lane_lines.append(
             f"- {_lane_label(lane)}：成功 {int(outcome.get('success', 0))}，人工处理 {int(outcome.get('manual', 0))}，失败 {int(outcome.get('failed', 0))}"
+        )
+    source_counts = dict(latest.get("source_counts") or {})
+    source_outcomes = dict(latest.get("source_outcomes") or {})
+    source_lines = []
+    for source_key, bucket in sorted(source_counts.items()):
+        source_bucket = dict(bucket or {})
+        outcome = dict(source_outcomes.get(source_key) or {})
+        source_lines.append(
+            f"- {_format_source_label(str(source_bucket.get('source_label') or source_key))}：累计 {int(source_bucket.get('total', 0))}，成功 {int(outcome.get('success', 0))}，人工处理 {int(outcome.get('manual', 0))}，失败 {int(outcome.get('failed', 0))}"
         )
     adapter_domain_outcomes = dict(latest.get("adapter_domain_outcomes") or {})
     domain_policy_counts = dict(latest.get("domain_policy_counts") or {})
@@ -211,8 +236,22 @@ def main() -> int:
     if failure_reason_counts:
         reasons_text = "；".join(f"{reason} x{count}" for reason, count in failure_reason_counts.items())
         text += f"新增失败原因：{reasons_text}\n"
+    if new_source_counts:
+        source_text = "；".join(f"{source} +{count}" for source, count in sorted(new_source_counts.items()))
+        text += f"本轮新增来源分布：{source_text}\n"
     if supply_lines:
         text += "候选池状态：\n" + "\n".join(supply_lines) + "\n"
+    if source_lines:
+        text += "来源触达效果：\n" + "\n".join(source_lines) + "\n"
+    source_supply = dict(candidate_supply.get("source_summaries") or {})
+    if source_supply:
+        supply_source_lines = []
+        for source_key, bucket in sorted(source_supply.items()):
+            bucket = dict(bucket or {})
+            supply_source_lines.append(
+                f"- {_format_source_label(str(bucket.get('source_label') or source_key))}：待继续触达 {int(bucket.get('approved_usable_remaining_total', 0) or 0)} 家，待网站富化 {int(bucket.get('pending_batch_total', 0) or 0)} 家"
+            )
+        text += "来源候选池：\n" + "\n".join(supply_source_lines) + "\n"
     if lane_lines:
         text += "车道效果统计：\n" + "\n".join(lane_lines) + "\n"
     if adapter_lines:
