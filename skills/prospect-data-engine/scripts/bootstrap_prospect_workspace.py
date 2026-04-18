@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+
+WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
+if str(WORKSPACE_ROOT) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE_ROOT))
+
+from tools.openmoss.ops.local_data_platform_bridge import sync_marketing_suite
 
 
 def _read_json(path: Path) -> dict:
@@ -241,6 +249,7 @@ def main() -> int:
                 "status": "seeded" if prospect_records else "initialized",
                 "prospect_count": len(prospect_records),
                 "prospect_records_path": str(output_root / "prospect-records.json"),
+                "data_platform_sync": sync_marketing_suite(project_root=root),
             },
             ensure_ascii=False,
             indent=2,

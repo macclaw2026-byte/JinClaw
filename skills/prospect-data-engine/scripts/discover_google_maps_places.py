@@ -6,6 +6,7 @@ import argparse
 import json
 import re
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,13 @@ from google_maps_capture_core import (
     safe_query_id,
     write_json,
 )
+
+
+WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
+if str(WORKSPACE_ROOT) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE_ROOT))
+
+from tools.openmoss.ops.local_data_platform_bridge import sync_marketing_suite
 
 
 JINA_PREFIX = "https://r.jina.ai/http://www.google.com/maps/search/"
@@ -846,6 +854,7 @@ def main() -> int:
         "quality_summary": discovery_quality_summary(rows, query_runs),
         "current_cycle_quality_summary": discovery_quality_summary(all_rows, query_runs),
     }
+    report["data_platform_sync"] = sync_marketing_suite(project_root=project_root)
     _write_json(report_path, report)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0

@@ -23,8 +23,12 @@ from urllib import request as urllib_request
 from urllib.parse import urlparse
 from typing import Any
 
-
 WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
+if str(WORKSPACE_ROOT) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE_ROOT))
+
+from tools.openmoss.ops.local_data_platform_bridge import sync_marketing_suite
+
 PROJECT_ROOT = WORKSPACE_ROOT / "projects" / "neosgo-marketing-suite"
 PROJECT_CONFIG_PATH = PROJECT_ROOT / "config" / "project-config.json"
 OPENCLAW_BIN = "/opt/homebrew/bin/openclaw"
@@ -2567,6 +2571,8 @@ def main() -> int:
     _write_json(LATEST_SUMMARY_PATH, summary)
     _write_review_artifacts(state)
     _write_captcha_artifacts(state)
+    summary["data_platform_sync"] = sync_marketing_suite(project_root=PROJECT_ROOT)
+    _write_json(LATEST_SUMMARY_PATH, summary)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0 if failure is None else 1
 

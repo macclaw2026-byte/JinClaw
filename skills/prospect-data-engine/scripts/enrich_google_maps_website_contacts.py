@@ -6,6 +6,7 @@ import argparse
 import json
 import re
 import socket
+import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -18,6 +19,13 @@ from google_maps_capture_core import (
     root_domain,
     write_json,
 )
+
+
+WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
+if str(WORKSPACE_ROOT) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE_ROOT))
+
+from tools.openmoss.ops.local_data_platform_bridge import sync_marketing_suite
 
 
 EMAIL_RE = re.compile(r"([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})", re.I)
@@ -619,6 +627,7 @@ def main() -> int:
         "raw_import_path": str(output_path),
         "quality_summary": summary,
     }
+    report["data_platform_sync"] = sync_marketing_suite(project_root=project_root)
     _write_json(report_path, report)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0

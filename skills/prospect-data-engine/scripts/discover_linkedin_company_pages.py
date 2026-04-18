@@ -5,11 +5,19 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 from urllib.parse import quote_plus, unquote, urlparse
 
 
 LINKEDIN_HOSTS = {"linkedin.com", "www.linkedin.com"}
+
+
+WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
+if str(WORKSPACE_ROOT) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE_ROOT))
+
+from tools.openmoss.ops.local_data_platform_bridge import sync_marketing_suite
 
 
 def _read_json(path: Path) -> dict:
@@ -114,28 +122,26 @@ def main() -> int:
 
     output_path = project_root / "data" / "raw-imports" / "discovered-linkedin-company-pages.json"
     _write_json(output_path, {"items": discovered})
-    _write_json(
-        project_root / "output" / "prospect-data-engine" / "linkedin-company-page-discovery-report.json",
-        {
-            "enabled_target_count": len(targets),
-            "discovered_count": len(discovered),
-            "failure_count": 0,
-            "raw_import_path": str(output_path),
-        },
-    )
-    print(
-        json.dumps(
-            {
-                "status": "ok",
-                "enabled_target_count": len(targets),
-                "discovered_count": len(discovered),
-                "failure_count": 0,
-                "raw_import_path": str(output_path),
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
+    report = {
+        "enabled_target_count": len(targets),
+        "discovered_count": len(discovered),
+        "failure_count": 0,
+        "raw_import_path": str(output_path),
+    }
+    report_path = project_root / "output" / "prospect-data-engine" / "linkedin-company-page-discovery-report.json"
+    _write_json(report_path, report)
+    sync_result = sync_marketing_suite(project_root=project_root)
+    report["data_platform_sync"] = sync_result
+    _write_json(report_path, report)
+    result = {
+        "status": "ok",
+        "enabled_target_count": len(targets),
+        "discovered_count": len(discovered),
+        "failure_count": 0,
+        "raw_import_path": str(output_path),
+        "data_platform_sync": sync_result,
+    }
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 

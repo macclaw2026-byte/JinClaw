@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sys
 from pathlib import Path
 
 NON_COMPANY_DOMAINS = {
@@ -16,6 +17,13 @@ NON_COMPANY_DOMAINS = {
     "comcast.net",
     "duckduckgo.com",
 }
+
+
+WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
+if str(WORKSPACE_ROOT) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE_ROOT))
+
+from tools.openmoss.ops.local_data_platform_bridge import sync_marketing_suite
 
 REVIEW_TOLERANT_SOURCE_FAMILIES = {
     "google_business_profile",
@@ -729,58 +737,58 @@ def main() -> int:
     _write_json(source_registry_path, {"items": source_registry})
     _write_json(duplicate_conflicts_path, {"items": duplicate_conflicts})
     _write_json(review_queue_path, {"items": review_queue})
-    _write_json(
-        output_root / "import-report.json",
-        {
-            "source_count": len(sources_seen),
-            "sources": sources_seen,
-            "raw_record_count": len(merged),
-            "deduped_record_count": len(deduped),
-            "duplicate_count": duplicate_count,
-            "quality_gate_status": quality_gate["status"],
-            "review_queue_count": len(review_queue),
-        },
-    )
+    import_report = {
+        "source_count": len(sources_seen),
+        "sources": sources_seen,
+        "raw_record_count": len(merged),
+        "deduped_record_count": len(deduped),
+        "duplicate_count": duplicate_count,
+        "quality_gate_status": quality_gate["status"],
+        "review_queue_count": len(review_queue),
+    }
+    import_report_path = output_root / "import-report.json"
+    _write_json(import_report_path, import_report)
     _write_json(output_root / "import-quality-gate.json", quality_gate)
-    _write_json(
-        runtime_root / "import-state.json",
-        {
-            "status": "ok",
-            "last_import_source_count": len(sources_seen),
-            "last_raw_record_count": len(merged),
-            "last_deduped_record_count": len(deduped),
-            "last_duplicate_count": duplicate_count,
-            "merged_seed_path": str(merged_path),
-            "strategy_ready_seed_path": str(strategy_ready_seed_path),
-            "source_registry_path": str(source_registry_path),
-            "duplicate_conflicts_path": str(duplicate_conflicts_path),
-            "review_queue_path": str(review_queue_path),
-            "quality_gate_status": quality_gate["status"],
-            "quality_gate_allowed_for_strategy": quality_gate["allowed_for_strategy"],
-            "review_queue_count": len(review_queue),
-        },
-    )
+    runtime_state = {
+        "status": "ok",
+        "last_import_source_count": len(sources_seen),
+        "last_raw_record_count": len(merged),
+        "last_deduped_record_count": len(deduped),
+        "last_duplicate_count": duplicate_count,
+        "merged_seed_path": str(merged_path),
+        "strategy_ready_seed_path": str(strategy_ready_seed_path),
+        "source_registry_path": str(source_registry_path),
+        "duplicate_conflicts_path": str(duplicate_conflicts_path),
+        "review_queue_path": str(review_queue_path),
+        "quality_gate_status": quality_gate["status"],
+        "quality_gate_allowed_for_strategy": quality_gate["allowed_for_strategy"],
+        "review_queue_count": len(review_queue),
+    }
+    runtime_state_path = runtime_root / "import-state.json"
+    _write_json(runtime_state_path, runtime_state)
 
-    print(
-        json.dumps(
-            {
-                "status": "ok",
-                "source_count": len(sources_seen),
-                "raw_record_count": len(merged),
-                "deduped_record_count": len(deduped),
-                "merged_seed_path": str(merged_path),
-                "strategy_ready_seed_path": str(strategy_ready_seed_path),
-                "quality_gate_status": quality_gate["status"],
-                "allowed_for_strategy": quality_gate["allowed_for_strategy"],
-                "source_registry_path": str(source_registry_path),
-                "duplicate_conflicts_path": str(duplicate_conflicts_path),
-                "review_queue_path": str(review_queue_path),
-                "review_queue_count": len(review_queue),
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
+    sync_result = sync_marketing_suite(project_root=root)
+    import_report["data_platform_sync"] = sync_result
+    runtime_state["data_platform_sync"] = sync_result
+    _write_json(import_report_path, import_report)
+    _write_json(runtime_state_path, runtime_state)
+
+    result = {
+        "status": "ok",
+        "source_count": len(sources_seen),
+        "raw_record_count": len(merged),
+        "deduped_record_count": len(deduped),
+        "merged_seed_path": str(merged_path),
+        "strategy_ready_seed_path": str(strategy_ready_seed_path),
+        "quality_gate_status": quality_gate["status"],
+        "allowed_for_strategy": quality_gate["allowed_for_strategy"],
+        "source_registry_path": str(source_registry_path),
+        "duplicate_conflicts_path": str(duplicate_conflicts_path),
+        "review_queue_path": str(review_queue_path),
+        "review_queue_count": len(review_queue),
+        "data_platform_sync": sync_result,
+    }
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 

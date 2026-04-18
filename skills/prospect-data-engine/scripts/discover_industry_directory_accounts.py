@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from html import unescape
 from pathlib import Path
 from urllib.parse import quote_plus, unquote, urlparse
@@ -14,6 +15,13 @@ from urllib.request import Request, urlopen
 LINK_RE = re.compile(r'href="(?P<href>https?://[^"]+)"', re.I)
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 DIRECTORY_FAMILIES = {"trade_directories", "association_lists", "exhibitor_lists"}
+
+
+WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
+if str(WORKSPACE_ROOT) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE_ROOT))
+
+from tools.openmoss.ops.local_data_platform_bridge import sync_marketing_suite
 
 
 def _read_json(path: Path) -> dict:
@@ -191,29 +199,27 @@ def main() -> int:
 
     output_path = project_root / "data" / "raw-imports" / "discovered-industry-directory-accounts.json"
     _write_json(output_path, {"items": discovered})
-    _write_json(
-        project_root / "output" / "prospect-data-engine" / "directory-discovery-report.json",
-        {
-            "enabled_target_count": len(targets),
-            "discovered_count": len(discovered),
-            "failure_count": len(failures),
-            "failures": failures,
-            "raw_import_path": str(output_path),
-        },
-    )
-    print(
-        json.dumps(
-            {
-                "status": "ok",
-                "enabled_target_count": len(targets),
-                "discovered_count": len(discovered),
-                "failure_count": len(failures),
-                "raw_import_path": str(output_path),
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
+    report = {
+        "enabled_target_count": len(targets),
+        "discovered_count": len(discovered),
+        "failure_count": len(failures),
+        "failures": failures,
+        "raw_import_path": str(output_path),
+    }
+    report_path = project_root / "output" / "prospect-data-engine" / "directory-discovery-report.json"
+    _write_json(report_path, report)
+    sync_result = sync_marketing_suite(project_root=project_root)
+    report["data_platform_sync"] = sync_result
+    _write_json(report_path, report)
+    result = {
+        "status": "ok",
+        "enabled_target_count": len(targets),
+        "discovered_count": len(discovered),
+        "failure_count": len(failures),
+        "raw_import_path": str(output_path),
+        "data_platform_sync": sync_result,
+    }
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 

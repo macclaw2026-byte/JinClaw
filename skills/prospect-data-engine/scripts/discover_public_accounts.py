@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from html import unescape
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -15,6 +16,13 @@ from datetime import datetime, timezone
 EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.I)
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 LINK_RE = re.compile(r'href="(?P<href>https?://[^"]+)"', re.I)
+
+
+WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
+if str(WORKSPACE_ROOT) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE_ROOT))
+
+from tools.openmoss.ops.local_data_platform_bridge import sync_marketing_suite
 
 
 def _read_json(path: Path) -> dict:
@@ -184,41 +192,40 @@ def main() -> int:
             failures.append({"target_url": url, "error": str(exc)})
 
     _write_json(raw_import_path, {"items": discovered})
-    _write_json(
-        output_dir / "discovery-report.json",
-        {
-            "target_count": len(targets),
-            "enabled_target_count": len(enabled_targets),
-            "discovered_count": len(discovered),
-            "failure_count": len(failures),
-            "failures": failures,
-            "raw_import_path": str(raw_import_path),
-        },
-    )
-    _write_json(
-        runtime_path,
-        {
-            "status": "ok",
-            "enabled_target_count": len(enabled_targets),
-            "discovered_count": len(discovered),
-            "failure_count": len(failures),
-            "raw_import_path": str(raw_import_path),
-        },
-    )
+    report = {
+        "target_count": len(targets),
+        "enabled_target_count": len(enabled_targets),
+        "discovered_count": len(discovered),
+        "failure_count": len(failures),
+        "failures": failures,
+        "raw_import_path": str(raw_import_path),
+    }
+    runtime_payload = {
+        "status": "ok",
+        "enabled_target_count": len(enabled_targets),
+        "discovered_count": len(discovered),
+        "failure_count": len(failures),
+        "raw_import_path": str(raw_import_path),
+    }
+    report_path = output_dir / "discovery-report.json"
+    _write_json(report_path, report)
+    _write_json(runtime_path, runtime_payload)
 
-    print(
-        json.dumps(
-            {
-                "status": "ok",
-                "enabled_target_count": len(enabled_targets),
-                "discovered_count": len(discovered),
-                "failure_count": len(failures),
-                "raw_import_path": str(raw_import_path),
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
+    sync_result = sync_marketing_suite(project_root=project_root)
+    report["data_platform_sync"] = sync_result
+    runtime_payload["data_platform_sync"] = sync_result
+    _write_json(report_path, report)
+    _write_json(runtime_path, runtime_payload)
+
+    result = {
+        "status": "ok",
+        "enabled_target_count": len(enabled_targets),
+        "discovered_count": len(discovered),
+        "failure_count": len(failures),
+        "raw_import_path": str(raw_import_path),
+        "data_platform_sync": sync_result,
+    }
+    print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 
 

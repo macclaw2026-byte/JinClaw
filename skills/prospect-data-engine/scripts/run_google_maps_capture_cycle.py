@@ -14,6 +14,12 @@ from google_maps_capture_core import read_json, write_json
 SCRIPT_DIR = Path(__file__).resolve().parent
 DISCOVERY_SCRIPT = SCRIPT_DIR / "discover_google_maps_places.py"
 ENRICHMENT_SCRIPT = SCRIPT_DIR / "enrich_google_maps_website_contacts.py"
+WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
+
+if str(WORKSPACE_ROOT) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE_ROOT))
+
+from tools.openmoss.ops.local_data_platform_bridge import sync_marketing_suite
 
 
 def _slugify(value: str) -> str:
@@ -224,6 +230,8 @@ def main() -> int:
             "lanes": lane_quality,
         },
     }
+    write_json(runtime_report_path, payload)
+    payload["data_platform_sync"] = sync_marketing_suite(project_root=project_root)
     write_json(runtime_report_path, payload)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if payload["status"] == "ok" else 1

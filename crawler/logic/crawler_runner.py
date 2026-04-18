@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote_plus
@@ -26,6 +27,10 @@ from crawler.logic.crawler_contract import (
 )
 
 ROOT = Path('/Users/mac_claw/.openclaw/workspace')
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from tools.openmoss.ops.local_data_platform_bridge import sync_crawler_site
+
 SITE_PROFILES = ROOT / 'crawler' / 'logic' / 'site_profiles.json'
 SITE_PROFILE_DIR = ROOT / 'crawler' / 'site-profiles'
 REPORT_DIR = ROOT / 'crawler' / 'reports'
@@ -221,6 +226,7 @@ def run_site(site: str, query: str, first_run: bool = False, refresh_profile: bo
     out = REPORT_DIR / f'{site}-latest-run.json'
     out.write_text(json.dumps(result, ensure_ascii=False, indent=2))
     save_contract(site)
+    result['data_platform_sync'] = sync_crawler_site(workspace_root=ROOT, site=site)
     return result
 
 

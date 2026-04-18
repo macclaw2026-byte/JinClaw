@@ -11,6 +11,7 @@ import csv
 import json
 import os
 import subprocess
+import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +28,12 @@ from maintenance_execution_packet import build_maintenance_execution_packet
 from post_publish_scorecard import build_post_publish_scorecard
 from technical_release_gate import evaluate_release_gate
 from delivery_proof import build_delivery_proof
+
+WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
+if str(WORKSPACE_ROOT) not in sys.path:
+    sys.path.insert(0, str(WORKSPACE_ROOT))
+
+from tools.openmoss.ops.local_data_platform_bridge import sync_seo_geo
 
 
 ROOT = Path("/Users/mac_claw/.openclaw/workspace/projects/neosgo-seo-geo-engine")
@@ -2330,6 +2337,8 @@ def run_cycle() -> dict[str, Any]:
         "delivery_proof_json": str(delivery_proof_path),
     }
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    result["data_platform_sync"] = sync_seo_geo(project_root=ROOT)
+    json_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     return result
 
 
