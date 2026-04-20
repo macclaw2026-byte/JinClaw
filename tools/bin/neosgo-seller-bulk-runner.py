@@ -157,20 +157,7 @@ def pick_import_template_price(listing):
     platform_unit_cost = _parse_price_number(pricing.get('platformUnitCost') if isinstance(pricing, dict) else None)
     if platform_unit_cost is not None:
         return round(platform_unit_cost * IMPORT_TEMPLATE_RETAIL_MULTIPLIER, 2)
-
-    retail_unit_price = _parse_price_number(pricing.get('retailUnitPrice') if isinstance(pricing, dict) else None)
-    if retail_unit_price is not None:
-        return round(retail_unit_price, 2)
-
-    raw_price = _parse_price_number(listing.get('basePrice'))
-    if raw_price is not None:
-        return round(raw_price, 2)
-
-    raw_price = _parse_price_number(listing.get('price'))
-    if raw_price is not None:
-        return round(raw_price, 2)
-
-    return 0.0
+    raise ValueError('missing_platform_unit_cost_for_import_template_price')
 
 
 def pick_submission_price(listing):
@@ -566,10 +553,20 @@ def main():
             row['productId'] = product_id
             detail = request('GET', base, token, f'/api/automation/seller/listings/{product_id}')
             listing = detail['data']['listing'] if 'listing' in detail.get('data', {}) else detail['data']
+            try:
+                submission_price = pick_submission_price(listing)
+            except ValueError as exc:
+                row['error'] = str(exc)
+                row['priceBlocker'] = str(exc)
+                row['platformUnitCost'] = ((listing.get('pricing') or {}).get('platformUnitCost'))
+                row['retailUnitPrice'] = ((listing.get('pricing') or {}).get('retailUnitPrice'))
+                state['processed'].append(row)
+                write_state(state)
+                continue
             payload = {
                 'brand': listing.get('brand') or DEFAULT_BRAND,
                 'categoryId': pick_category_id(listing, c),
-                'basePrice': pick_submission_price(listing),
+                'basePrice': submission_price,
                 'description': pick_description(listing, c),
                 'shippingTemplateId': listing.get('shippingTemplateId') or SHIPPING_TEMPLATE_ID,
                 'quantityAvailable': pick_quantity_available(listing),

@@ -204,10 +204,20 @@ def main():
             row['newDescription'] = description
             row['newDescriptionLength'] = len(description)
             row['containsHtml'] = bool(re.search(r'<[^>]+>', description))
+            try:
+                submission_price = mod.pick_submission_price(listing)
+            except ValueError as exc:
+                row['patchOk'] = False
+                row['priceBlocker'] = str(exc)
+                row['platformUnitCost'] = ((listing.get('pricing') or {}).get('platformUnitCost'))
+                row['retailUnitPrice'] = ((listing.get('pricing') or {}).get('retailUnitPrice'))
+                report['rows'].append(row)
+                time.sleep(args.sleep_seconds)
+                continue
             payload = {
                 'brand': listing.get('brand') or mod.DEFAULT_BRAND,
                 'categoryId': mod.pick_category_id(listing, item),
-                'basePrice': mod.pick_submission_price(listing),
+                'basePrice': submission_price,
                 'description': description,
                 'shippingTemplateId': listing.get('shippingTemplateId') or mod.SHIPPING_TEMPLATE_ID,
                 'quantityAvailable': mod.pick_quantity_available(listing),

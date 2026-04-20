@@ -404,7 +404,16 @@ def _run_import_phase(base: str, token: str, candidates: list[dict], import_limi
                 rows.append(row)
                 time.sleep(DEFAULT_SLEEP_SECONDS)
                 continue
-            payload = _build_listing_payload(listing, candidate)
+            try:
+                payload = _build_listing_payload(listing, candidate)
+            except ValueError as exc:
+                row["error"] = str(exc)
+                row["price_blocker"] = str(exc)
+                row["platformUnitCost"] = ((listing.get("pricing") or {}).get("platformUnitCost"))
+                row["retailUnitPrice"] = ((listing.get("pricing") or {}).get("retailUnitPrice"))
+                rows.append(row)
+                time.sleep(DEFAULT_SLEEP_SECONDS)
+                continue
             patch = _patch_listing(base, token, product_id, payload)
             row["patch_ok"] = bool(patch.get("ok"))
             if not patch.get("ok"):
@@ -456,7 +465,16 @@ def _process_listings_for_submit(base: str, token: str, status: str, candidates_
         try:
             listing = _fetch_listing_detail(base, token, product_id)
             status_payload = _fetch_listing_status(base, token, product_id)
-            payload = _build_listing_payload(listing, candidates_by_sku.get(sku))
+            try:
+                payload = _build_listing_payload(listing, candidates_by_sku.get(sku))
+            except ValueError as exc:
+                row["error"] = str(exc)
+                row["price_blocker"] = str(exc)
+                row["platformUnitCost"] = ((listing.get("pricing") or {}).get("platformUnitCost"))
+                row["retailUnitPrice"] = ((listing.get("pricing") or {}).get("retailUnitPrice"))
+                results.append(row)
+                time.sleep(DEFAULT_SLEEP_SECONDS)
+                continue
             patch = _patch_listing(base, token, product_id, payload)
             row["patch_ok"] = bool(patch.get("ok"))
             row["inventory_editable"] = bool(status_payload.get("inventoryEditableViaAutomation"))

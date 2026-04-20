@@ -36,14 +36,16 @@ class NeosgoSellerPricingTest(unittest.TestCase):
         self.assertEqual(MODULE.pick_import_template_price(listing), 63.8)
         self.assertEqual(MODULE.pick_submission_price(listing), 88.8)
 
-    def test_pick_submission_price_falls_back_to_retail_price_when_platform_cost_missing(self) -> None:
+    def test_pick_submission_price_blocks_when_platform_cost_missing(self) -> None:
         listing = {
             "pricing": {
                 "retailUnitPrice": "71.39",
             },
         }
-        self.assertEqual(MODULE.pick_import_template_price(listing), 71.39)
-        self.assertEqual(MODULE.pick_submission_price(listing), 96.39)
+        with self.assertRaisesRegex(ValueError, "missing_platform_unit_cost_for_import_template_price"):
+            MODULE.pick_import_template_price(listing)
+        with self.assertRaisesRegex(ValueError, "missing_platform_unit_cost_for_import_template_price"):
+            MODULE.pick_submission_price(listing)
 
 
 if __name__ == "__main__":
