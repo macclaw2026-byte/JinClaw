@@ -239,21 +239,33 @@ def _derive_live_submission_price(listing, prefer_active_noneditable=False):
     status = str(listing.get('status') or '').strip().upper()
     editable = bool(listing.get('editableViaAutomation'))
     is_active = bool(listing.get('isActive'))
-    if prefer_active_noneditable or (not editable and is_active and status in {'APPROVED', 'PENDING'}):
-        platform_unit_cost = _parse_price_number(pricing.get('platformUnitCost') if isinstance(pricing, dict) else None)
-        if platform_unit_cost is not None:
-            return round(platform_unit_cost, 2), 'live_active_platform_unit_cost'
-    raw_price_candidates = [
-        listing.get('basePrice'),
-        listing.get('price'),
-        pricing.get('retailUnitPrice') if isinstance(pricing, dict) else None,
-        pricing.get('platformUnitCost') if isinstance(pricing, dict) else None,
-        listing.get('originalPrice'),
-    ]
+    if status in {'DRAFT', 'SUBMITTED', 'REJECTED'}:
+        raw_price_candidates = [
+            listing.get('originalPrice'),
+            pricing.get('retailUnitPrice') if isinstance(pricing, dict) else None,
+            listing.get('basePrice'),
+            listing.get('price'),
+        ]
+        source = 'live_listing_original_price'
+    elif prefer_active_noneditable or (not editable and is_active and status in {'APPROVED', 'PENDING'}):
+        raw_price_candidates = [
+            pricing.get('retailUnitPrice') if isinstance(pricing, dict) else None,
+            listing.get('basePrice'),
+            listing.get('price'),
+        ]
+        source = 'live_bulk_import_template_price'
+    else:
+        raw_price_candidates = [
+            pricing.get('retailUnitPrice') if isinstance(pricing, dict) else None,
+            listing.get('basePrice'),
+            listing.get('price'),
+            listing.get('originalPrice'),
+        ]
+        source = 'live_listing_template_price'
     for raw_value in raw_price_candidates:
         parsed = _parse_price_number(raw_value)
         if parsed is not None:
-            return round(parsed + PRICE_MARKUP_USD, 2), 'live_listing_price_seed'
+            return round(parsed + PRICE_MARKUP_USD, 2), source
     raise ValueError('missing_submission_price_baseline')
 
 

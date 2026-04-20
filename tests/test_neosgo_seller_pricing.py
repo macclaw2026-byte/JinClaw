@@ -61,7 +61,7 @@ class NeosgoSellerPricingTest(unittest.TestCase):
         self.assertEqual(MODULE.pick_import_template_price(drifted_listing, product_id="p2", sku="s2"), 63.8)
         self.assertEqual(MODULE.pick_submission_price(drifted_listing, product_id="p2", sku="s2"), 88.8)
 
-    def test_pick_submission_price_prefers_active_platform_cost_for_noneditable_listing_without_history(self) -> None:
+    def test_pick_submission_price_prefers_bulk_template_price_for_noneditable_approved_listing(self) -> None:
         listing = {
             "status": "APPROVED",
             "isActive": True,
@@ -70,13 +70,27 @@ class NeosgoSellerPricingTest(unittest.TestCase):
                 "platformUnitCost": "64",
                 "retailUnitPrice": "70.4",
             },
-            "basePrice": "95.4",
-            "price": "95.4",
+            "basePrice": "70.4",
+            "price": "70.4",
         }
         self.assertEqual(
             MODULE.pick_submission_price(listing, product_id="p3", sku="s3", prefer_active_noneditable=True),
-            64.0,
+            95.4,
         )
+
+    def test_pick_submission_price_uses_original_price_for_submitted_listing_without_history(self) -> None:
+        listing = {
+            "status": "SUBMITTED",
+            "editableViaAutomation": True,
+            "originalPrice": "45.4",
+            "pricing": {
+                "platformUnitCost": "70.4",
+                "retailUnitPrice": None,
+            },
+            "basePrice": "70.4",
+            "price": "70.4",
+        }
+        self.assertEqual(MODULE.pick_submission_price(listing, product_id="p5", sku="s5"), 70.4)
 
     def test_pick_submission_price_blocks_when_no_live_seed_exists(self) -> None:
         listing = {"pricing": {}}

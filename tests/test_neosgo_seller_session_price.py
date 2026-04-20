@@ -23,17 +23,17 @@ class NeosgoSellerSessionPriceTest(unittest.TestCase):
         self.assertIn("bulk import template price plus 25 USD", MODULE.DEFAULT_PRICE_CHANGE_REASON)
         self.assertGreater(len(MODULE.DEFAULT_PRICE_CHANGE_REASON.split()), 8)
 
-    def test_active_approved_noneditable_listing_uses_session_patch_route(self) -> None:
+    def test_active_approved_noneditable_listing_uses_automation_change_request_route(self) -> None:
         row = {
             "status": "APPROVED",
             "is_active": True,
             "editable_via_automation": False,
         }
-        self.assertTrue(RUN_MODULE._should_use_seller_session_patch(row))
+        self.assertTrue(RUN_MODULE._requires_approved_change_request(row))
 
-    def test_inactive_or_draft_listing_does_not_force_session_patch_route(self) -> None:
-        self.assertFalse(RUN_MODULE._should_use_seller_session_patch({"status": "DRAFT", "is_active": False, "editable_via_automation": False}))
-        self.assertFalse(RUN_MODULE._should_use_seller_session_patch({"status": "SUBMITTED", "is_active": True, "editable_via_automation": True}))
+    def test_inactive_or_draft_listing_does_not_force_change_request_route(self) -> None:
+        self.assertFalse(RUN_MODULE._requires_approved_change_request({"status": "DRAFT", "is_active": False, "editable_via_automation": False}))
+        self.assertFalse(RUN_MODULE._requires_approved_change_request({"status": "SUBMITTED", "is_active": True, "editable_via_automation": True}))
 
 
 if __name__ == "__main__":
