@@ -20,6 +20,7 @@ SHIPPING_TEMPLATE_ID = 'cmmu2i7uw0001yp5x1s8i1x0g'
 DEFAULT_QTY = 24
 DEFAULT_BRAND = 'NEOSGO'
 PRICE_MARKUP_USD = 25
+IMPORT_TEMPLATE_RETAIL_MULTIPLIER = 1.1
 WAREHOUSE = {
     'warehouseType': 'SELLER_WAREHOUSE',
     'warehouseZip': '02865',
@@ -139,19 +140,42 @@ def pick_quantity_available(listing):
     return DEFAULT_QTY
 
 
-def pick_submission_price(listing):
-    pricing = listing.get('pricing') or {}
-    raw_price = (
-        listing.get('basePrice')
-        or listing.get('price')
-        or (pricing.get('retailUnitPrice') if isinstance(pricing, dict) else None)
-        or (pricing.get('platformUnitCost') if isinstance(pricing, dict) else None)
-    )
+def _parse_price_number(value):
     try:
-        base = float(raw_price)
+        parsed = float(value)
     except (TypeError, ValueError):
-        base = 0.0
-    return round(base + PRICE_MARKUP_USD, 2)
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def pick_import_template_price(listing):
+    pricing = listing.get('pricing') or {}
+
+    # GIGA bulk-import listings consistently materialize the template retail price
+    # as platformUnitCost * 1.1. Using that stable source avoids double-marking up
+    # listings when edit/submit is rerun on the same draft or rejected item.
+    platform_unit_cost = _parse_price_number(pricing.get('platformUnitCost') if isinstance(pricing, dict) else None)
+    if platform_unit_cost is not None:
+        return round(platform_unit_cost * IMPORT_TEMPLATE_RETAIL_MULTIPLIER, 2)
+
+    retail_unit_price = _parse_price_number(pricing.get('retailUnitPrice') if isinstance(pricing, dict) else None)
+    if retail_unit_price is not None:
+        return round(retail_unit_price, 2)
+
+    raw_price = _parse_price_number(listing.get('basePrice'))
+    if raw_price is not None:
+        return round(raw_price, 2)
+
+    raw_price = _parse_price_number(listing.get('price'))
+    if raw_price is not None:
+        return round(raw_price, 2)
+
+    return 0.0
+
+
+def pick_submission_price(listing):
+    template_price = pick_import_template_price(listing)
+    return round(template_price + PRICE_MARKUP_USD, 2)
 
 
 def html_to_plain_text(value):
