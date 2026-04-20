@@ -278,7 +278,11 @@ def _build_listing_payload(listing: dict, candidate: dict | None) -> dict:
     return {
         "brand": listing.get("brand") or RUNNER.DEFAULT_BRAND,
         "categoryId": RUNNER.pick_category_id(listing, candidate or {}),
-        "basePrice": RUNNER.pick_submission_price(listing),
+        "basePrice": RUNNER.pick_submission_price(
+            listing,
+            product_id=str(listing.get("id") or "").strip(),
+            sku=str(listing.get("sku") or (candidate or {}).get("sku") or "").strip(),
+        ),
         "description": DESC_OPTIMIZER.build_description(listing),
         "shippingTemplateId": listing.get("shippingTemplateId") or RUNNER.SHIPPING_TEMPLATE_ID,
         "quantityAvailable": quantity_available,

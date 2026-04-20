@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 import argparse
 import json, uuid, time, traceback, re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 SECRET_PATH = Path.home() / '.openclaw' / 'secrets' / 'neosgo-seller.env'
 STATE_PATH = Path.home() / '.openclaw' / 'workspace' / 'data' / 'neosgo-seller-bulk-state.json'
+PRICE_BASELINE_PATH = Path.home() / '.openclaw' / 'workspace' / 'data' / 'neosgo-seller-price-baselines.json'
+PRICE_BASELINE_REPORTS_DIR = Path.home() / '.openclaw' / 'workspace' / 'output' / 'neosgo-seller-bulk'
 
 CATEGORY_MAP = {
     'bathroom lighting': 'cml8b5hia0003t8jmxoxvko98',
@@ -27,6 +29,7 @@ WAREHOUSE = {
     'warehouseCity': 'Lincoln',
     'warehouseState': 'RI'
 }
+_PRICE_BASELINE_CACHE = None
 
 
 def parse_args():
@@ -50,6 +53,20 @@ def load_env(path):
         k, v = line.split('=', 1)
         env[k.strip()] = v.strip()
     return env
+
+
+def _read_json(path, default):
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError):
+        return default
+
+
+def _write_json(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
 
 
 def request(method, base, token, path, body=None, idempotency=False, timeout=60):
@@ -148,21 +165,133 @@ def _parse_price_number(value):
     return parsed if parsed >= 0 else None
 
 
-def pick_import_template_price(listing):
+def _normalize_price_key(value):
+    return str(value or '').strip()
+
+
+def _baseline_record(price, source):
+    return {
+        'submission_price_usd': round(float(price), 2),
+        'source': str(source or '').strip(),
+        'updated_at': datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _build_historical_price_baselines():
+    baselines = {'by_product_id': {}, 'by_sku': {}}
+    if not PRICE_BASELINE_REPORTS_DIR.exists():
+        return baselines
+    for path in sorted(PRICE_BASELINE_REPORTS_DIR.glob('*.json')):
+        payload = _read_json(path, {})
+        for row in payload.get('rows') or []:
+            submission_price = _parse_price_number(row.get('submission_price_usd'))
+            if submission_price is None:
+                continue
+            record = _baseline_record(submission_price, f'historical_bulk_report:{path.name}')
+            product_id = _normalize_price_key(row.get('product_id'))
+            sku = _normalize_price_key(row.get('sku'))
+            if product_id and product_id not in baselines['by_product_id']:
+                baselines['by_product_id'][product_id] = dict(record)
+            if sku and sku not in baselines['by_sku']:
+                baselines['by_sku'][sku] = dict(record)
+    return baselines
+
+
+def load_price_baselines(refresh=False):
+    global _PRICE_BASELINE_CACHE
+    if _PRICE_BASELINE_CACHE is not None and not refresh:
+        return _PRICE_BASELINE_CACHE
+    historical = _build_historical_price_baselines()
+    stored = _read_json(PRICE_BASELINE_PATH, {'by_product_id': {}, 'by_sku': {}})
+    merged = {
+        'by_product_id': dict(historical.get('by_product_id') or {}),
+        'by_sku': dict(historical.get('by_sku') or {}),
+    }
+    merged['by_product_id'].update(stored.get('by_product_id') or {})
+    merged['by_sku'].update(stored.get('by_sku') or {})
+    _PRICE_BASELINE_CACHE = merged
+    return merged
+
+
+def save_price_baselines(payload):
+    global _PRICE_BASELINE_CACHE
+    normalized = {
+        'by_product_id': dict(payload.get('by_product_id') or {}),
+        'by_sku': dict(payload.get('by_sku') or {}),
+    }
+    _PRICE_BASELINE_CACHE = normalized
+    _write_json(PRICE_BASELINE_PATH, normalized)
+
+
+def lookup_submission_price_baseline(product_id=None, sku=None):
+    baselines = load_price_baselines()
+    normalized_product_id = _normalize_price_key(product_id)
+    normalized_sku = _normalize_price_key(sku)
+    if normalized_product_id and normalized_product_id in baselines['by_product_id']:
+        return baselines['by_product_id'][normalized_product_id]
+    if normalized_sku and normalized_sku in baselines['by_sku']:
+        return baselines['by_sku'][normalized_sku]
+    return None
+
+
+def _derive_live_submission_price(listing, prefer_active_noneditable=False):
     pricing = listing.get('pricing') or {}
+    status = str(listing.get('status') or '').strip().upper()
+    editable = bool(listing.get('editableViaAutomation'))
+    is_active = bool(listing.get('isActive'))
+    if prefer_active_noneditable or (not editable and is_active and status in {'APPROVED', 'PENDING'}):
+        platform_unit_cost = _parse_price_number(pricing.get('platformUnitCost') if isinstance(pricing, dict) else None)
+        if platform_unit_cost is not None:
+            return round(platform_unit_cost, 2), 'live_active_platform_unit_cost'
+    raw_price_candidates = [
+        listing.get('basePrice'),
+        listing.get('price'),
+        pricing.get('retailUnitPrice') if isinstance(pricing, dict) else None,
+        pricing.get('platformUnitCost') if isinstance(pricing, dict) else None,
+        listing.get('originalPrice'),
+    ]
+    for raw_value in raw_price_candidates:
+        parsed = _parse_price_number(raw_value)
+        if parsed is not None:
+            return round(parsed + PRICE_MARKUP_USD, 2), 'live_listing_price_seed'
+    raise ValueError('missing_submission_price_baseline')
 
-    # GIGA bulk-import listings consistently materialize the template retail price
-    # as platformUnitCost * 1.1. Using that stable source avoids double-marking up
-    # listings when edit/submit is rerun on the same draft or rejected item.
-    platform_unit_cost = _parse_price_number(pricing.get('platformUnitCost') if isinstance(pricing, dict) else None)
-    if platform_unit_cost is not None:
-        return round(platform_unit_cost * IMPORT_TEMPLATE_RETAIL_MULTIPLIER, 2)
-    raise ValueError('missing_platform_unit_cost_for_import_template_price')
+
+def resolve_submission_price(listing, product_id=None, sku=None, prefer_active_noneditable=False):
+    baseline = lookup_submission_price_baseline(product_id=product_id, sku=sku)
+    if baseline is not None:
+        return round(float(baseline['submission_price_usd']), 2), baseline
+    submission_price, source = _derive_live_submission_price(listing, prefer_active_noneditable=prefer_active_noneditable)
+    baselines = load_price_baselines()
+    record = _baseline_record(submission_price, source)
+    normalized_product_id = _normalize_price_key(product_id)
+    normalized_sku = _normalize_price_key(sku)
+    if normalized_product_id:
+        baselines['by_product_id'][normalized_product_id] = dict(record)
+    if normalized_sku:
+        baselines['by_sku'][normalized_sku] = dict(record)
+    save_price_baselines(baselines)
+    return submission_price, record
 
 
-def pick_submission_price(listing):
-    template_price = pick_import_template_price(listing)
-    return round(template_price + PRICE_MARKUP_USD, 2)
+def pick_import_template_price(listing, product_id=None, sku=None, prefer_active_noneditable=False):
+    submission_price, _baseline = resolve_submission_price(
+        listing,
+        product_id=product_id,
+        sku=sku,
+        prefer_active_noneditable=prefer_active_noneditable,
+    )
+    return round(submission_price - PRICE_MARKUP_USD, 2)
+
+
+def pick_submission_price(listing, product_id=None, sku=None, prefer_active_noneditable=False):
+    submission_price, _baseline = resolve_submission_price(
+        listing,
+        product_id=product_id,
+        sku=sku,
+        prefer_active_noneditable=prefer_active_noneditable,
+    )
+    return round(submission_price, 2)
 
 
 def html_to_plain_text(value):

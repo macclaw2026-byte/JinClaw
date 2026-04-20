@@ -19,6 +19,7 @@ from typing import Any
 
 WORKSPACE_ROOT = Path("/Users/mac_claw/.openclaw/workspace")
 RUNNER_PATH = WORKSPACE_ROOT / "tools/bin/neosgo-seller-bulk-runner.py"
+SESSION_CLIENT_PATH = WORKSPACE_ROOT / "tools/openmoss/ops/neosgo_seller_session_client.py"
 OUTPUT_ROOT = WORKSPACE_ROOT / "output/neosgo-seller-reprice-resubmit"
 STATE_PATH = WORKSPACE_ROOT / "data/neosgo-seller-reprice-resubmit-state.json"
 PAGE_SIZE = 100
@@ -35,6 +36,7 @@ def _load_module(path: Path, module_name: str):
 
 
 RUNNER = _load_module(RUNNER_PATH, "neosgo_seller_bulk_runner")
+SESSION_CLIENT = _load_module(SESSION_CLIENT_PATH, "neosgo_seller_session_client")
 
 
 def _utc_now_iso() -> str:
@@ -126,6 +128,11 @@ def _patch_price(base: str, token: str, product_id: str, price: float) -> dict[s
     )
 
 
+def _should_use_seller_session_patch(row: dict[str, Any]) -> bool:
+    status = str(row.get("status") or "").strip().upper()
+    return not bool(row.get("editable_via_automation")) and bool(row.get("is_active")) and status in {"APPROVED", "PENDING"}
+
+
 def _is_bulk_import_listing(item: dict[str, Any]) -> bool:
     source = str(item.get("source") or "").strip().upper()
     original_platform = str(item.get("originalPlatform") or "").strip().lower()
@@ -139,9 +146,10 @@ def _write_markdown_report(report: dict[str, Any], path: Path) -> None:
         f"- Started: {report.get('started_at')}",
         f"- Finished: {report.get('finished_at')}",
         f"- Enumerated bulk-import listings: {report.get('summary', {}).get('enumerated_bulk_import_count', 0)}",
-        f"- Missing platformUnitCost: {report.get('summary', {}).get('missing_platform_unit_cost_count', 0)}",
+        f"- Missing price baseline: {report.get('summary', {}).get('missing_price_baseline_count', 0)}",
         f"- Editable listings: {report.get('summary', {}).get('editable_count', 0)}",
         f"- Platform-blocked listings: {report.get('summary', {}).get('noneditable_count', 0)}",
+        f"- Seller session patched: {report.get('summary', {}).get('seller_session_patch_count', 0)}",
         f"- Price patched: {report.get('summary', {}).get('patched_count', 0)}",
         f"- Price already correct: {report.get('summary', {}).get('already_desired_price_count', 0)}",
         f"- Submit attempted: {report.get('summary', {}).get('submit_attempt_count', 0)}",
@@ -172,8 +180,8 @@ def _write_markdown_report(report: dict[str, Any], path: Path) -> None:
         lines.append(
             "- "
             + f"SKU `{row.get('sku')}` | status={row.get('status')} | active={row.get('is_active')} | "
-            + f"platform_cost={row.get('platformUnitCost')} | template_price={row.get('template_price_usd')} | "
-            + f"desired_submit_price={row.get('desired_submission_price_usd')} | patch_ok={row.get('patch_ok')} | "
+            + f"original_price={row.get('originalPrice')} | baseline_source={row.get('price_baseline_source')} | template_price={row.get('template_price_usd')} | "
+            + f"desired_submit_price={row.get('desired_submission_price_usd')} | route={row.get('price_update_route', '') or 'none'} | patch_ok={row.get('patch_ok')} | "
             + f"can_submit={row.get('can_submit')} | submit_ok={row.get('submit_ok')} | blocker={row.get('blocking_reason') or row.get('error')}"
         )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -188,12 +196,24 @@ def main() -> int:
         "started_at": started_at,
         "workflow": "neosgo_seller_full_reprice_resubmit",
         "price_rule": {
-            "template_source": "pricing.platformUnitCost * 1.1",
+            "baseline_source_priority": [
+                "historical bulk submission report",
+                "live active platformUnitCost for approved/pending active listings",
+                "live listing price seed for fresh editable listings",
+            ],
             "submission_markup_usd": RUNNER.PRICE_MARKUP_USD,
-            "fail_closed_when_missing_platform_unit_cost": True,
+            "fail_closed_when_missing_price_baseline": True,
+            "active_listing_session_patch": {
+                "field": "basePrice",
+                "reason_field": "changeRequestReason",
+                "requires_reason": True,
+                "creates_pending_change_request": True,
+                "reason": SESSION_CLIENT.DEFAULT_PRICE_CHANGE_REASON,
+            },
         },
         "rows": [],
     }
+    session_cookies: dict[str, str] | None = None
     _write_json(STATE_PATH, {"stage": "enumerate_listings", "updated_at": started_at})
     listings = [item for item in _fetch_all_listings(base, token) if _is_bulk_import_listing(item)]
     for index, item in enumerate(listings, start=1):
@@ -214,6 +234,7 @@ def main() -> int:
         try:
             listing = _fetch_listing_detail(base, token, product_id)
             pricing = listing.get("pricing") or {}
+            row["originalPrice"] = listing.get("originalPrice")
             row["platformUnitCost"] = pricing.get("platformUnitCost")
             row["retailUnitPrice"] = pricing.get("retailUnitPrice")
             row["current_base_price"] = listing.get("basePrice")
@@ -221,11 +242,16 @@ def main() -> int:
             row["editable_via_automation"] = bool(listing.get("editableViaAutomation"))
             row["inventory_editable_via_automation"] = bool(listing.get("inventoryEditableViaAutomation"))
             try:
-                template_price = RUNNER.pick_import_template_price(listing)
-                desired_submission_price = RUNNER.pick_submission_price(listing)
+                desired_submission_price, baseline = RUNNER.resolve_submission_price(
+                    listing,
+                    product_id=product_id,
+                    sku=sku,
+                    prefer_active_noneditable=_should_use_seller_session_patch(row),
+                )
+                template_price = round(desired_submission_price - RUNNER.PRICE_MARKUP_USD, 2)
             except ValueError as exc:
                 row["error"] = str(exc)
-                row["blocking_reason"] = "missing_platform_unit_cost"
+                row["blocking_reason"] = "missing_price_baseline"
                 report["rows"].append(row)
                 _write_json(STATE_PATH, {"stage": "repricing", "updated_at": _utc_now_iso(), "last_sku": sku, "processed_count": len(report["rows"])})
                 time.sleep(SLEEP_SECONDS)
@@ -233,10 +259,16 @@ def main() -> int:
 
             row["template_price_usd"] = template_price
             row["desired_submission_price_usd"] = desired_submission_price
+            row["price_baseline_source"] = baseline.get("source")
             current_base_price = _parse_float(listing.get("basePrice"))
             row["price_already_desired"] = current_base_price is not None and abs(current_base_price - desired_submission_price) < 0.011
 
-            if row["editable_via_automation"]:
+            if row["price_already_desired"]:
+                row["patch_ok"] = True
+                row["patch_skipped"] = "already_at_desired_price"
+                row["price_update_route"] = "no_change_required"
+            elif row["editable_via_automation"]:
+                row["price_update_route"] = "automation_listing_patch"
                 if row["price_already_desired"]:
                     row["patch_ok"] = True
                     row["patch_skipped"] = "already_at_desired_price"
@@ -248,9 +280,30 @@ def main() -> int:
                         row["blocking_reason"] = "patch_failed"
                     else:
                         row["patched_price_to"] = desired_submission_price
+            elif _should_use_seller_session_patch(row):
+                if session_cookies is None:
+                    session_cookies = SESSION_CLIENT.load_seller_session_cookies()
+                row["price_update_route"] = "seller_session_product_patch"
+                row["price_change_reason"] = SESSION_CLIENT.DEFAULT_PRICE_CHANGE_REASON
+                row["session_cookie_profile"] = session_cookies.get("profile", "")
+                patch = SESSION_CLIENT.safe_patch_active_listing_price(
+                    base,
+                    product_id,
+                    desired_submission_price,
+                    reason=SESSION_CLIENT.DEFAULT_PRICE_CHANGE_REASON,
+                    cookies=session_cookies,
+                )
+                row["patch_ok"] = bool(patch.get("ok"))
+                if not patch.get("ok"):
+                    row["error"] = RUNNER.extract_request_error_message("seller_session_patch", patch)
+                    row["blocking_reason"] = "seller_session_patch_failed"
+                else:
+                    row["change_request_created"] = bool((patch.get("resp") or {}).get("changeRequestCreated"))
+                    row["patched_price_to"] = desired_submission_price
             else:
                 row["patch_ok"] = False
                 row["blocking_reason"] = "listing_not_editable_via_automation"
+                row["price_update_route"] = "blocked_before_patch"
 
             readiness = _fetch_readiness(base, token, product_id)
             row["readiness_ok"] = bool(readiness.get("ok"))
@@ -301,9 +354,10 @@ def main() -> int:
         "enumerated_bulk_import_count": len(report["rows"]),
         "status_counts": dict(status_counts),
         "blocking_reason_counts": dict(blocking_reason_counts),
-        "missing_platform_unit_cost_count": sum(1 for row in report["rows"] if row.get("blocking_reason") == "missing_platform_unit_cost"),
+        "missing_price_baseline_count": sum(1 for row in report["rows"] if row.get("blocking_reason") == "missing_price_baseline"),
         "editable_count": sum(1 for row in report["rows"] if row.get("editable_via_automation")),
         "noneditable_count": sum(1 for row in report["rows"] if row.get("blocking_reason") == "listing_not_editable_via_automation"),
+        "seller_session_patch_count": sum(1 for row in report["rows"] if row.get("price_update_route") == "seller_session_product_patch" and row.get("patch_ok")),
         "patched_count": sum(1 for row in report["rows"] if row.get("patched_price_to") is not None),
         "already_desired_price_count": sum(1 for row in report["rows"] if row.get("patch_skipped") == "already_at_desired_price"),
         "submit_attempt_count": sum(1 for row in report["rows"] if row.get("patch_ok") and row.get("can_submit")),
