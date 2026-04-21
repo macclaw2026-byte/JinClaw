@@ -24,6 +24,7 @@ DEFAULT_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 LATEST_SUMMARY_PATH = PROJECT_ROOT / "runtime" / "outreach" / "latest-summary.json"
 STATE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "telegram-summary-state.json"
 CONTENT_PATH = PROJECT_ROOT / "config" / "outreach-campaign-content.yaml"
+NOTIFICATION_POLICY_OVERRIDE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "operator-notification-policy.json"
 
 
 def _subprocess_env() -> dict[str, str]:
@@ -77,9 +78,13 @@ def _telegram_notification_policy() -> dict[str, bool]:
             "notify_on_campaign_summary": False,
         }
     raw = dict(content.get("telegram_notifications") or {})
-    return {
+    policy = {
         "notify_on_campaign_summary": bool(raw.get("notify_on_campaign_summary")),
     }
+    override = _read_json(NOTIFICATION_POLICY_OVERRIDE_PATH, {})
+    if isinstance(override, dict) and "notify_on_campaign_summary" in override:
+        policy["notify_on_campaign_summary"] = bool(override.get("notify_on_campaign_summary"))
+    return policy
 
 
 def _send(chat_id: str, text: str) -> dict:

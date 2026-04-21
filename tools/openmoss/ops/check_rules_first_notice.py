@@ -58,6 +58,8 @@ def _iter_target_files() -> list[Path]:
                 continue
             if any(part.startswith(".") for part in path.relative_to(root).parts):
                 continue
+            if "output" in path.relative_to(root).parts:
+                continue
             if path.suffix.lower() not in TARGET_SUFFIXES:
                 continue
             if any(path.is_relative_to(prefix) for prefix in IGNORED_PREFIXES):

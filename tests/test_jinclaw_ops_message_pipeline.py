@@ -495,7 +495,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
             self.assertEqual(summary['refresh']['source'], 'canonical_refresh')
             self.assertTrue(summary['refresh']['payload_complete'])
 
-    def test_doctor_payload_requests_fresh_canonical_doctor(self):
+    def test_doctor_payload_requests_cached_canonical_doctor_by_default(self):
         summary = {
             'sessions_index_exists': True,
             'telegram_session_count': 1,
@@ -540,7 +540,7 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
         self.assertIn('system_doctor_stdout_leak_detected', payload['issues'])
         self.assertNotIn('system_doctor_runtime_degraded', payload['warnings'])
 
-    def test_upgrade_check_requests_fresh_doctor_payload(self):
+    def test_upgrade_check_uses_cached_doctor_payload_by_default(self):
         watch_payload = {
             'checked_at': '2026-04-13T18:10:00+00:00',
             'repo_count': 0,
@@ -566,9 +566,29 @@ class JinclawOpsMessagePipelineTest(unittest.TestCase):
         ):
             payload = jinclaw_ops.upgrade_check_payload()
 
-        mocked_doctor.assert_called_once_with(refresh_doctor=True)
+        mocked_doctor.assert_called_once_with(refresh_doctor=False)
         self.assertTrue(payload['watch_run']['ok'])
         self.assertTrue(payload['doctor']['ok'])
+
+    def test_main_doctor_cli_only_refreshes_when_flag_is_present(self):
+        with patch.object(jinclaw_ops, 'doctor_payload', return_value={'ok': True, 'issues': [], 'warnings': []}) as mocked_doctor:
+            with patch.object(jinclaw_ops, 'print_payload') as mocked_print:
+                with patch.object(sys, 'argv', ['jinclaw_ops.py', 'doctor']):
+                    rc = jinclaw_ops.main()
+
+        self.assertEqual(rc, 0)
+        mocked_doctor.assert_called_once_with(refresh_doctor=False)
+        mocked_print.assert_called_once()
+
+    def test_main_doctor_cli_refreshes_when_flag_is_present(self):
+        with patch.object(jinclaw_ops, 'doctor_payload', return_value={'ok': True, 'issues': [], 'warnings': []}) as mocked_doctor:
+            with patch.object(jinclaw_ops, 'print_payload') as mocked_print:
+                with patch.object(sys, 'argv', ['jinclaw_ops.py', 'doctor', '--refresh-doctor']):
+                    rc = jinclaw_ops.main()
+
+        self.assertEqual(rc, 0)
+        mocked_doctor.assert_called_once_with(refresh_doctor=True)
+        mocked_print.assert_called_once()
 
     def test_upgrade_check_surfaces_degraded_watch_run_metadata(self):
         with tempfile.TemporaryDirectory() as tmpdir:

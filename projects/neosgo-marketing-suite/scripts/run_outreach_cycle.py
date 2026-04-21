@@ -46,6 +46,7 @@ CAPTCHA_QUEUE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "captcha-queue.json
 CAPTCHA_TEMPLATE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "captcha-decisions.template.json"
 TELEGRAM_REPLY_STATE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "telegram-reply-state.json"
 CONTENT_PATH = PROJECT_ROOT / "config" / "outreach-campaign-content.yaml"
+NOTIFICATION_POLICY_OVERRIDE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "operator-notification-policy.json"
 OUTREACH_ENV_PATH = PROJECT_ROOT / ".env.outreach"
 FORM_ADAPTERS_PATH = PROJECT_ROOT / "config" / "outreach-form-adapters.json"
 MAIL_BATCH_SCRIPT = WORKSPACE_ROOT / "skills" / "neosgo-lead-engine" / "scripts" / "send_outreach_mail_batch.py"
@@ -212,7 +213,7 @@ def _telegram_notification_policy(content: dict[str, Any]) -> dict[str, bool]:
     - 输出角色：返回结构化通知策略，供主触达链和摘要链统一消费，避免正常成功触达与周期性摘要绕过用户策略继续发消息。
     """
     raw = dict(content.get("telegram_notifications") or {})
-    return {
+    policy = {
         "notify_on_campaign_start": bool(raw.get("notify_on_campaign_start")),
         "notify_on_contact_form_submitted": bool(raw.get("notify_on_contact_form_submitted")),
         "notify_on_email_sent": bool(raw.get("notify_on_email_sent")),
@@ -220,6 +221,12 @@ def _telegram_notification_policy(content: dict[str, Any]) -> dict[str, bool]:
         "notify_on_failure_immediately": bool(raw.get("notify_on_failure_immediately", True)),
         "notify_on_campaign_summary": bool(raw.get("notify_on_campaign_summary")),
     }
+    override = _read_json(NOTIFICATION_POLICY_OVERRIDE_PATH, {})
+    if isinstance(override, dict):
+        for key in list(policy.keys()):
+            if key in override:
+                policy[key] = bool(override.get(key))
+    return policy
 
 
 def _load_outreach_env() -> dict[str, str]:

@@ -344,6 +344,23 @@ class NeosgoOutreachRuntimeTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         send_message.assert_not_called()
 
+    def test_summary_policy_override_disables_summary_even_if_yaml_enabled(self) -> None:
+        override_path = self.tmp_path / "operator-notification-policy.json"
+        override_path.write_text(
+            json.dumps({"notify_on_campaign_summary": False}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        with patch.object(
+            self.summary_module,
+            "_yaml_to_json",
+            return_value={"telegram_notifications": {"notify_on_campaign_summary": True}},
+        ):
+            with patch.object(self.summary_module, "NOTIFICATION_POLICY_OVERRIDE_PATH", override_path):
+                policy = self.summary_module._telegram_notification_policy()
+
+        self.assertFalse(policy["notify_on_campaign_summary"])
+
     def test_candidate_supply_summary_includes_source_summaries(self) -> None:
         contacts_payload = {
             "items": [

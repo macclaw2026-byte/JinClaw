@@ -1231,7 +1231,7 @@ def doctor_payload(*, refresh_doctor: bool = True) -> Dict[str, Any]:
     return payload
 
 
-def upgrade_check_payload(*, refresh_doctor: bool = True) -> Dict[str, Any]:
+def upgrade_check_payload(*, refresh_doctor: bool = False) -> Dict[str, Any]:
     """
     中文注解：
     - 功能：实现 `upgrade_check_payload` 对应的处理逻辑。
@@ -1290,16 +1290,17 @@ def main() -> int:
     """
     parser = argparse.ArgumentParser(description="JinClaw local ops commands")
     parser.add_argument("command", choices=["status", "doctor", "upgrade-check"])
+    parser.add_argument("--refresh-doctor", action="store_true")
     args = parser.parse_args()
 
     if args.command == "status":
         print_payload(status_payload())
         return 0
     if args.command == "doctor":
-        payload = doctor_payload(refresh_doctor=True)
+        payload = doctor_payload(refresh_doctor=bool(args.refresh_doctor))
         print_payload(payload)
         return 0 if payload["ok"] else 1
-    payload = upgrade_check_payload(refresh_doctor=True)
+    payload = upgrade_check_payload(refresh_doctor=bool(args.refresh_doctor))
     print_payload(payload)
     return 0 if payload["doctor"]["ok"] and payload["watch_run"]["ok"] else 1
 
