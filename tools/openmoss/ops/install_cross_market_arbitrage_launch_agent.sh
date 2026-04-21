@@ -18,14 +18,32 @@ TARGET="/Users/mac_claw/Library/LaunchAgents/ai.jinclaw.cross-market-arbitrage.p
 LABEL="ai.jinclaw.cross-market-arbitrage"
 UID="$(id -u)"
 DISABLED_SENTINEL="/Users/mac_claw/.openclaw/workspace/tools/openmoss/runtime/control_center/governance/disabled_services/cross_market_arbitrage.json"
+PERSISTENT_DISABLED_SENTINEL="/Users/mac_claw/.openclaw/operator_state/disabled_services/cross_market_arbitrage.json"
+ROOT="/Users/mac_claw/.openclaw/workspace"
+SCRIPT_PATH="$ROOT/skills/cross-market-arbitrage-engine/scripts/run_cross_market_arbitrage_cycle.py"
 
-if [[ -f "$DISABLED_SENTINEL" ]]; then
-  echo "cross-market arbitrage is disabled by sentinel: $DISABLED_SENTINEL" >&2
+if [[ -f "$DISABLED_SENTINEL" || -f "$PERSISTENT_DISABLED_SENTINEL" ]]; then
+  ACTIVE_SENTINEL="$DISABLED_SENTINEL"
+  if [[ ! -f "$ACTIVE_SENTINEL" ]]; then
+    ACTIVE_SENTINEL="$PERSISTENT_DISABLED_SENTINEL"
+  fi
+  echo "cross-market arbitrage is disabled by sentinel: $ACTIVE_SENTINEL" >&2
   echo "refusing to install or start ${LABEL}; remove the sentinel intentionally before re-enabling" >&2
   exit 1
 fi
 
 cp "$SOURCE" "$TARGET"
+launchctl enable "gui/${UID}/${LABEL}" >/dev/null 2>&1 || true
 launchctl bootout "gui/${UID}" "$TARGET" >/dev/null 2>&1 || true
 launchctl bootstrap "gui/${UID}" "$TARGET"
 launchctl kickstart -k "gui/${UID}/${LABEL}"
+
+AGENT_PID="$(launchctl print "gui/${UID}/${LABEL}" 2>/dev/null | awk '/^\tpid = / { print $3; exit }')"
+ps -axo pid=,command= | while read -r pid command; do
+  [[ -n "$pid" ]] || continue
+  [[ "$command" == *"$SCRIPT_PATH --mode daemon"* ]] || continue
+  [[ -n "$AGENT_PID" && "$pid" == "$AGENT_PID" ]] && continue
+  kill "$pid" >/dev/null 2>&1 || true
+  sleep 1
+  kill -0 "$pid" >/dev/null 2>&1 && kill -9 "$pid" >/dev/null 2>&1 || true
+done

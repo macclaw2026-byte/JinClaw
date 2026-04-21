@@ -20,10 +20,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable
 
-from paths import CONTROL_CENTER_RUNTIME_ROOT
+from paths import CONTROL_CENTER_RUNTIME_ROOT, OPENCLAW_ROOT
 
 
 DISABLED_SERVICES_ROOT = CONTROL_CENTER_RUNTIME_ROOT / "governance" / "disabled_services"
+PERSISTENT_DISABLED_SERVICES_ROOT = OPENCLAW_ROOT / "operator_state" / "disabled_services"
 
 SERVICE_ALIASES = {
     "ai.jinclaw.cross-market-arbitrage": "cross_market_arbitrage",
@@ -57,6 +58,15 @@ def disabled_service_path(service_name: str) -> Path:
     return DISABLED_SERVICES_ROOT / f"{normalize_service_name(service_name)}.json"
 
 
+def persistent_disabled_service_path(service_name: str) -> Path:
+    """
+    中文注解：
+    - 输入角色：接收服务名。
+    - 输出角色：返回持久化停用哨兵路径；即使 workspace runtime 被清理，用户显式停用意图仍可保留。
+    """
+    return PERSISTENT_DISABLED_SERVICES_ROOT / f"{normalize_service_name(service_name)}.json"
+
+
 def read_disabled_service(service_name: str) -> Dict[str, Any]:
     """
     中文注解：
@@ -64,18 +74,23 @@ def read_disabled_service(service_name: str) -> Dict[str, Any]:
     - 输出角色：返回结构化、可序列化的停用状态；哨兵存在但不可读时按 fail-closed 处理为 disabled。
     """
     normalized = normalize_service_name(service_name)
-    path = disabled_service_path(normalized)
+    runtime_path = disabled_service_path(normalized)
+    persistent_path = persistent_disabled_service_path(normalized)
+    paths = [runtime_path, persistent_path]
+    existing_path = next((path for path in paths if path.exists()), runtime_path)
     base: Dict[str, Any] = {
         "service": normalized,
-        "path": str(path),
-        "exists": path.exists(),
+        "path": str(existing_path),
+        "paths": [str(path) for path in paths],
+        "exists": any(path.exists() for path in paths),
         "disabled": False,
         "reason": "",
         "checked_at": _utc_now_iso(),
         "fail_closed": False,
     }
-    if not path.exists():
+    if not base["exists"]:
         return base
+    path = existing_path
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:

@@ -21,11 +21,16 @@ PYTHON_BIN="$ROOT/tools/matrix-venv/bin/python"
 SCRIPT_PATH="$ROOT/skills/cross-market-arbitrage-engine/scripts/run_cross_market_arbitrage_cycle.py"
 PRECHECK_LOG="$ROOT/output/cross-market-arbitrage-engine/startup-preflight.log"
 DISABLED_SENTINEL="$ROOT/tools/openmoss/runtime/control_center/governance/disabled_services/cross_market_arbitrage.json"
+PERSISTENT_DISABLED_SENTINEL="/Users/mac_claw/.openclaw/operator_state/disabled_services/cross_market_arbitrage.json"
 
 mkdir -p "$(dirname "$PRECHECK_LOG")"
 
-if [[ -f "$DISABLED_SENTINEL" ]]; then
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] cross-market arbitrage disabled by sentinel: $DISABLED_SENTINEL" | tee -a "$PRECHECK_LOG" >&2
+if [[ -f "$DISABLED_SENTINEL" || -f "$PERSISTENT_DISABLED_SENTINEL" ]]; then
+  ACTIVE_SENTINEL="$DISABLED_SENTINEL"
+  if [[ ! -f "$ACTIVE_SENTINEL" ]]; then
+    ACTIVE_SENTINEL="$PERSISTENT_DISABLED_SENTINEL"
+  fi
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] cross-market arbitrage disabled by sentinel: $ACTIVE_SENTINEL" | tee -a "$PRECHECK_LOG" >&2
   exit 0
 fi
 

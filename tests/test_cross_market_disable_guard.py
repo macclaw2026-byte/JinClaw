@@ -49,11 +49,15 @@ class CrossMarketDisableGuardTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.previous_disabled_root = service_disable_registry.DISABLED_SERVICES_ROOT
+        self.previous_persistent_disabled_root = service_disable_registry.PERSISTENT_DISABLED_SERVICES_ROOT
         service_disable_registry.DISABLED_SERVICES_ROOT = Path(self.tmp.name) / 'disabled_services'
         service_disable_registry.DISABLED_SERVICES_ROOT.mkdir(parents=True, exist_ok=True)
+        service_disable_registry.PERSISTENT_DISABLED_SERVICES_ROOT = Path(self.tmp.name) / 'persistent_disabled_services'
+        service_disable_registry.PERSISTENT_DISABLED_SERVICES_ROOT.mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
         service_disable_registry.DISABLED_SERVICES_ROOT = self.previous_disabled_root
+        service_disable_registry.PERSISTENT_DISABLED_SERVICES_ROOT = self.previous_persistent_disabled_root
         self.tmp.cleanup()
 
     def _write_disabled_sentinel(self):
@@ -64,6 +68,21 @@ class CrossMarketDisableGuardTest(unittest.TestCase):
                     'service': 'cross_market_arbitrage',
                     'disabled': True,
                     'reason': 'unit_test_disabled',
+                    'requires_manual_reenable': True,
+                }
+            ),
+            encoding='utf-8',
+        )
+        return path
+
+    def _write_persistent_disabled_sentinel(self):
+        path = service_disable_registry.persistent_disabled_service_path('cross_market_arbitrage')
+        path.write_text(
+            json.dumps(
+                {
+                    'service': 'cross_market_arbitrage',
+                    'disabled': True,
+                    'reason': 'unit_test_persistent_disabled',
                     'requires_manual_reenable': True,
                 }
             ),
@@ -83,6 +102,20 @@ class CrossMarketDisableGuardTest(unittest.TestCase):
         self.assertEqual(cross_market['recommended_mode'], 'disabled')
         self.assertFalse(cross_market['start_tasks'])
         self.assertFalse(cross_market['allow_report'])
+        self.assertTrue(cross_market['service_disabled'])
+        self.assertEqual(cross_market['disabled_service']['path'], str(sentinel))
+
+    def test_scheduler_policy_fail_closes_cross_market_when_persistent_disable_exists(self):
+        sentinel = self._write_persistent_disabled_sentinel()
+        policy = build_project_scheduler_policy(
+            crawler_profile={'feedback': {'coverage_status': 'strong'}, 'summary': {}},
+            remediation_execution={'items': []},
+            system_summary={},
+        )
+
+        cross_market = policy['cross_market_arbitrage']
+        self.assertEqual(cross_market['recommended_mode'], 'disabled')
+        self.assertFalse(cross_market['start_tasks'])
         self.assertTrue(cross_market['service_disabled'])
         self.assertEqual(cross_market['disabled_service']['path'], str(sentinel))
 
