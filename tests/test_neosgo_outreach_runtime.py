@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 ROOT = Path("/Users/mac_claw/.openclaw/workspace")
 SCRIPT_PATH = ROOT / "projects/neosgo-marketing-suite/scripts/run_outreach_cycle.py"
+SUMMARY_SCRIPT_PATH = ROOT / "projects/neosgo-marketing-suite/scripts/send_outreach_progress_telegram.py"
 
 
 def _load_outreach_module():
@@ -19,9 +20,18 @@ def _load_outreach_module():
     return module
 
 
+def _load_outreach_summary_module():
+    spec = importlib.util.spec_from_file_location("neosgo_outreach_summary_for_test", SUMMARY_SCRIPT_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
 class NeosgoOutreachRuntimeTests(unittest.TestCase):
     def setUp(self) -> None:
         self.module = _load_outreach_module()
+        self.summary_module = _load_outreach_summary_module()
         self.tmp = tempfile.TemporaryDirectory()
         self.tmp_path = Path(self.tmp.name)
 
@@ -265,6 +275,74 @@ class NeosgoOutreachRuntimeTests(unittest.TestCase):
             [item["company_name"] for item in candidates[:4]],
             ["Designer One", "Contractor One", "Designer Two", "Contractor Two"],
         )
+
+    def test_notify_success_respects_disabled_success_policy(self) -> None:
+        with patch.object(self.module, "_send_telegram") as send_telegram:
+            result = self.module._notify_success(
+                "8528973600",
+                {"company_name": "Quiet Lead", "geo": "MA / new_england"},
+                "contact_form",
+                {"reason": "submitted"},
+                notification_policy={
+                    "notify_on_contact_form_submitted": False,
+                    "notify_on_email_sent": False,
+                },
+            )
+
+        self.assertIsNone(result)
+        send_telegram.assert_not_called()
+
+    def test_form_failure_without_email_fallback_notifies_immediately(self) -> None:
+        form_result = {"ok": False, "reason": "submission_failed", "errors": ["missing token"]}
+        with patch.object(self.module, "_email_is_usable", return_value=False):
+            with patch.object(self.module, "_is_retryable_form_result", return_value=False):
+                with patch.object(
+                    self.module,
+                    "_notify_failure",
+                    return_value={"returncode": 0, "stdout": "sent"},
+                ) as notify_failure:
+                    target, event, telegram = self.module._email_fallback_after_form_failure(
+                        item={
+                            "company_name": "Blocked Lead",
+                            "website": "https://blocked.example.com",
+                        },
+                        state={"targets": {}},
+                        content={},
+                        adapters={},
+                        chat_id="8528973600",
+                        no_telegram=False,
+                        notification_policy={"notify_on_failure_immediately": True},
+                        form_result=form_result,
+                    )
+
+        self.assertEqual(target["status"], "contact_form_failed")
+        self.assertEqual(event["type"], "contact_form_failed")
+        self.assertEqual(telegram, {"returncode": 0, "stdout": "sent"})
+        notify_failure.assert_called_once()
+
+    def test_summary_script_skips_when_summary_notifications_disabled(self) -> None:
+        summary_path = self.tmp_path / "latest-summary.json"
+        summary_path.write_text(
+            json.dumps({"generated_at": "2026-04-21T12:00:00Z", "total_touched": 1}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        state_path = self.tmp_path / "telegram-summary-state.json"
+        state_path.write_text("{}", encoding="utf-8")
+
+        with patch.object(self.summary_module, "LATEST_SUMMARY_PATH", summary_path):
+            with patch.object(self.summary_module, "STATE_PATH", state_path):
+                with patch.object(
+                    self.summary_module,
+                    "_telegram_notification_policy",
+                    return_value={"notify_on_campaign_summary": False},
+                ):
+                    with patch.object(self.summary_module, "_send") as send_message:
+                        with patch.object(self.summary_module, "DEFAULT_CHAT", "8528973600"):
+                            with patch("sys.argv", ["send_outreach_progress_telegram.py"]):
+                                rc = self.summary_module.main()
+
+        self.assertEqual(rc, 0)
+        send_message.assert_not_called()
 
     def test_candidate_supply_summary_includes_source_summaries(self) -> None:
         contacts_payload = {

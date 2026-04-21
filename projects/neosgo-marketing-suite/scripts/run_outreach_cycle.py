@@ -205,6 +205,23 @@ def _load_content() -> dict[str, Any]:
     }
 
 
+def _telegram_notification_policy(content: dict[str, Any]) -> dict[str, bool]:
+    """
+    中文注解：
+    - 输入角色：消费 outreach 内容配置里的 telegram_notifications 配置段。
+    - 输出角色：返回结构化通知策略，供主触达链和摘要链统一消费，避免正常成功触达与周期性摘要绕过用户策略继续发消息。
+    """
+    raw = dict(content.get("telegram_notifications") or {})
+    return {
+        "notify_on_campaign_start": bool(raw.get("notify_on_campaign_start")),
+        "notify_on_contact_form_submitted": bool(raw.get("notify_on_contact_form_submitted")),
+        "notify_on_email_sent": bool(raw.get("notify_on_email_sent")),
+        "notify_on_email_delivered": bool(raw.get("notify_on_email_delivered")),
+        "notify_on_failure_immediately": bool(raw.get("notify_on_failure_immediately", True)),
+        "notify_on_campaign_summary": bool(raw.get("notify_on_campaign_summary")),
+    }
+
+
 def _load_outreach_env() -> dict[str, str]:
     values: dict[str, str] = {}
     if not OUTREACH_ENV_PATH.exists():
@@ -2103,7 +2120,16 @@ def _build_summary(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _notify_failure(chat_id: str, item: dict[str, Any], channel: str, result: dict[str, Any]) -> dict[str, Any]:
+def _notify_failure(
+    chat_id: str,
+    item: dict[str, Any],
+    channel: str,
+    result: dict[str, Any],
+    *,
+    notify_enabled: bool,
+) -> dict[str, Any] | None:
+    if not notify_enabled:
+        return None
     text = (
         "NEOSGO 触达需要人工处理。\n"
         f"公司：{item.get('company_name')}\n"
@@ -2116,9 +2142,22 @@ def _notify_failure(chat_id: str, item: dict[str, Any], channel: str, result: di
     return _send_telegram(chat_id, text)
 
 
-def _notify_success(chat_id: str, item: dict[str, Any], channel: str, result: dict[str, Any]) -> dict[str, Any] | None:
+def _notify_success(
+    chat_id: str,
+    item: dict[str, Any],
+    channel: str,
+    result: dict[str, Any],
+    *,
+    notification_policy: dict[str, bool],
+) -> dict[str, Any] | None:
     reason = str(result.get('reason', 'submitted') or 'submitted').strip()
     if channel == 'email' or reason in {'email_sent_local_only', 'email_sent_local_only_after_form_failure'}:
+        if not notification_policy.get("notify_on_email_sent", False):
+            return None
+    if channel == 'contact_form':
+        if not notification_policy.get("notify_on_contact_form_submitted", False):
+            return None
+    if channel == 'email' and not notification_policy.get("notify_on_email_sent", False):
         return None
     text = (
         "NEOSGO 触达进展。\n"
@@ -2154,10 +2193,6 @@ def _notify_manual_review_required(chat_id: str, item: dict[str, Any], status: s
     detail = reason
     if errors:
         detail = f"{detail} ({'; '.join(errors[:3])})" if detail else "; ".join(errors[:3])
-    # User preference: do not notify on form-only uncertainty/failure when the system should auto-reroute;
-    # only notify when both form and email paths are exhausted and human intervention is actually required.
-    if reason in {"retryable_form_result_without_email_fallback", "form_failed_no_usable_email_fallback", "form_failed_without_email_fallback"}:
-        return None
     action_text = {
         "contact_form_needs_review": "网站表单结果不够明确，需要你人工看一下是否算成功，或是否应改走邮件。",
         "review_hold": "系统已保守暂停，避免重复打扰；需要你判断是继续重试、改走邮件，还是停止。",
@@ -2269,6 +2304,7 @@ def _email_fallback_after_form_failure(
     adapters: dict[str, Any],
     chat_id: str,
     no_telegram: bool,
+    notification_policy: dict[str, bool],
     form_result: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]:
     min_gap = int((content.get("delivery_rules") or {}).get("min_minutes_between_emails", 5) or 5)
@@ -2322,7 +2358,13 @@ def _email_fallback_after_form_failure(
                 "result": email_result,
                 "fallback_from": "contact_form",
             }
-            telegram = None if no_telegram else _notify_success(chat_id, item, "email", {"reason": "email_sent_local_only_after_form_failure"})
+            telegram = None if no_telegram else _notify_success(
+                chat_id,
+                item,
+                "email",
+                {"reason": "email_sent_local_only_after_form_failure"},
+                notification_policy=notification_policy,
+            )
             return target, event, telegram
 
         target = _target_status_update(
@@ -2344,78 +2386,110 @@ def _email_fallback_after_form_failure(
             "result": email_result,
             "fallback_from": "contact_form",
         }
-        telegram = None if no_telegram else _notify_failure(chat_id, item, "email", {"reason": "email_send_failed_after_form_failure"})
+        telegram = None if no_telegram else _notify_failure(
+            chat_id,
+            item,
+            "email",
+            {"reason": "email_send_failed_after_form_failure"},
+            notify_enabled=notification_policy.get("notify_on_failure_immediately", True),
+        )
         return target, event, telegram
 
     if not _email_is_usable(item):
         if _is_retryable_form_result(form_result):
-            return (
-                _target_status_update(
-                    item,
-                    "contact_form",
-                    "contact_form_needs_review",
-                    {
-                        "result": {
-                            "reason": "retryable_form_result_without_email_fallback",
-                            "form_reason": form_result.get("reason"),
-                            "errors": list(form_result.get("errors") or []),
-                        },
-                        "contact_form_url": contact_form_url,
-                        "contact_form_result": form_result,
-                    },
-                ),
-                {
-                    "type": "contact_form_needs_review",
-                    "at": _now_iso(),
-                    "key": _target_key(item),
-                    "company_name": item.get("company_name"),
-                    "result": {"reason": "retryable_form_result_without_email_fallback", "form_reason": form_result.get("reason")},
-                },
-                None,
-            )
-        return (
-            _target_status_update(
+            target = _target_status_update(
                 item,
                 "contact_form",
-                "contact_form_failed",
+                "contact_form_needs_review",
                 {
                     "result": {
-                        "reason": "form_failed_no_usable_email_fallback",
+                        "reason": "retryable_form_result_without_email_fallback",
                         "form_reason": form_result.get("reason"),
                         "errors": list(form_result.get("errors") or []),
                     },
                     "contact_form_url": contact_form_url,
                     "contact_form_result": form_result,
                 },
-            ),
-            {
-                "type": "contact_form_failed",
+            )
+            event = {
+                "type": "contact_form_needs_review",
                 "at": _now_iso(),
                 "key": _target_key(item),
                 "company_name": item.get("company_name"),
-                "result": {"reason": "form_failed_no_usable_email_fallback", "form_reason": form_result.get("reason")},
-            },
-            None,
-        )
-    return (
-        _target_status_update(
+                "result": {"reason": "retryable_form_result_without_email_fallback", "form_reason": form_result.get("reason")},
+            }
+            telegram = None if no_telegram else _notify_manual_review_required(
+                chat_id,
+                item,
+                "contact_form_needs_review",
+                dict(target.get("result") or {}),
+            )
+            return (
+                target,
+                event,
+                telegram,
+            )
+        target = _target_status_update(
             item,
             "contact_form",
             "contact_form_failed",
             {
-                "result": {"reason": "form_failed_without_email_fallback", "form_reason": form_result.get("reason")},
+                "result": {
+                    "reason": "form_failed_no_usable_email_fallback",
+                    "form_reason": form_result.get("reason"),
+                    "errors": list(form_result.get("errors") or []),
+                },
                 "contact_form_url": contact_form_url,
                 "contact_form_result": form_result,
             },
-        ),
-        {
+        )
+        event = {
             "type": "contact_form_failed",
             "at": _now_iso(),
             "key": _target_key(item),
             "company_name": item.get("company_name"),
+            "result": {"reason": "form_failed_no_usable_email_fallback", "form_reason": form_result.get("reason")},
+        }
+        telegram = None if no_telegram else _notify_failure(
+            chat_id,
+            item,
+            "contact_form",
+            {"reason": "form_failed_no_usable_email_fallback"},
+            notify_enabled=notification_policy.get("notify_on_failure_immediately", True),
+        )
+        return (
+            target,
+            event,
+            telegram,
+        )
+    target = _target_status_update(
+        item,
+        "contact_form",
+        "contact_form_failed",
+        {
             "result": {"reason": "form_failed_without_email_fallback", "form_reason": form_result.get("reason")},
+            "contact_form_url": contact_form_url,
+            "contact_form_result": form_result,
         },
-        None,
+    )
+    event = {
+        "type": "contact_form_failed",
+        "at": _now_iso(),
+        "key": _target_key(item),
+        "company_name": item.get("company_name"),
+        "result": {"reason": "form_failed_without_email_fallback", "form_reason": form_result.get("reason")},
+    }
+    telegram = None if no_telegram else _notify_failure(
+        chat_id,
+        item,
+        "contact_form",
+        {"reason": "form_failed_without_email_fallback"},
+        notify_enabled=notification_policy.get("notify_on_failure_immediately", True),
+    )
+    return (
+        target,
+        event,
+        telegram,
     )
 
 
@@ -2427,6 +2501,7 @@ def main() -> int:
     args = parser.parse_args()
 
     content = _load_content()
+    notification_policy = _telegram_notification_policy(content)
     adapters = _load_form_adapters()
     state = _load_state()
     _backfill_target_metadata(state, adapters)
@@ -2511,7 +2586,13 @@ def main() -> int:
                 _append_event(event)
                 attempts.append(event)
                 if not args.no_telegram:
-                    state["targets"][key]["telegram_last"] = _notify_success(args.chat_id, item, channel, result)
+                    state["targets"][key]["telegram_last"] = _notify_success(
+                        args.chat_id,
+                        item,
+                        channel,
+                        result,
+                        notification_policy=notification_policy,
+                    )
             else:
                 fallback_target, event, telegram = _email_fallback_after_form_failure(
                     item=item,
@@ -2520,6 +2601,7 @@ def main() -> int:
                     adapters=adapters,
                     chat_id=args.chat_id,
                     no_telegram=args.no_telegram,
+                    notification_policy=notification_policy,
                     form_result=result,
                 )
                 fallback_target["contact_form_url"] = item.get("contact_form_url") or item.get("website")
@@ -2548,7 +2630,13 @@ def main() -> int:
                 _append_event(event)
                 attempts.append(event)
                 if not args.no_telegram:
-                    state["targets"][key]["telegram_last"] = _notify_success(args.chat_id, item, channel, {"reason": "email_sent_local_only"})
+                    state["targets"][key]["telegram_last"] = _notify_success(
+                        args.chat_id,
+                        item,
+                        channel,
+                        {"reason": "email_sent_local_only"},
+                        notification_policy=notification_policy,
+                    )
             else:
                 state["targets"][key] = _target_status_update(
                     item,
@@ -2561,7 +2649,13 @@ def main() -> int:
                 attempts.append(event)
                 failure = event
                 if not args.no_telegram:
-                    state["targets"][key]["telegram_last"] = _notify_failure(args.chat_id, item, channel, {"reason": "email_send_failed"})
+                    state["targets"][key]["telegram_last"] = _notify_failure(
+                        args.chat_id,
+                        item,
+                        channel,
+                        {"reason": "email_send_failed"},
+                        notify_enabled=notification_policy.get("notify_on_failure_immediately", True),
+                    )
                 break
 
     summary = _build_summary(state)

@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import subprocess
+import textwrap
 from datetime import datetime
 from pathlib import Path
 
@@ -22,6 +23,7 @@ DEFAULT_CHAT = "8528973600"
 DEFAULT_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 LATEST_SUMMARY_PATH = PROJECT_ROOT / "runtime" / "outreach" / "latest-summary.json"
 STATE_PATH = PROJECT_ROOT / "runtime" / "outreach" / "telegram-summary-state.json"
+CONTENT_PATH = PROJECT_ROOT / "config" / "outreach-campaign-content.yaml"
 
 
 def _subprocess_env() -> dict[str, str]:
@@ -37,6 +39,47 @@ def _read_json(path: Path, default: dict) -> dict:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return default
+
+
+def _yaml_to_json(path: Path) -> dict:
+    ruby = textwrap.dedent(
+        """
+        require 'yaml'
+        require 'json'
+        data = YAML.load_file(ARGV[0])
+        puts JSON.generate(data)
+        """
+    )
+    proc = subprocess.run(
+        ["/usr/bin/ruby", "-e", ruby, str(path)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=_subprocess_env(),
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "yaml parse failed")
+    payload = json.loads(proc.stdout or "{}")
+    return payload if isinstance(payload, dict) else {}
+
+
+def _telegram_notification_policy() -> dict[str, bool]:
+    """
+    中文注解：
+    - 输入角色：消费 outreach 内容配置里的 telegram_notifications 配置段。
+    - 输出角色：返回结构化通知策略，供周期性摘要脚本在发送前做统一门禁。
+    """
+    try:
+        content = _yaml_to_json(CONTENT_PATH)
+    except Exception:
+        return {
+            "notify_on_campaign_summary": False,
+        }
+    raw = dict(content.get("telegram_notifications") or {})
+    return {
+        "notify_on_campaign_summary": bool(raw.get("notify_on_campaign_summary")),
+    }
 
 
 def _send(chat_id: str, text: str) -> dict:
@@ -136,11 +179,16 @@ def main() -> int:
     parser.add_argument("--chat-id", default=os.environ.get("NEOSGO_OUTREACH_CHAT", DEFAULT_CHAT))
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
+    notification_policy = _telegram_notification_policy()
 
     latest = _read_json(LATEST_SUMMARY_PATH, {})
     if not latest:
         print(json.dumps({"ok": False, "reason": "missing_latest_summary"}, ensure_ascii=False))
         return 1
+
+    if not notification_policy.get("notify_on_campaign_summary", False):
+        print(json.dumps({"ok": True, "skipped": True, "reason": "campaign_summary_notifications_disabled"}, ensure_ascii=False))
+        return 0
 
     state = _read_json(STATE_PATH, {})
     generated_at = str(latest.get("generated_at") or "")

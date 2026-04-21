@@ -121,11 +121,11 @@ optional_form_fields:
 
 telegram_notifications:
   notify_on_campaign_start: true
-  notify_on_contact_form_submitted: true
-  notify_on_email_sent: true
-  notify_on_email_delivered: true
+  notify_on_contact_form_submitted: false
+  notify_on_email_sent: false
+  notify_on_email_delivered: false
   notify_on_failure_immediately: true
-  notify_on_campaign_summary: true
+  notify_on_campaign_summary: false
 
 operator_notes:
   filling_instructions:
