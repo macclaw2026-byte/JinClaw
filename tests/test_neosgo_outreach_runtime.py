@@ -367,6 +367,57 @@ class NeosgoOutreachRuntimeTests(unittest.TestCase):
         self.assertEqual(state["targets"]["lead-1"]["force_channel"], "email")
         self.assertEqual(events[0]["type"], "target_rerouted_for_email")
 
+    def test_backfill_target_metadata_restores_email_from_candidates(self) -> None:
+        contacts_path = self.tmp_path / "validated-contacts.json"
+        config_path = self.tmp_path / "project-config.json"
+        contacts_path.write_text(
+            json.dumps(
+                {
+                    "items": [
+                        {
+                            "company_name": "Backfill Lead",
+                            "source_url": "maps://lead-1",
+                            "geo": "MA / new_england",
+                            "website": "https://backfill.example.com",
+                            "email": "hello@backfill.example.com",
+                            "email_validation_reason": "domain_match",
+                            "contact_form_detected": True,
+                            "contact_form_signals": ["textarea_field"],
+                            "contact_form_url": "https://backfill.example.com/contact",
+                            "website_fit_status": "approved",
+                            "query_family": "google_maps_interior_designer",
+                            "source_family": "google_maps_places",
+                            "account_type": "designer",
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        config_path.write_text(
+            json.dumps({"project": {"priority_regions": ["MA"]}}),
+            encoding="utf-8",
+        )
+        state = {
+            "targets": {
+                "maps://lead-1": {
+                    "company_name": "Backfill Lead",
+                    "status": "contact_form_needs_review",
+                    "website": "https://backfill.example.com",
+                    "email": "",
+                }
+            }
+        }
+
+        with patch.object(self.module, "CONTACTS_PATH", contacts_path), patch.object(self.module, "PROJECT_CONFIG_PATH", config_path):
+            self.module._backfill_target_metadata(state, {})
+
+        target = state["targets"]["maps://lead-1"]
+        self.assertEqual(target["email"], "hello@backfill.example.com")
+        self.assertEqual(target["contact_form_url"], "https://backfill.example.com/contact")
+        self.assertTrue(target["contact_form_detected"])
+        self.assertEqual(target["query_family"], "google_maps_interior_designer")
+
     def test_summary_script_skips_when_summary_notifications_disabled(self) -> None:
         summary_path = self.tmp_path / "latest-summary.json"
         summary_path.write_text(

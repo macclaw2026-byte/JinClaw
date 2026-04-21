@@ -83,6 +83,46 @@ class GoogleMapsCaptureRuntimeTests(unittest.TestCase):
         self.assertEqual(status, "approved")
         self.assertTrue(reasons)
 
+    def test_email_is_realish_rejects_placeholder_emails(self) -> None:
+        self.assertEqual(
+            enrich_runtime._email_is_realish("info@mysite.com", "bostondesignandinteriors.com"),
+            (False, "blocked_placeholder_domain"),
+        )
+        self.assertEqual(
+            enrich_runtime._email_is_realish("filler@godaddy.com", "ahouserefined.com"),
+            (False, "blocked_placeholder_local"),
+        )
+        self.assertEqual(
+            enrich_runtime._email_is_realish("yourname@example.com", "dwr.com"),
+            (False, "blocked_placeholder_local"),
+        )
+        self.assertEqual(
+            enrich_runtime._email_is_realish("hello@brandstudio.com", "brandstudio.com"),
+            (True, "domain_match"),
+        )
+
+    def test_fetch_required_revisits_placeholder_email_even_with_contact_form(self) -> None:
+        self.assertTrue(
+            enrich_runtime._fetch_required(
+                {
+                    "email": "info@mysite.com",
+                    "email_validation_reason": "domain_resolves",
+                    "contact_form_detected": True,
+                },
+                "https://www.bostondesignandinteriors.com/",
+            )
+        )
+        self.assertFalse(
+            enrich_runtime._fetch_required(
+                {
+                    "email": "hello@brandstudio.com",
+                    "email_validation_reason": "domain_match",
+                    "contact_form_detected": True,
+                },
+                "https://www.brandstudio.com/",
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

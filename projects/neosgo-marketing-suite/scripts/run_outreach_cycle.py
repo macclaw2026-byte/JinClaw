@@ -1181,6 +1181,14 @@ def _backfill_target_metadata(state: dict[str, Any], adapters: dict[str, Any]) -
     for key, target in list((state.get("targets") or {}).items()):
         candidate = dict(candidates.get(key) or {})
         if candidate:
+            if not str(target.get("website") or "").strip() and str(candidate.get("website") or "").strip():
+                target["website"] = candidate.get("website")
+            if not str(target.get("email") or "").strip() and str(candidate.get("email") or "").strip():
+                target["email"] = candidate.get("email")
+            if not str(target.get("contact_form_url") or "").strip() and str(candidate.get("contact_form_url") or "").strip():
+                target["contact_form_url"] = candidate.get("contact_form_url")
+            if target.get("contact_form_detected") in {None, ""} and candidate.get("contact_form_detected") is not None:
+                target["contact_form_detected"] = candidate.get("contact_form_detected")
             target.setdefault("outreach_lane", candidate.get("outreach_lane") or _outreach_lane(candidate, adapters))
             target.setdefault("adapter_domain", candidate.get("adapter_domain") or _normalized_domain(str(candidate.get("contact_form_url") or candidate.get("website") or "")))
             target.setdefault("query_family", candidate.get("query_family"))

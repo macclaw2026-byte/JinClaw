@@ -31,6 +31,8 @@ from tools.openmoss.ops.local_data_platform_bridge import sync_marketing_suite
 EMAIL_RE = re.compile(r"([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})", re.I)
 FORM_HINT_RE = re.compile(r"(contact|quote|project|inquiry|enquiry|consult|trade|partner)", re.I)
 BLOCKED_EMAIL_PREFIXES = {"noreply", "no-reply", "donotreply", "do-not-reply", "example"}
+BLOCKED_EMAIL_LOCALS = {"filler", "yourname", "email"}
+BLOCKED_EMAIL_DOMAINS = {"example.com", "mysite.com"}
 BLOCKED_EMAIL_PATTERNS = ("sentry", "user@domain.com")
 APPROVED_WEBSITE_TERMS = (
     "interior design",
@@ -171,6 +173,12 @@ def _lane_label(item: dict[str, Any]) -> str:
 def _fetch_required(previous: dict[str, Any], website: str) -> bool:
     if not website:
         return False
+    email = str(previous.get("email", "") or "").strip()
+    if email:
+        email_ok, _ = _email_is_realish(email, _website_root_domain(website))
+        if not email_ok:
+            return True
+        return False
     validation_reason = str(previous.get("email_validation_reason", "") or "").strip()
     if validation_reason in {"domain_match", "domain_resolves"}:
         return False
@@ -290,6 +298,10 @@ def _email_is_realish(email: str, website_domain: str) -> tuple[bool, str]:
     local, _, domain = email.partition("@")
     if local in BLOCKED_EMAIL_PREFIXES:
         return False, "blocked_prefix"
+    if local in BLOCKED_EMAIL_LOCALS:
+        return False, "blocked_placeholder_local"
+    if domain in BLOCKED_EMAIL_DOMAINS or domain.endswith(".example.com") or domain.endswith(".mysite.com"):
+        return False, "blocked_placeholder_domain"
     if any(pattern in email for pattern in BLOCKED_EMAIL_PATTERNS):
         return False, "blocked_pattern"
     try:
