@@ -320,6 +320,53 @@ class NeosgoOutreachRuntimeTests(unittest.TestCase):
         self.assertEqual(telegram, {"returncode": 0, "stdout": "sent"})
         notify_failure.assert_called_once()
 
+    def test_retryable_form_result_prefers_email_without_manual_review_telegram(self) -> None:
+        form_result = {"ok": False, "reason": "unknown_result", "errors": []}
+        with patch.object(self.module, "_email_is_usable", return_value=True):
+            with patch.object(self.module, "_email_send_allowed", return_value=False):
+                with patch.object(self.module, "_is_retryable_form_result", return_value=True):
+                    with patch.object(self.module, "_notify_manual_review_required") as notify_manual_review_required:
+                        target, event, telegram = self.module._email_fallback_after_form_failure(
+                            item={
+                                "company_name": "Gray Lead",
+                                "website": "https://gray.example.com",
+                                "email": "hello@gray.example.com",
+                            },
+                            state={"targets": {}},
+                            content={"delivery_rules": {"min_minutes_between_emails": 5}},
+                            adapters={},
+                            chat_id="8528973600",
+                            no_telegram=False,
+                            notification_policy={"notify_on_failure_immediately": True},
+                            form_result=form_result,
+                        )
+
+        self.assertEqual(target["status"], "ready_for_email")
+        self.assertEqual(target["force_channel"], "email")
+        self.assertEqual(event["type"], "ready_for_email")
+        self.assertIsNone(telegram)
+        notify_manual_review_required.assert_not_called()
+
+    def test_refresh_target_routing_reroutes_retryable_failures_to_email_when_email_exists(self) -> None:
+        state = {
+            "targets": {
+                "lead-1": {
+                    "company_name": "Retry Lead",
+                    "status": "contact_form_failed",
+                    "website": "https://retry.example.com",
+                    "email": "hi@retry.example.com",
+                    "contact_form_result": {"reason": "unknown_result", "errors": []},
+                }
+            }
+        }
+        with patch.object(self.module, "_email_is_usable", return_value=True):
+            with patch.object(self.module, "_is_retryable_form_result", return_value=True):
+                events = self.module._refresh_target_routing_from_results(state, {})
+
+        self.assertEqual(state["targets"]["lead-1"]["status"], "ready_for_email")
+        self.assertEqual(state["targets"]["lead-1"]["force_channel"], "email")
+        self.assertEqual(events[0]["type"], "target_rerouted_for_email")
+
     def test_summary_script_skips_when_summary_notifications_disabled(self) -> None:
         summary_path = self.tmp_path / "latest-summary.json"
         summary_path.write_text(

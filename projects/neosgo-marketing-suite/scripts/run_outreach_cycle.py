@@ -1146,6 +1146,22 @@ def _refresh_target_routing_from_results(state: dict[str, Any], adapters: dict[s
             )
             continue
         if _is_retryable_form_result(result):
+            if _email_is_usable(target):
+                target["status"] = "ready_for_email"
+                target["force_channel"] = "email"
+                target["updated_at"] = _now_iso()
+                target["reason"] = "email_fallback_after_retryable_form_result"
+                _clear_manual_alert_tracking(target)
+                events.append(
+                    {
+                        "type": "target_rerouted_for_email",
+                        "at": _now_iso(),
+                        "key": key,
+                        "company_name": target.get("company_name"),
+                        "from_status": status,
+                    }
+                )
+                continue
             target["status"] = "contact_form_needs_review"
             target["updated_at"] = _now_iso()
             target["reason"] = "retryable_form_result"
@@ -2300,7 +2316,7 @@ def _backfill_manual_alerts(state: dict[str, Any], chat_id: str, *, no_telegram:
 
 
 def _should_email_fallback_after_form(result: dict[str, Any]) -> bool:
-    return not bool(result.get("ok"))
+    return not bool(result.get("ok")) or _is_retryable_form_result(result)
 
 
 def _email_fallback_after_form_failure(
