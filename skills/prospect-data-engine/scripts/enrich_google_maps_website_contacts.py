@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import re
 import socket
 import sys
+import zlib
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
@@ -111,6 +113,26 @@ MAX_HTML_BYTES = 1024 * 1024
 READ_CHUNK_BYTES = 64 * 1024
 
 
+def _decode_response_bytes(raw: bytes, content_encoding: str) -> bytes:
+    encoding = str(content_encoding or "").strip().lower()
+    if not raw or not encoding:
+        return raw
+    if encoding == "gzip":
+        return gzip.decompress(raw)
+    if encoding == "deflate":
+        try:
+            return zlib.decompress(raw)
+        except zlib.error:
+            return zlib.decompress(raw, -zlib.MAX_WBITS)
+    if encoding == "br":
+        try:
+            import brotli  # type: ignore
+        except ImportError:
+            return raw
+        return brotli.decompress(raw)
+    return raw
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     return read_json(path, {})
 
@@ -133,6 +155,7 @@ def _fetch_html(url: str) -> str:
     request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urlopen(request, timeout=8) as response:
         content_type = str(response.headers.get("Content-Type", "") or "").lower()
+        content_encoding = str(response.headers.get("Content-Encoding", "") or "")
         if content_type and "html" not in content_type and "text" not in content_type:
             return ""
         chunks: list[bytes] = []
@@ -146,7 +169,9 @@ def _fetch_html(url: str) -> str:
                 break
             chunks.append(chunk)
             total += len(chunk)
-        return b"".join(chunks).decode("utf-8", "ignore")
+        raw = b"".join(chunks)
+        decoded = _decode_response_bytes(raw, content_encoding)
+        return decoded.decode("utf-8", "ignore")
 
 
 def _website_root_domain(url: str) -> str:

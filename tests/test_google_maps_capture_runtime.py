@@ -1,4 +1,5 @@
 import importlib.util
+import gzip
 import sys
 import unittest
 from pathlib import Path
@@ -122,6 +123,11 @@ class GoogleMapsCaptureRuntimeTests(unittest.TestCase):
                 "https://www.brandstudio.com/",
             )
         )
+
+    def test_decode_response_bytes_supports_gzip_html(self) -> None:
+        raw = gzip.compress(b"<html><body>hello@brandstudio.com</body></html>")
+        decoded = enrich_runtime._decode_response_bytes(raw, "gzip")
+        self.assertEqual(decoded, b"<html><body>hello@brandstudio.com</body></html>")
 
 
 if __name__ == "__main__":
