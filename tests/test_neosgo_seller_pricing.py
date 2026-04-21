@@ -30,72 +30,111 @@ class NeosgoSellerPricingTest(unittest.TestCase):
         MODULE._PRICE_BASELINE_CACHE = self._old_cache
         self._tempdir.cleanup()
 
-    def test_pick_import_template_price_seeds_from_fresh_listing_fields(self) -> None:
+    def test_pick_submission_price_uses_candidate_price_as_single_truth(self) -> None:
         listing = {
-            "basePrice": "63.8",
+            "source": "GIGA",
+            "status": "SUBMITTED",
+            "originalPlatform": "Gigacloud",
+            "originalPrice": "139",
+            "basePrice": "164",
+            "price": "164",
             "pricing": {
-                "platformUnitCost": "58",
-                "retailUnitPrice": "63.8",
+                "platformUnitCost": "164",
+                "retailUnitPrice": None,
             },
         }
-        self.assertEqual(MODULE.pick_import_template_price(listing, product_id="p1", sku="s1"), 63.8)
-        self.assertEqual(MODULE.pick_submission_price(listing, product_id="p1", sku="s1"), 88.8)
-
-    def test_pick_submission_price_is_idempotent_for_already_marked_up_listing(self) -> None:
-        seeded_listing = {
-            "basePrice": "63.8",
-            "pricing": {
-                "platformUnitCost": "58",
-                "retailUnitPrice": "63.8",
-            },
-        }
-        drifted_listing = {
-            "basePrice": "88.8",
-            "price": "88.8",
-            "pricing": {
-                "platformUnitCost": "58",
-                "retailUnitPrice": "88.8",
-            },
-        }
-        self.assertEqual(MODULE.pick_submission_price(seeded_listing, product_id="p2", sku="s2"), 88.8)
-        self.assertEqual(MODULE.pick_import_template_price(drifted_listing, product_id="p2", sku="s2"), 63.8)
-        self.assertEqual(MODULE.pick_submission_price(drifted_listing, product_id="p2", sku="s2"), 88.8)
-
-    def test_pick_submission_price_prefers_bulk_template_price_for_noneditable_approved_listing(self) -> None:
-        listing = {
-            "status": "APPROVED",
-            "isActive": True,
-            "editableViaAutomation": False,
-            "pricing": {
-                "platformUnitCost": "64",
-                "retailUnitPrice": "70.4",
-            },
-            "basePrice": "70.4",
-            "price": "70.4",
+        candidate = {
+            "sku": "W2287P184402",
+            "price": 99,
         }
         self.assertEqual(
-            MODULE.pick_submission_price(listing, product_id="p3", sku="s3", prefer_active_noneditable=True),
-            95.4,
+            MODULE.pick_import_template_price(listing, product_id="p1", sku="W2287P184402", candidate=candidate),
+            99.0,
+        )
+        self.assertEqual(
+            MODULE.pick_submission_price(listing, product_id="p1", sku="W2287P184402", candidate=candidate),
+            124.0,
         )
 
-    def test_pick_submission_price_uses_original_price_for_submitted_listing_without_history(self) -> None:
+    def test_candidate_truth_overrides_stale_untrusted_baseline(self) -> None:
+        baselines = {
+            "by_product_id": {
+                "p2": {
+                    "submission_price_usd": 164.0,
+                    "source": "live_listing_original_price",
+                }
+            },
+            "by_sku": {
+                "W2287P184402": {
+                    "submission_price_usd": 164.0,
+                    "source": "live_listing_original_price",
+                }
+            },
+        }
+        MODULE.save_price_baselines(baselines)
+        listing = {
+            "source": "GIGA",
+            "status": "SUBMITTED",
+            "originalPlatform": "Gigacloud",
+        }
+        candidate = {
+            "sku": "W2287P184402",
+            "price": 99,
+        }
+        submission_price, record = MODULE.resolve_submission_price(
+            listing,
+            product_id="p2",
+            sku="W2287P184402",
+            candidate=candidate,
+        )
+        self.assertEqual(submission_price, 124.0)
+        self.assertEqual(record["template_price_usd"], 99.0)
+        self.assertTrue(record["source"].startswith(MODULE.TRUSTED_CANDIDATE_BASELINE_SOURCE))
+
+    def test_pick_submission_price_uses_trusted_cached_candidate_baseline_when_candidate_not_present(self) -> None:
+        MODULE.save_price_baselines(
+            {
+                "by_product_id": {
+                    "p3": {
+                        "template_price_usd": 99.0,
+                        "submission_price_usd": 124.0,
+                        "source": f"{MODULE.TRUSTED_CANDIDATE_BASELINE_SOURCE}:cached",
+                    }
+                },
+                "by_sku": {},
+            }
+        )
+        listing = {
+            "source": "GIGA",
+            "status": "APPROVED",
+            "originalPlatform": "Gigacloud",
+            "basePrice": "164",
+        }
+        self.assertEqual(MODULE.pick_submission_price(listing, product_id="p3", sku="s3"), 124.0)
+
+    def test_pick_submission_price_blocks_giga_listing_when_candidate_price_missing(self) -> None:
+        listing = {
+            "source": "GIGA",
+            "status": "SUBMITTED",
+            "originalPlatform": "Gigacloud",
+            "pricing": {},
+        }
+        with self.assertRaisesRegex(ValueError, "missing_candidate_template_price"):
+            MODULE.pick_submission_price(
+                listing,
+                product_id="p4",
+                sku="s4",
+                candidate={"sku": "s4"},
+            )
+
+    def test_non_giga_listing_can_still_use_live_fallback(self) -> None:
         listing = {
             "status": "SUBMITTED",
             "editableViaAutomation": True,
             "originalPrice": "45.4",
-            "pricing": {
-                "platformUnitCost": "70.4",
-                "retailUnitPrice": None,
-            },
-            "basePrice": "70.4",
-            "price": "70.4",
+            "pricing": {},
         }
         self.assertEqual(MODULE.pick_submission_price(listing, product_id="p5", sku="s5"), 70.4)
-
-    def test_pick_submission_price_blocks_when_no_live_seed_exists(self) -> None:
-        listing = {"pricing": {}}
-        with self.assertRaisesRegex(ValueError, "missing_submission_price_baseline"):
-            MODULE.pick_submission_price(listing, product_id="p4", sku="s4")
 
 
 if __name__ == "__main__":

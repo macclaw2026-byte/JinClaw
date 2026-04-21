@@ -23,6 +23,7 @@ DEFAULT_QTY = 24
 DEFAULT_BRAND = 'NEOSGO'
 PRICE_MARKUP_USD = 25
 IMPORT_TEMPLATE_RETAIL_MULTIPLIER = 1.1
+TRUSTED_CANDIDATE_BASELINE_SOURCE = 'giga_candidate_price'
 WAREHOUSE = {
     'warehouseType': 'SELLER_WAREHOUSE',
     'warehouseZip': '02865',
@@ -169,12 +170,43 @@ def _normalize_price_key(value):
     return str(value or '').strip()
 
 
-def _baseline_record(price, source):
-    return {
-        'submission_price_usd': round(float(price), 2),
+def _baseline_record(price, source, template_price=None):
+    submission_price = round(float(price), 2)
+    record = {
+        'submission_price_usd': submission_price,
         'source': str(source or '').strip(),
         'updated_at': datetime.now(timezone.utc).isoformat(),
     }
+    if template_price is not None:
+        record['template_price_usd'] = round(float(template_price), 2)
+    return record
+
+
+def _baseline_source_is_trusted(record):
+    source = str((record or {}).get('source') or '').strip()
+    return source.startswith(TRUSTED_CANDIDATE_BASELINE_SOURCE)
+
+
+def _candidate_template_price(candidate):
+    if not isinstance(candidate, dict):
+        return None, ''
+    raw_price_candidates = [
+        candidate.get('price'),
+        candidate.get('templatePrice'),
+        candidate.get('retailUnitPrice'),
+        candidate.get('basePrice'),
+    ]
+    for raw_value in raw_price_candidates:
+        parsed = _parse_price_number(raw_value)
+        if parsed is not None:
+            return round(parsed, 2), TRUSTED_CANDIDATE_BASELINE_SOURCE
+    return None, ''
+
+
+def _listing_is_giga_import(listing):
+    source = str((listing or {}).get('source') or '').strip().upper()
+    original_platform = str((listing or {}).get('originalPlatform') or '').strip().lower()
+    return source == 'GIGA' or original_platform == 'gigacloud' or bool((listing or {}).get('gigaImportedListing'))
 
 
 def _build_historical_price_baselines():
@@ -184,10 +216,22 @@ def _build_historical_price_baselines():
     for path in sorted(PRICE_BASELINE_REPORTS_DIR.glob('*.json')):
         payload = _read_json(path, {})
         for row in payload.get('rows') or []:
-            submission_price = _parse_price_number(row.get('submission_price_usd'))
-            if submission_price is None:
+            source = str(row.get('price_baseline_source') or row.get('source') or '').strip()
+            if not source or not source.startswith(TRUSTED_CANDIDATE_BASELINE_SOURCE):
                 continue
-            record = _baseline_record(submission_price, f'historical_bulk_report:{path.name}')
+            template_price = _parse_price_number(row.get('template_price_usd'))
+            submission_price = _parse_price_number(row.get('submission_price_usd'))
+            if template_price is None and submission_price is not None:
+                template_price = round(submission_price - PRICE_MARKUP_USD, 2)
+            if template_price is None:
+                continue
+            if submission_price is None:
+                submission_price = round(template_price + PRICE_MARKUP_USD, 2)
+            record = _baseline_record(
+                submission_price,
+                f'{TRUSTED_CANDIDATE_BASELINE_SOURCE}:historical_bulk_report:{path.name}',
+                template_price=template_price,
+            )
             product_id = _normalize_price_key(row.get('product_id'))
             sku = _normalize_price_key(row.get('sku'))
             if product_id and product_id not in baselines['by_product_id']:
@@ -228,10 +272,27 @@ def lookup_submission_price_baseline(product_id=None, sku=None):
     normalized_product_id = _normalize_price_key(product_id)
     normalized_sku = _normalize_price_key(sku)
     if normalized_product_id and normalized_product_id in baselines['by_product_id']:
-        return baselines['by_product_id'][normalized_product_id]
+        record = baselines['by_product_id'][normalized_product_id]
+        if _baseline_source_is_trusted(record):
+            return record
     if normalized_sku and normalized_sku in baselines['by_sku']:
-        return baselines['by_sku'][normalized_sku]
+        record = baselines['by_sku'][normalized_sku]
+        if _baseline_source_is_trusted(record):
+            return record
     return None
+
+
+def _persist_submission_price_baseline(submission_price, source, product_id=None, sku=None, template_price=None):
+    baselines = load_price_baselines()
+    record = _baseline_record(submission_price, source, template_price=template_price)
+    normalized_product_id = _normalize_price_key(product_id)
+    normalized_sku = _normalize_price_key(sku)
+    if normalized_product_id:
+        baselines['by_product_id'][normalized_product_id] = dict(record)
+    if normalized_sku:
+        baselines['by_sku'][normalized_sku] = dict(record)
+    save_price_baselines(baselines)
+    return record
 
 
 def _derive_live_submission_price(listing, prefer_active_noneditable=False):
@@ -269,38 +330,48 @@ def _derive_live_submission_price(listing, prefer_active_noneditable=False):
     raise ValueError('missing_submission_price_baseline')
 
 
-def resolve_submission_price(listing, product_id=None, sku=None, prefer_active_noneditable=False):
+def resolve_submission_price(listing, product_id=None, sku=None, candidate=None, prefer_active_noneditable=False):
+    candidate_template_price, candidate_source = _candidate_template_price(candidate)
+    if candidate_template_price is not None:
+        submission_price = round(candidate_template_price + PRICE_MARKUP_USD, 2)
+        record = _persist_submission_price_baseline(
+            submission_price,
+            candidate_source,
+            product_id=product_id,
+            sku=sku,
+            template_price=candidate_template_price,
+        )
+        return submission_price, record
+
     baseline = lookup_submission_price_baseline(product_id=product_id, sku=sku)
     if baseline is not None:
         return round(float(baseline['submission_price_usd']), 2), baseline
+
+    if _listing_is_giga_import(listing):
+        raise ValueError('missing_candidate_template_price')
+
     submission_price, source = _derive_live_submission_price(listing, prefer_active_noneditable=prefer_active_noneditable)
-    baselines = load_price_baselines()
-    record = _baseline_record(submission_price, source)
-    normalized_product_id = _normalize_price_key(product_id)
-    normalized_sku = _normalize_price_key(sku)
-    if normalized_product_id:
-        baselines['by_product_id'][normalized_product_id] = dict(record)
-    if normalized_sku:
-        baselines['by_sku'][normalized_sku] = dict(record)
-    save_price_baselines(baselines)
+    record = _persist_submission_price_baseline(submission_price, source, product_id=product_id, sku=sku)
     return submission_price, record
 
 
-def pick_import_template_price(listing, product_id=None, sku=None, prefer_active_noneditable=False):
+def pick_import_template_price(listing, product_id=None, sku=None, candidate=None, prefer_active_noneditable=False):
     submission_price, _baseline = resolve_submission_price(
         listing,
         product_id=product_id,
         sku=sku,
+        candidate=candidate,
         prefer_active_noneditable=prefer_active_noneditable,
     )
     return round(submission_price - PRICE_MARKUP_USD, 2)
 
 
-def pick_submission_price(listing, product_id=None, sku=None, prefer_active_noneditable=False):
+def pick_submission_price(listing, product_id=None, sku=None, candidate=None, prefer_active_noneditable=False):
     submission_price, _baseline = resolve_submission_price(
         listing,
         product_id=product_id,
         sku=sku,
+        candidate=candidate,
         prefer_active_noneditable=prefer_active_noneditable,
     )
     return round(submission_price, 2)
@@ -397,10 +468,25 @@ def fetch_candidates(base, token, page_size, max_pages, target_skus=None):
             found = {str(item.get('sku') or '').strip() for item in candidates}
             if wanted.issubset(found):
                 break
-        if not data.get('hasNextPage'):
+        total = int(data.get('total') or 0)
+        effective_page_size = int(data.get('pageSize') or page_size or 100)
+        if total > 0 and page * effective_page_size >= total:
+            break
+        if total <= 0 and not data.get('hasNextPage'):
             break
         page += 1
     return candidates
+
+
+def build_candidate_map(candidates):
+    mapping = {}
+    for candidate in candidates or []:
+        if not isinstance(candidate, dict):
+            continue
+        sku = str(candidate.get('sku') or '').strip()
+        if sku:
+            mapping[sku] = candidate
+    return mapping
 
 
 def normalize_text(value):
@@ -695,7 +781,12 @@ def main():
             detail = request('GET', base, token, f'/api/automation/seller/listings/{product_id}')
             listing = detail['data']['listing'] if 'listing' in detail.get('data', {}) else detail['data']
             try:
-                submission_price = pick_submission_price(listing)
+                submission_price = pick_submission_price(
+                    listing,
+                    product_id=product_id,
+                    sku=sku,
+                    candidate=c,
+                )
             except ValueError as exc:
                 row['error'] = str(exc)
                 row['priceBlocker'] = str(exc)

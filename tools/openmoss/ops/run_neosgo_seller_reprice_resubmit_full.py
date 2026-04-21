@@ -70,7 +70,7 @@ def _fetch_all_listings(base: str, token: str) -> list[dict[str, Any]]:
             timeout=30,
         )
         if not payload.get("ok"):
-            break
+            raise RuntimeError(RUNNER.extract_request_error_message("listings_enumeration", payload) or "listings_enumeration_failed")
         data = (payload.get("resp") or {}).get("data", {}) or {}
         items = data.get("items") or []
         if not items:
@@ -81,6 +81,32 @@ def _fetch_all_listings(base: str, token: str) -> list[dict[str, Any]]:
         if total > 0 and page * page_size >= total:
             break
     return rows
+
+
+def _fetch_all_candidates(base: str, token: str) -> dict[str, dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for page in range(1, MAX_PAGES + 1):
+        payload = RUNNER.request_with_retry(
+            "GET",
+            base,
+            token,
+            f"/api/automation/seller/giga/candidates?page={page}&pageSize={PAGE_SIZE}",
+            attempts=2,
+            sleep_seconds=0.5,
+            timeout=30,
+        )
+        if not payload.get("ok"):
+            raise RuntimeError(RUNNER.extract_request_error_message("candidates_enumeration", payload) or "candidates_enumeration_failed")
+        data = (payload.get("resp") or {}).get("data", {}) or {}
+        items = data.get("candidates") or []
+        if not items:
+            break
+        candidates.extend(items)
+        total = int(data.get("total") or 0)
+        page_size = int(data.get("pageSize") or PAGE_SIZE)
+        if total > 0 and page * page_size >= total:
+            break
+    return RUNNER.build_candidate_map(candidates)
 
 
 def _fetch_listing_detail(base: str, token: str, product_id: str) -> dict[str, Any]:
@@ -150,6 +176,13 @@ def _is_bulk_import_listing(item: dict[str, Any]) -> bool:
     return source == "GIGA" or original_platform == "gigacloud" or bool(item.get("gigaImportedListing"))
 
 
+def _candidate_desired_submission_price(candidate: dict[str, Any] | None) -> float | None:
+    candidate_price, _source = RUNNER._candidate_template_price(candidate)  # type: ignore[attr-defined]
+    if candidate_price is None:
+        return None
+    return round(candidate_price + RUNNER.PRICE_MARKUP_USD, 2)
+
+
 def _write_markdown_report(report: dict[str, Any], path: Path) -> None:
     lines = [
         "# Neosgo Seller Full Reprice And Resubmit",
@@ -157,6 +190,7 @@ def _write_markdown_report(report: dict[str, Any], path: Path) -> None:
         f"- Started: {report.get('started_at')}",
         f"- Finished: {report.get('finished_at')}",
         f"- Enumerated bulk-import listings: {report.get('summary', {}).get('enumerated_bulk_import_count', 0)}",
+        f"- Targeted price mismatches: {report.get('summary', {}).get('targeted_price_mismatch_count', 0)}",
         f"- Missing price baseline: {report.get('summary', {}).get('missing_price_baseline_count', 0)}",
         f"- Editable listings: {report.get('summary', {}).get('editable_count', 0)}",
         f"- Platform-blocked listings: {report.get('summary', {}).get('noneditable_count', 0)}",
@@ -166,9 +200,20 @@ def _write_markdown_report(report: dict[str, Any], path: Path) -> None:
         f"- Submit attempted: {report.get('summary', {}).get('submit_attempt_count', 0)}",
         f"- Submit succeeded: {report.get('summary', {}).get('submit_ok_count', 0)}",
         "",
+    ]
+    if report.get("execution_blocker"):
+        lines.extend(
+            [
+                "## Execution Blocker",
+                "",
+                f"- {report.get('execution_blocker')}",
+                "",
+            ]
+        )
+    lines.extend([
         "## Status Counts",
         "",
-    ]
+    ])
     for key, value in sorted((report.get("summary", {}).get("status_counts") or {}).items()):
         lines.append(f"- {key}: {value}")
     lines.extend(
@@ -208,9 +253,8 @@ def main() -> int:
         "workflow": "neosgo_seller_full_reprice_resubmit",
         "price_rule": {
             "baseline_source_priority": [
-                "historical bulk submission report",
-                "live approved listing retail/base price",
-                "live submitted/draft original bulk import price",
+                "live giga candidate price",
+                "trusted cached giga candidate baseline",
             ],
             "submission_markup_usd": RUNNER.PRICE_MARKUP_USD,
             "fail_closed_when_missing_price_baseline": True,
@@ -225,8 +269,60 @@ def main() -> int:
         "rows": [],
     }
     _write_json(STATE_PATH, {"stage": "enumerate_listings", "updated_at": started_at})
-    listings = [item for item in _fetch_all_listings(base, token) if _is_bulk_import_listing(item)]
-    for index, item in enumerate(listings, start=1):
+    try:
+        listings = [item for item in _fetch_all_listings(base, token) if _is_bulk_import_listing(item)]
+        candidates_by_sku = _fetch_all_candidates(base, token)
+    except Exception as exc:
+        report["finished_at"] = _utc_now_iso()
+        report["execution_blocker"] = str(exc)
+        report["summary"] = {
+            "enumerated_bulk_import_count": 0,
+            "targeted_price_mismatch_count": 0,
+            "status_counts": {},
+            "blocking_reason_counts": {},
+            "missing_price_baseline_count": 0,
+            "editable_count": 0,
+            "noneditable_count": 0,
+            "approved_change_request_patch_count": 0,
+            "patched_count": 0,
+            "already_desired_price_count": 0,
+            "submit_attempt_count": 0,
+            "submit_ok_count": 0,
+        }
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        out_json = OUTPUT_ROOT / f"neosgo-seller-reprice-resubmit-{stamp}.json"
+        out_md = OUTPUT_ROOT / f"neosgo-seller-reprice-resubmit-{stamp}.md"
+        _write_json(out_json, report)
+        _write_markdown_report(report, out_md)
+        _write_json(
+            STATE_PATH,
+            {
+                "stage": "blocked",
+                "updated_at": _utc_now_iso(),
+                "execution_blocker": str(exc),
+            },
+        )
+        print(json.dumps({"json": str(out_json), "md": str(out_md), "state": str(STATE_PATH)}, ensure_ascii=False))
+        return 1
+    targeted_listings: list[dict[str, Any]] = []
+    for item in listings:
+        sku = str(item.get("sku") or "").strip()
+        candidate = candidates_by_sku.get(sku)
+        desired_submission_price = _candidate_desired_submission_price(candidate)
+        current_base_price = _parse_float(item.get("basePrice"))
+        if desired_submission_price is None or current_base_price is None or abs(current_base_price - desired_submission_price) > 0.011:
+            targeted_listings.append(item)
+    _write_json(
+        STATE_PATH,
+        {
+            "stage": "repricing",
+            "updated_at": started_at,
+            "processed_count": 0,
+            "enumerated_bulk_import_count": len(listings),
+            "targeted_price_mismatch_count": len(targeted_listings),
+        },
+    )
+    for index, item in enumerate(targeted_listings, start=1):
         product_id = str(item.get("id") or "").strip()
         sku = str(item.get("sku") or "").strip()
         if not product_id or not sku:
@@ -242,6 +338,7 @@ def main() -> int:
             "originalPlatform": item.get("originalPlatform"),
         }
         try:
+            candidate = candidates_by_sku.get(sku)
             listing = _fetch_listing_detail(base, token, product_id)
             pricing = listing.get("pricing") or {}
             row["originalPrice"] = listing.get("originalPrice")
@@ -256,17 +353,32 @@ def main() -> int:
                     listing,
                     product_id=product_id,
                     sku=sku,
+                    candidate=candidate,
                     prefer_active_noneditable=_requires_approved_change_request(row),
                 )
                 template_price = round(desired_submission_price - RUNNER.PRICE_MARKUP_USD, 2)
             except ValueError as exc:
                 row["error"] = str(exc)
                 row["blocking_reason"] = "missing_price_baseline"
+                if candidate:
+                    row["candidate_price"] = candidate.get("price")
                 report["rows"].append(row)
-                _write_json(STATE_PATH, {"stage": "repricing", "updated_at": _utc_now_iso(), "last_sku": sku, "processed_count": len(report["rows"])})
+                _write_json(
+                    STATE_PATH,
+                    {
+                        "stage": "repricing",
+                        "updated_at": _utc_now_iso(),
+                        "last_sku": sku,
+                        "processed_count": len(report["rows"]),
+                        "enumerated_bulk_import_count": len(listings),
+                        "targeted_price_mismatch_count": len(targeted_listings),
+                    },
+                )
                 time.sleep(SLEEP_SECONDS)
                 continue
 
+            if candidate:
+                row["candidate_price"] = candidate.get("price")
             row["template_price_usd"] = template_price
             row["desired_submission_price_usd"] = desired_submission_price
             row["price_baseline_source"] = baseline.get("source")
@@ -352,6 +464,7 @@ def main() -> int:
                 "last_sku": sku,
                 "processed_count": len(report["rows"]),
                 "enumerated_bulk_import_count": len(listings),
+                "targeted_price_mismatch_count": len(targeted_listings),
             },
         )
         time.sleep(SLEEP_SECONDS)
@@ -360,7 +473,8 @@ def main() -> int:
     blocking_reason_counts = Counter(str(row.get("blocking_reason") or "") for row in report["rows"] if row.get("blocking_reason"))
     report["finished_at"] = _utc_now_iso()
     report["summary"] = {
-        "enumerated_bulk_import_count": len(report["rows"]),
+        "enumerated_bulk_import_count": len(listings),
+        "targeted_price_mismatch_count": len(targeted_listings),
         "status_counts": dict(status_counts),
         "blocking_reason_counts": dict(blocking_reason_counts),
         "missing_price_baseline_count": sum(1 for row in report["rows"] if row.get("blocking_reason") == "missing_price_baseline"),

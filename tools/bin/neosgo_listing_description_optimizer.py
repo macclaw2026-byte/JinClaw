@@ -186,6 +186,8 @@ def main():
         'rows': [],
     }
     listings = fetch_all_listings(mod, base, token, args.statuses, args.page_size, args.max_pages, target_skus=args.skus)
+    candidates = mod.fetch_candidates(base, token, args.page_size, args.max_pages, target_skus=args.skus or [])
+    candidates_by_sku = mod.build_candidate_map(candidates)
     real_listings = [x for x in listings if isinstance(x, dict) and not x.get('_fetch_error')]
     if args.limit and args.limit > 0:
         real_listings = real_listings[:args.limit]
@@ -200,17 +202,25 @@ def main():
             detail = mod.request('GET', base, token, f'/api/automation/seller/listings/{pid}')
             data = detail.get('data', {})
             listing = data.get('listing', data)
+            candidate = candidates_by_sku.get(str(sku or '').strip())
             description = build_description(listing)
             row['newDescription'] = description
             row['newDescriptionLength'] = len(description)
             row['containsHtml'] = bool(re.search(r'<[^>]+>', description))
             try:
-                submission_price = mod.pick_submission_price(listing)
+                submission_price = mod.pick_submission_price(
+                    listing,
+                    product_id=pid,
+                    sku=sku,
+                    candidate=candidate,
+                )
             except ValueError as exc:
                 row['patchOk'] = False
                 row['priceBlocker'] = str(exc)
                 row['platformUnitCost'] = ((listing.get('pricing') or {}).get('platformUnitCost'))
                 row['retailUnitPrice'] = ((listing.get('pricing') or {}).get('retailUnitPrice'))
+                if candidate:
+                    row['candidatePrice'] = candidate.get('price')
                 report['rows'].append(row)
                 time.sleep(args.sleep_seconds)
                 continue
