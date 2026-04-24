@@ -1,0 +1,164 @@
+{
+  "program": {
+    "name": "neosgo_social_geo_growth",
+    "status": "bootstrap",
+    "goal": "Use social distribution, entity consistency, and public-answer content to compound SEO, GEO, and brand reputation for NEOSGO.",
+    "owner": "openclaw",
+    "approval_mode": "manual_publish_required"
+  },
+  "channels": [
+    {
+      "key": "google_brand_profile",
+      "priority": 1,
+      "role": "brand entity, trust, branded search",
+      "required_inputs": [
+        "google_brand_profile_access",
+        "brand_facts_master"
+      ]
+    },
+    {
+      "key": "pinterest",
+      "priority": 1,
+      "role": "visual discovery and evergreen product demand capture",
+      "required_inputs": [
+        "pinterest_business_access",
+        "brand_asset_library",
+        "top_sku_priority_list"
+      ],
+      "cadence": {
+        "weekly_content_packages": 3,
+        "weekly_pins": 15,
+        "weekly_board_refreshes": 2
+      }
+    },
+    {
+      "key": "instagram",
+      "priority": 2,
+      "role": "brand storytelling, proof, and short-form discovery",
+      "required_inputs": [
+        "instagram_business_access",
+        "brand_asset_library",
+        "top_sku_priority_list"
+      ],
+      "cadence": {
+        "weekly_carousels": 4,
+        "weekly_reels": 3,
+        "weekly_stories": 5
+      }
+    },
+    {
+      "key": "third_party_mentions",
+      "priority": 2,
+      "role": "authority, citations, and reputation signals",
+      "required_inputs": [
+        "review_monitoring_targets",
+        "brand_facts_master"
+      ]
+    }
+  ],
+  "content_packages": {
+    "goal": "Every theme should become a reusable multi-surface package rooted in one factual source.",
+    "surfaces": [
+      "answer_page",
+      "category_refresh",
+      "faq_block",
+      "pinterest_pin",
+      "instagram_carousel",
+      "short_video_script"
+    ],
+    "required_truth_fields": [
+      "brand_name",
+      "product_family",
+      "primary_style",
+      "primary_room",
+      "materials",
+      "dimensions",
+      "finish_options",
+      "price_band",
+      "shipping_policy",
+      "returns_policy",
+      "lead_time",
+      "warranty"
+    ]
+  },
+  "measurement": {
+    "north_star_metrics": [
+      "brand_search_growth",
+      "ai_citation_count",
+      "cited_page_count",
+      "organic_click_growth",
+      "social_to_site_sessions",
+      "assisted_revenue_from_social"
+    ],
+    "data_sources": [
+      "google_search_console",
+      "bing_webmaster_tools",
+      "bing_ai_performance",
+      "google_analytics",
+      "merchant_center",
+      "postgresql_data_platform"
+    ]
+  },
+  "database_contract": {
+    "tables": [
+      "core.brand_fact",
+      "core.social_asset",
+      "core.social_post",
+      "core.offsite_mention",
+      "core.geo_citation",
+      "core.review_event",
+      "mart.brand_visibility_daily",
+      "mart.social_to_search_lift"
+    ]
+  },
+  "operator_inputs": [
+    {
+      "key": "brand_facts_master",
+      "required": true,
+      "path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-seo-geo-engine/runtime/operator-inputs/brand-facts-master.json",
+      "description": "Single truth source for brand, product, policy, and merchandising facts."
+    },
+    {
+      "key": "brand_asset_library",
+      "required": true,
+      "path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-seo-geo-engine/runtime/operator-inputs/brand-asset-library.json",
+      "description": "Paths or URLs for logos, product photography, lifestyle imagery, and short-form video assets."
+    },
+    {
+      "key": "top_sku_priority_list",
+      "required": true,
+      "path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-seo-geo-engine/runtime/operator-inputs/top-sku-priority-list.json",
+      "description": "Top SKUs or product families to push in the first 30 days."
+    },
+    {
+      "key": "pinterest_business_access",
+      "required": true,
+      "path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-seo-geo-engine/runtime/operator-inputs/pinterest-business-access.json",
+      "description": "Pinterest business account credentials or delegated access evidence."
+    },
+    {
+      "key": "instagram_business_access",
+      "required": true,
+      "path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-seo-geo-engine/runtime/operator-inputs/instagram-business-access.json",
+      "description": "Instagram business account access or publish workflow evidence."
+    },
+    {
+      "key": "google_brand_profile_access",
+      "required": true,
+      "path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-seo-geo-engine/runtime/operator-inputs/google-brand-profile-access.json",
+      "description": "Google Brand Profile or Business Profile access evidence."
+    },
+    {
+      "key": "bing_webmaster_access",
+      "required": true,
+      "path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-seo-geo-engine/runtime/operator-inputs/bing-webmaster-access.json",
+      "description": "Bing Webmaster Tools access and AI Performance enablement evidence."
+    },
+    {
+      "key": "review_monitoring_targets",
+      "required": false,
+      "path": "/Users/mac_claw/.openclaw/workspace/projects/neosgo-seo-geo-engine/runtime/operator-inputs/review-monitoring-targets.json",
+      "description": "Known review, community, and authority surfaces worth monitoring."
+    }
+  ]
+}

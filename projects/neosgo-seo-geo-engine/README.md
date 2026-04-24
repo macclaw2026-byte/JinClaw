@@ -54,6 +54,13 @@ Optional feedback drop folder:
 Hardcore automation upgrade reference:
 
 - `references/seo-geo-hardcore-automation-plan-2026-04.md`
+- `references/social-geo-operating-blueprint-2026-04.md`
+
+Social + GEO bootstrap files:
+
+- `config/social_geo_program.json`
+- `scripts/social_geo_readiness_check.py`
+- `runtime/operator-inputs/README.md`
 
 New output artifacts:
 
